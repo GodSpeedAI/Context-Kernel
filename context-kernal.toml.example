@@ -1,0 +1,9 @@
+[service]
+name = "context-kernal"
+
+[storage]
+database_path = "kernel.db"
+
+[retrieval]
+default_mode = "hybrid"
+semantic_enabled = false

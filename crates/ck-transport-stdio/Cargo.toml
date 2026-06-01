@@ -1,0 +1,10 @@
+[package]
+name = "ck-transport-stdio"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+ck-mcp = { path = "../ck-mcp" }
+serde_json.workspace = true

@@ -1,0 +1,13 @@
+[package]
+name = "ck-storage-sqlite"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+ck-core = { path = "../ck-core" }
+rusqlite.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

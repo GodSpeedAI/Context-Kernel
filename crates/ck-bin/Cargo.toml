@@ -1,0 +1,27 @@
+[package]
+name = "ck-bin"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "context-kernal"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+ck-config = { path = "../ck-config" }
+ck-core = { path = "../ck-core" }
+ck-mcp = { path = "../ck-mcp" }
+ck-storage-sqlite = { path = "../ck-storage-sqlite" }
+ck-transport-stdio = { path = "../ck-transport-stdio" }
+clap.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true
+tempfile.workspace = true
