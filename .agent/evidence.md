@@ -1,6 +1,24 @@
 # Evidence Log
 
 ## Claim
+- Claim: Project license metadata is aligned to Apache-2.0.
+- Status: implemented
+- Evidence type: config, documentation
+- Files: `Cargo.toml`, `LICENSE`, `README.md`
+- Lines: `Cargo.toml` workspace package license; root Apache 2.0 `LICENSE`; README License section
+- Notes: `cargo metadata --no-deps --format-version 1` reports workspace crates with `license: "Apache-2.0"`. Search found no remaining MIT license claim.
+- Confidence: high
+
+## Claim
+- Claim: Root README exists and follows the project voice guide and SEA-style structure.
+- Status: implemented
+- Evidence type: documentation
+- Files: `README.md`, `voice-guide.md`
+- Lines: full files
+- Notes: README includes problem statement, capabilities, quick start, configuration, observability, architecture, status, development, release, and license sections. It explicitly marks OpenTelemetry exporter/metrics wiring as not implemented.
+- Confidence: high
+
+## Claim
 - Claim: Web adapter supports conditional request headers (If-None-Match, If-Modified-Since) for incremental refresh.
 - Status: implemented
 - Evidence type: code, test

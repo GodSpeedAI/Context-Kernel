@@ -1,6 +1,20 @@
 # Work Log
 
 ## 2026-06-02 18:00 EDT
+- Task: Fixed license discrepancy so repository metadata matches the Apache-2.0 root `LICENSE`.
+- Files changed: `Cargo.toml`, `README.md`, `.agent/work_log.md`, `.agent/evidence.md`
+- Tests run: `cargo metadata --no-deps --format-version 1`; `rg -n "MIT|license =|Apache-2.0|Apache License|MPL" Cargo.toml crates README.md docs .github .agent`
+- Results: Cargo metadata reports workspace crates with `license: "Apache-2.0"`; scan found no remaining MIT license claim.
+- Notes: All crate manifests inherit `license.workspace = true`, so changing workspace package license aligns all crates.
+
+## 2026-06-02 18:00 EDT
+- Task: Created root `README.md` using `voice-guide.md` and the SEA README structure as references.
+- Files changed: `README.md`, `.agent/work_log.md`, `.agent/evidence.md`
+- Tests run: Not run; documentation-only change.
+- Results: README added with project overview, problem statement, capabilities, quick start, architecture, status, development rules, release notes, and known limits.
+- Notes: README avoids claiming OTEL exporter support because code only implements text/JSON tracing and OTEL endpoint detection.
+
+## 2026-06-02 18:00 EDT
 - Task: Updated all `.agent/` memory files to reflect completed deployment readiness state.
 - Files changed: `.agent/project_state.md`, `.agent/current_plan.md`, `.agent/evidence.md`, `.agent/decisions.md`, `.agent/open_questions.md`, `.agent/work_log.md`
 - Tests run: None (documentation-only update)
