@@ -1,0 +1,13 @@
+[package]
+name = "ck-app"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+ck-core = { path = "../ck-core" }
+chrono.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+ulid.workspace = true

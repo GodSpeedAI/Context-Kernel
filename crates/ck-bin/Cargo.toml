@@ -11,9 +11,14 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
+ck-adapter-filesystem = { path = "../ck-adapter-filesystem" }
+ck-app = { path = "../ck-app" }
+ck-artifacts = { path = "../ck-artifacts" }
 ck-config = { path = "../ck-config" }
 ck-core = { path = "../ck-core" }
 ck-mcp = { path = "../ck-mcp" }
+ck-ranker = { path = "../ck-ranker" }
+ck-search-fts = { path = "../ck-search-fts" }
 ck-storage-sqlite = { path = "../ck-storage-sqlite" }
 ck-transport-stdio = { path = "../ck-transport-stdio" }
 clap.workspace = true

@@ -1,15 +1,20 @@
 use std::io::{self, BufRead};
+use std::path::PathBuf;
 
 use anyhow::Result;
 use chrono::Utc;
+use ck_adapter_filesystem::{FilesystemSourceAdapter, HeadingChunker, MarkdownNormalizer};
+use ck_app::AppServices;
+use ck_artifacts::FileArtifactStore;
 use ck_config::{default_config, load_config};
-use ck_core::KernelStatus;
 use ck_mcp::McpService;
+use ck_ranker::LexicalRanker;
+use ck_search_fts::FtsSearch;
 use ck_storage_sqlite::SqliteStore;
 use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
-#[command(name = "context-kernal")]
+#[command(name = "context-kernel")]
 #[command(about = "Context Kernel MCP service")]
 struct Cli {
     #[command(subcommand)]
@@ -30,6 +35,8 @@ struct RuntimeArgs {
     config: Option<String>,
     #[arg(long)]
     database: Option<String>,
+    #[arg(long)]
+    data_dir: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -52,16 +59,31 @@ fn main() -> Result<()> {
 }
 
 fn serve(args: RuntimeArgs) -> Result<()> {
-    let (store, config) = open_store(args)?;
+    let (store, config) = open_store(&args)?;
     store.migrate()?;
 
-    let status = KernelStatus::new(
-        Utc::now().to_rfc3339(),
-        store.status()?,
-        config.retrieval.default_mode,
+    let data_dir = args.data_dir.unwrap_or_else(|| {
+        let db_path = PathBuf::from(&config.storage.database_path);
+        db_path
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| ".".to_string())
+    });
+
+    let started_at = Utc::now().to_rfc3339();
+    let storage_status = store.status()?;
+
+    // Wire all adapters
+    let app = wire_app(&store, &data_dir)?;
+
+    let status = app.get_status(
+        &started_at,
+        storage_status,
+        &config.retrieval.default_mode,
         config.retrieval.semantic_enabled,
-    );
-    let service = McpService::new(status);
+    )?;
+
+    let service = McpService::with_app(status, app);
 
     for line in io::stdin().lock().lines() {
         let line = line?;
@@ -75,14 +97,14 @@ fn serve(args: RuntimeArgs) -> Result<()> {
 }
 
 fn migrate(args: RuntimeArgs) -> Result<()> {
-    let (store, _) = open_store(args)?;
+    let (store, _) = open_store(&args)?;
     store.migrate()?;
     println!("migrated {}", store.status()?.path);
     Ok(())
 }
 
 fn doctor(args: RuntimeArgs) -> Result<()> {
-    let (store, _) = open_store(args)?;
+    let (store, _) = open_store(&args)?;
     store.migrate()?;
     let status = store.status()?;
     println!(
@@ -92,16 +114,31 @@ fn doctor(args: RuntimeArgs) -> Result<()> {
     Ok(())
 }
 
-fn open_store(args: RuntimeArgs) -> Result<(SqliteStore, ck_config::KernelConfig)> {
-    let mut config = match args.config {
+fn open_store(args: &RuntimeArgs) -> Result<(SqliteStore, ck_config::KernelConfig)> {
+    let mut config = match &args.config {
         Some(path) => load_config(path)?,
         None => default_config(),
     };
 
-    if let Some(database) = args.database {
-        config.storage.database_path = database;
+    if let Some(database) = &args.database {
+        config.storage.database_path = database.clone();
     }
 
     let store = SqliteStore::open(&config.storage.database_path)?;
     Ok((store, config))
+}
+
+fn wire_app(store: &SqliteStore, data_dir: &str) -> Result<AppServices> {
+    let db_path = store.path().to_path_buf();
+
+    Ok(AppServices::new(
+        Box::new(store.clone()),
+        Box::new(store.clone()),
+        Box::new(FileArtifactStore::new(PathBuf::from(data_dir))),
+        Box::new(FtsSearch::open(db_path)?),
+        Box::new(LexicalRanker),
+        Box::new(FilesystemSourceAdapter),
+        Box::new(MarkdownNormalizer),
+        Box::new(HeadingChunker),
+    ))
 }

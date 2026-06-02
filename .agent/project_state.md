@@ -1,66 +1,82 @@
 # Project State
 
 ## Last Updated
-- Date: 2026-06-01 15:06 EDT
-- By: Codex
+- Date: 2026-06-01
+- By: Kilo (implementation agent)
 
 ## Current Repository Status
 
 ### Crates
-- ck-core: implemented for Milestone 0 status DTOs only
-- ck-config: implemented for basic TOML file loading, env var interpolation, and defaults
-- ck-app: not implemented
-- ck-storage-sqlite: implemented for schema v1 migration bootstrap and storage status
-- ck-search-fts: not implemented
-- ck-ranker: not implemented
-- ck-memory: not implemented
-- ck-artifacts: not implemented
-- ck-mcp: implemented for `get_status` only
-- ck-transport-stdio: implemented for one-line JSON-RPC `tools/call` dispatch
+- ck-core: implemented — domain entities, port traits, enums, status types
+- ck-config: implemented — TOML config loading, env var interpolation, defaults
+- ck-app: implemented — use cases (StoreContext, RecallContext, IngestSource, QueryReference, ResolveReference, GetStatus)
+- ck-storage-sqlite: implemented — StoragePort + SessionMemoryPort with full CRUD for all entities
+- ck-search-fts: implemented — LexicalSearchPort with FTS5/BM25 for chunks, session events, library aliases
+- ck-ranker: implemented — LexicalRanker implementing RankerPort with score breakdowns
+- ck-artifacts: implemented — FileArtifactStore implementing ArtifactPort with filesystem storage
+- ck-adapter-filesystem: implemented — FilesystemSourceAdapter, MarkdownNormalizer, HeadingChunker
+- ck-mcp: implemented — all 7 MCP tools + 3 compatibility aliases
+- ck-transport-stdio: implemented — JSON-RPC stdio framing for all tools
 - ck-transport-sse: not implemented
 - ck-auth: not implemented
-- ck-observability: not implemented
+- ck-observability: not implemented (tracing subscriber only)
 - ck-scheduler: not implemented
-- ck-bin: implemented for `serve`, `migrate`, `doctor`, and stubbed `export-schema`
+- ck-memory: not implemented (session memory logic in ck-app and ck-storage-sqlite)
+- ck-bin: implemented — wires all crates, serves stdio MCP
 
 ### Implemented Features
-- Cargo workspace with Milestone 0 crates.
-- `context-kernal migrate --database <path>` creates and migrates a SQLite database.
-- `context-kernal serve --database <path>` accepts stdio JSON-RPC `tools/call` and returns `get_status`.
-- SQLite schema v1 creates core metadata tables and FTS5 virtual tables.
-- Basic TOML config loading and defaults.
+- Milestone 0: Cargo workspace, config, migrations, stdio MCP, get_status
+- Milestone 1: Storage + memory foundation
+  - SQLite schema v1 with all tables and FTS5 virtual tables
+  - Session/event/artifact persistence via StoragePort and SessionMemoryPort
+  - Filesystem artifact storage via ArtifactPort
+  - `store_context` MCP tool — persists events, handles large payloads as artifacts
+  - `recall_context` MCP tool — BM25-ranked session event recall via FTS5
+- Milestone 2: Local document ingestion
+  - Filesystem source adapter — discovers .md/.txt/.toml/.rs/.json files
+  - Markdown normalizer — converts raw content to Document entities
+  - Heading-aware chunker — splits by markdown headings, sub-splits large sections
+  - `ingest_source` MCP tool — discovers, normalizes, chunks, indexes local docs
+  - `query_reference` MCP tool — lexical search over indexed chunks
+- Milestone 3: Unified identity layer
+  - Library identity and alias persistence
+  - `resolve_reference` MCP tool — FTS search over library aliases
+  - Compatibility aliases: `resolve-library-id`, `get-library-docs`, `query-docs`
 
 ### Partially Implemented Features
-- CLI surface: `export-schema` is present but prints a Milestone 0 not-implemented message.
-- MCP surface: only `get_status` is implemented; all other planned tools are not implemented.
+- CLI surface: `export-schema` is present but prints a not-implemented message
 
 ### Not Yet Implemented
-- `store_context`
-- `recall_context`
-- `resolve_reference`
-- `query_reference`
-- `ingest_source`
-- `refresh_source`
-- Source adapters
-- Context persistence
-- Retrieval/indexing
 - SSE transport
 - Auth
-- Scheduler
-- Observability beyond tracing subscriber initialization
+- Scheduler (periodic refresh)
+- Observability beyond tracing subscriber
+- Semantic/embedding retrieval
+- GitHub/web/PDF source adapters
+- Hybrid ranking with freshness/trust/session-affinity priors
+- Config reload
+- Retention GC
 
 ### Database / Migrations
-- Implemented schema version 1 directly in `ck-storage-sqlite`.
-- Migration creates `schema_migrations`, source/corpus/library/document/chunk/session/artifact/job tables, and `chunks_fts`, `session_events_fts`, `library_aliases_fts`.
+- Schema version 1 in ck-storage-sqlite
+- Tables: schema_migrations, sources, corpora, corpus_sources, library_identities, library_aliases, documents, chunks, artifacts, sessions, session_events, refresh_jobs
+- FTS5: chunks_fts, session_events_fts, library_aliases_fts
 
 ### MCP Tools
-- `get_status`: implemented.
-- All compatibility aliases and retrieval/context tools: not implemented.
+- `get_status`: implemented
+- `store_context`: implemented
+- `recall_context`: implemented
+- `ingest_source`: implemented
+- `query_reference`: implemented
+- `resolve_reference`: implemented
+- `refresh_source`: not implemented (ingest_source handles one-time indexing)
+- Compatibility aliases: `resolve-library-id`, `get-library-docs`, `query-docs`: implemented
 
 ### Source Adapters
-- Not implemented.
+- `ck-adapter-filesystem`: implemented (filesystem_tree)
 
 ### Verification Summary
-- `cargo fmt --check`: passed.
-- `cargo test --workspace`: passed.
-- Manual stdio smoke check returned `get_status` JSON with `service.name = context-kernal` and `storage.fts5_enabled = true`.
+- `cargo test --workspace`: 37 tests pass
+- `cargo fmt --check`: passes
+- `cargo clippy --workspace`: zero warnings
+- Integration tests verify all MCP tools end-to-end via stdio

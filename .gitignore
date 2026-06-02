@@ -42,3 +42,6 @@ tarpaulin-report.html
 *~
 .DS_Store
 Thumbs.db
+
+# misc
+tmp/

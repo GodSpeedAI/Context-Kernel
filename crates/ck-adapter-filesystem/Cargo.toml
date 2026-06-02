@@ -1,0 +1,18 @@
+[package]
+name = "ck-adapter-filesystem"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+ck-core = { path = "../ck-core" }
+chrono.workspace = true
+hex.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tracing.workspace = true
+ulid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

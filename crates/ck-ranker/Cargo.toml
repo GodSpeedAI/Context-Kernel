@@ -1,0 +1,12 @@
+[package]
+name = "ck-ranker"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+ck-core = { path = "../ck-core" }
+serde_json.workspace = true
+tracing.workspace = true
+ulid.workspace = true

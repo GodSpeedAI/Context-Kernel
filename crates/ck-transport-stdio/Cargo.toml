@@ -8,3 +8,4 @@ version.workspace = true
 anyhow.workspace = true
 ck-mcp = { path = "../ck-mcp" }
 serde_json.workspace = true
+tracing.workspace = true
