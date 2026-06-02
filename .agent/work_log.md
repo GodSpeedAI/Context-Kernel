@@ -1,6 +1,13 @@
 # Work Log
 
 ## 2026-06-02 18:00 EDT
+- Task: Updated README value proposition after reading upstream Context7, Ref MCP, and Context Mode READMEs.
+- Files changed: `README.md`, `.agent/work_log.md`, `.agent/evidence.md`
+- Tests run: Not run; documentation-only change.
+- Results: README now describes current/version-aware documentation retrieval, token-efficient reference reading, and persistent session continuity as first-class value props.
+- Notes: Upstream projects are reflected as product patterns, not named as dependencies or direct implementations.
+
+## 2026-06-02 18:00 EDT
 - Task: Fixed license discrepancy so repository metadata matches the Apache-2.0 root `LICENSE`.
 - Files changed: `Cargo.toml`, `README.md`, `.agent/work_log.md`, `.agent/evidence.md`
 - Tests run: `cargo metadata --no-deps --format-version 1`; `rg -n "MIT|license =|Apache-2.0|Apache License|MPL" Cargo.toml crates README.md docs .github .agent`

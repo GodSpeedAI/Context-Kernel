@@ -7,9 +7,9 @@
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
 [![MCP](https://img.shields.io/badge/MCP-stdio%20%2B%20SSE-blue.svg)](docs/mcp-contracts.md)
 
-Context Kernel gives AI agents a memory and reference layer that can survive past the current chat window.
+Context Kernel gives AI agents a memory and reference layer that can survive past the current chat window, fetch the right documentation, and keep private context inside your own deployment.
 
-It stores session context, indexes documentation, resolves library identities, and serves the result through MCP tools. It does this as one Rust binary backed by SQLite, FTS5, filesystem artifacts, optional embeddings, and explicit authorization boundaries.
+It stores session context, indexes documentation, resolves library identities, reads public and private references, and serves the result through MCP tools. It does this as one Rust binary backed by SQLite, FTS5, filesystem artifacts, optional embeddings, and explicit authorization boundaries.
 
 AI work fails when context is folklore. The agent remembers half a decision, guesses at an API, cites stale docs, and then writes code with tremendous confidence. Context Kernel is the infrastructure layer that makes context inspectable before the agent acts.
 
@@ -29,7 +29,7 @@ That breaks down quickly:
 
 The answer is not a bigger prompt. It is a local service with storage, retrieval, source adapters, and policy.
 
-Context Kernel turns context into an operational system: persisted, searchable, refreshable, scoped, and observable.
+Context Kernel turns context into an operational system: current enough to trust, small enough to fit, durable enough to resume, and scoped enough to govern.
 
 ---
 
@@ -41,9 +41,12 @@ Context Kernel unifies three jobs that agents need every day:
 
 - ingest local docs, GitHub repositories, and websites
 - index chunks with SQLite FTS5
-- query by library, corpus, or free text
+- resolve a library name into a stable library or corpus identity
+- retrieve library/API documentation by version, corpus, or free text
 - return compact excerpts with citations
-- support Context7-compatible aliases: `resolve-library-id`, `get-library-docs`, and `query-docs`
+- support common documentation MCP aliases: `resolve-library-id`, `get-library-docs`, and `query-docs`
+
+This handles the boring but expensive failure mode: an agent writing against APIs that moved since its training data.
 
 ### Context Continuity
 
@@ -52,6 +55,18 @@ Context Kernel unifies three jobs that agents need every day:
 - keep large payloads in artifact storage instead of stuffing them inline
 - classify session memory through the `ck-memory` crate
 - preserve pinned events during retention cleanup
+
+This handles the other half of the context problem: after compaction or a new run, the agent needs the relevant memory, not a transcript landfill.
+
+### Token-Efficient Reference Reading
+
+- search first, then read the few resources that matter
+- return short excerpts instead of whole pages
+- use query intent and session context in ranking
+- collapse duplicate document results
+- store artifacts and raw context outside the prompt
+
+This keeps documentation useful without turning the context window into a junk drawer with syntax highlighting.
 
 ### Governed Access
 
@@ -97,7 +112,7 @@ Context Kernel currently supports:
 
 The GitHub adapter detects truncated tree API responses instead of silently indexing partial data. The web adapter blocks private IP ranges, non-HTTP schemes, localhost-style hosts, and DNS names that resolve to private addresses.
 
-PDF ingestion and a bundled Context7 dataset adapter are not part of v1. Context7 compatibility is provided through MCP tool aliases and response contracts.
+PDF ingestion and a bundled external documentation dataset adapter are not part of v1. Compatibility with common documentation MCP clients is provided through tool aliases and response contracts.
 
 ### Retrieval
 
@@ -111,6 +126,14 @@ Retrieval uses:
 - brute-force cosine vector search for small corpora
 
 The vector store records corpus, library, and document metadata so semantic search can respect retrieval scope.
+
+The retrieval shape is deliberate:
+
+```text
+resolve identity → search focused chunks → read compact excerpts → cite source
+```
+
+That beats dumping a full documentation page into the model and hoping attention survives the trip.
 
 ### Memory And Artifacts
 
@@ -314,11 +337,23 @@ Known limits:
 
 - OpenTelemetry exporter and metrics backend wiring are not implemented
 - PDF adapter is future work
-- bundled Context7 dataset adapter is future work
+- bundled external documentation dataset adapter is future work
 - vector search is brute-force and intended for small corpora
 - SSE config reload does not rebind the HTTP listener
 
 This is infrastructure, not theater. If a feature is not wired and tested, it is listed as a limit.
+
+---
+
+## Lineage
+
+Context Kernel is built around three proven MCP patterns:
+
+- current, version-aware documentation for coding agents
+- token-efficient reference search and URL reading
+- persistent session memory with indexed recall
+
+The implementation is its own Rust service. It keeps the useful parts in one local-first binary and adds deployment concerns the separate tools do not all share: SQLite migrations, source adapters, retention, artifact storage, corpus/tool authorization, SSE serving, release packaging, and repository-grounded status evidence.
 
 ---
 

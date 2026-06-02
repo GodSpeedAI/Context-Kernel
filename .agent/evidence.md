@@ -1,6 +1,15 @@
 # Evidence Log
 
 ## Claim
+- Claim: README expresses the combined value propositions of current docs, token-efficient reference retrieval, and durable session continuity.
+- Status: implemented
+- Evidence type: documentation
+- Files: `README.md`
+- Lines: sections `The Problem`, `What Context Kernel Does`, `Retrieval`, `Lineage`
+- Notes: README copy was revised after inspecting upstream README material for Context7, Ref MCP, and Context Mode. It avoids presenting those projects as direct dependencies.
+- Confidence: high
+
+## Claim
 - Claim: Project license metadata is aligned to Apache-2.0.
 - Status: implemented
 - Evidence type: config, documentation
