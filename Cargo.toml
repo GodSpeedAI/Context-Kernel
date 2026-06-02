@@ -9,6 +9,7 @@ members = [
   "crates/ck-adapter-filesystem",
   "crates/ck-app",
   "crates/ck-mcp",
+  "crates/ck-observability",
   "crates/ck-transport-stdio",
   "crates/ck-transport-sse",
   "crates/ck-auth",
@@ -18,6 +19,7 @@ members = [
   "crates/ck-vector",
   "crates/ck-adapter-github",
   "crates/ck-adapter-web",
+  "crates/ck-memory",
 ]
 resolver = "2"
 

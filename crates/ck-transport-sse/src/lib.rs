@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use axum::{
     extract::State,
@@ -12,18 +12,43 @@ use ck_mcp::McpService;
 use serde_json::{json, Value};
 use tracing::{debug, info};
 
-pub struct SseState {
-    pub mcp: Arc<McpService>,
-    pub auth: Arc<dyn AuthPort>,
+pub struct ReloadableSseState {
+    mcp: RwLock<Arc<McpService>>,
+    auth: RwLock<Arc<dyn AuthPort>>,
 }
 
-pub async fn serve_sse(state: SseState, bind_addr: &str) -> anyhow::Result<()> {
+impl ReloadableSseState {
+    pub fn new(mcp: Arc<McpService>, auth: Arc<dyn AuthPort>) -> Self {
+        Self {
+            mcp: RwLock::new(mcp),
+            auth: RwLock::new(auth),
+        }
+    }
+
+    pub fn mcp(&self) -> Arc<McpService> {
+        self.mcp.read().unwrap().clone()
+    }
+
+    pub fn auth(&self) -> Arc<dyn AuthPort> {
+        self.auth.read().unwrap().clone()
+    }
+
+    pub fn replace_service(&self, service: Arc<McpService>) {
+        *self.mcp.write().unwrap() = service;
+    }
+
+    pub fn replace_auth(&self, auth: Arc<dyn AuthPort>) {
+        *self.auth.write().unwrap() = auth;
+    }
+}
+
+pub async fn serve_sse(state: Arc<ReloadableSseState>, bind_addr: &str) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
-        .route("/api/v1/status", get(api_status))
-        .route("/mcp", post(mcp_handler))
-        .with_state(Arc::new(state));
+        .route("/api/v1/status", get(api_status_reloadable))
+        .route("/mcp", post(mcp_handler_reloadable))
+        .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
     info!(bind_addr, "SSE MCP server starting");
@@ -39,24 +64,27 @@ async fn readyz() -> Json<Value> {
     Json(json!({"ready": true}))
 }
 
-async fn api_status(State(state): State<Arc<SseState>>) -> Json<Value> {
-    match state.mcp.call_tool("get_status", json!({})) {
+async fn api_status_reloadable(State(state): State<Arc<ReloadableSseState>>) -> Json<Value> {
+    let mcp = state.mcp();
+    match mcp.call_tool("get_status", json!({})) {
         Ok(result) => Json(result),
         Err(_) => Json(json!({"error": "status unavailable"})),
     }
 }
 
-async fn mcp_handler(
-    State(state): State<Arc<SseState>>,
+async fn mcp_handler_reloadable(
+    State(state): State<Arc<ReloadableSseState>>,
     headers: axum::http::HeaderMap,
     body: String,
 ) -> impl IntoResponse {
-    if !state.auth.is_local_trust_mode() {
-        let auth_header = headers
-            .get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        if !state.auth.validate_token(auth_header) {
+    let mcp = state.mcp();
+    let auth = state.auth();
+
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+
+    if !auth.is_local_trust_mode() {
+        let auth_header = auth_header.unwrap_or("");
+        if !auth.validate_token(auth_header) {
             return (
                 StatusCode::UNAUTHORIZED,
                 Json(json!({
@@ -106,7 +134,7 @@ async fn mcp_handler(
         .unwrap_or_default();
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
-    match state.mcp.call_tool(name, arguments) {
+    match mcp.call_tool_authorized(auth_header, name, arguments) {
         Ok(result) => (
             StatusCode::OK,
             Json(json!({"jsonrpc": "2.0", "id": id, "result": result})),
@@ -119,5 +147,28 @@ async fn mcp_handler(
                 "error": {"code": "internal", "message": err.to_string(), "retryable": false}
             })),
         ),
+    }
+}
+
+#[cfg(test)]
+mod reload_tests {
+    use super::*;
+    use ck_core::KernelStatus;
+
+    #[test]
+    fn reloadable_sse_state_swaps_service() {
+        let status1 = KernelStatus::placeholder();
+        let status2 = KernelStatus::placeholder();
+        let first = Arc::new(McpService::new(status1));
+        let second = Arc::new(McpService::new(status2));
+        let auth: Arc<dyn AuthPort> = Arc::new(ck_auth::BearerAuth::no_auth());
+
+        let state = Arc::new(ReloadableSseState::new(first.clone(), auth));
+
+        assert!(Arc::ptr_eq(&state.mcp(), &first));
+
+        state.replace_service(second.clone());
+
+        assert!(Arc::ptr_eq(&state.mcp(), &second));
     }
 }

@@ -37,4 +37,16 @@ pub trait VectorSearchPort: Send + Sync {
 
     /// Remove embeddings for chunks belonging to a document.
     fn remove_chunk_embeddings_by_document(&self, document_id: &str) -> Result<()>;
+
+    fn upsert_chunk_embedding_with_metadata(
+        &self,
+        chunk_id: &str,
+        model_id: &str,
+        vector: &[f64],
+        _corpus_id: Option<&str>,
+        _library_id: Option<&str>,
+        _document_id: Option<&str>,
+    ) -> Result<()> {
+        self.upsert_chunk_embedding(chunk_id, model_id, vector)
+    }
 }

@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use chrono::Utc;
 use ck_core::entities::{
-    Chunk, Corpus, Document, LibraryAlias, LibraryIdentity, RefreshJob, Session, SessionEvent,
-    Source, StoredContext,
+    Artifact, Chunk, Corpus, Document, LibraryAlias, LibraryIdentity, RefreshJob, Session,
+    SessionEvent, Source, StoredContext,
 };
 use ck_core::ports::{SessionMemoryPort, StoragePort};
 use ck_core::types::{
@@ -45,6 +45,10 @@ impl SqliteStore {
         let conn = self.conn()?;
         conn.execute_batch(SCHEMA_V1)?;
         Ok(())
+    }
+
+    pub fn schema_sql() -> &'static str {
+        SCHEMA_V1
     }
 
     pub fn status(&self) -> Result<StorageStatus> {
@@ -844,6 +848,86 @@ impl StoragePort for SqliteStore {
         )?;
         Ok(count as u64)
     }
+
+    fn delete_unpinned_session_events_older_than(&self, cutoff_rfc3339: &str) -> Result<u64> {
+        let conn = self.conn()?;
+        let deleted = conn.execute(
+            "DELETE FROM session_events WHERE pinned = 0 AND created_at < ?1",
+            rusqlite::params![cutoff_rfc3339],
+        )?;
+        Ok(deleted as u64)
+    }
+
+    fn delete_inactive_sessions_older_than(&self, cutoff_rfc3339: &str) -> Result<u64> {
+        let conn = self.conn()?;
+        let deleted = conn.execute(
+            "DELETE FROM sessions \
+             WHERE status IN ('closed', 'compacted') AND updated_at < ?1",
+            rusqlite::params![cutoff_rfc3339],
+        )?;
+        Ok(deleted as u64)
+    }
+
+    fn delete_finished_refresh_jobs_older_than(&self, cutoff_rfc3339: &str) -> Result<u64> {
+        let conn = self.conn()?;
+        let deleted = conn.execute(
+            "DELETE FROM refresh_jobs \
+             WHERE status IN ('completed', 'failed', 'cancelled') \
+             AND COALESCE(finished_at, updated_at, created_at) < ?1",
+            rusqlite::params![cutoff_rfc3339],
+        )?;
+        Ok(deleted as u64)
+    }
+
+    fn delete_disabled_sources_older_than(&self, cutoff_rfc3339: &str) -> Result<u64> {
+        let conn = self.conn()?;
+        let deleted = conn.execute(
+            "DELETE FROM sources WHERE enabled = 0 AND updated_at < ?1",
+            rusqlite::params![cutoff_rfc3339],
+        )?;
+        Ok(deleted as u64)
+    }
+
+    fn delete_artifacts_older_than(&self, cutoff_rfc3339: &str) -> Result<u64> {
+        let conn = self.conn()?;
+        let deleted = conn.execute(
+            "DELETE FROM artifacts WHERE created_at < ?1",
+            rusqlite::params![cutoff_rfc3339],
+        )?;
+        Ok(deleted as u64)
+    }
+
+    fn upsert_artifact(&self, artifact: &Artifact) -> Result<()> {
+        let conn = self.conn()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO artifacts \
+             (artifact_id, session_id, kind, mime_type, storage_uri, size_bytes, summary, checksum, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            rusqlite::params![
+                artifact.artifact_id,
+                artifact.session_id,
+                artifact.kind,
+                artifact.mime_type,
+                artifact.storage_uri,
+                artifact.size_bytes,
+                artifact.summary,
+                artifact.checksum,
+                artifact.created_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn list_artifacts_older_than(&self, cutoff_rfc3339: &str) -> Result<Vec<String>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare("SELECT artifact_id FROM artifacts WHERE created_at < ?1")?;
+        let rows = stmt.query_map(rusqlite::params![cutoff_rfc3339], |row| row.get(0))?;
+        let mut ids = Vec::new();
+        for r in rows {
+            ids.push(r?);
+        }
+        Ok(ids)
+    }
 }
 
 impl SessionMemoryPort for SqliteStore {
@@ -1252,6 +1336,123 @@ mod tests {
 
         let fetched = store.get_event(&ctx1.event_id).unwrap().unwrap();
         assert_eq!(fetched.text, "hello");
+    }
+
+    #[test]
+    fn retention_deletes_only_eligible_rows() {
+        let (store, _dir) = test_store();
+        let old = "2026-01-01T00:00:00Z";
+        let cutoff = "2026-02-01T00:00:00Z";
+        let recent = "2026-03-01T00:00:00Z";
+
+        store
+            .create_session(
+                "sess-old",
+                SessionTransport::Stdio,
+                ContinuationMode::Ephemeral,
+            )
+            .unwrap();
+        let old_event = store
+            .add_event("sess-old", "note", "old", None, "{}", false)
+            .unwrap();
+        let pinned_event = store
+            .add_event("sess-old", "note", "pinned", None, "{}", true)
+            .unwrap();
+        let recent_event = store
+            .add_event("sess-old", "note", "recent", None, "{}", false)
+            .unwrap();
+
+        {
+            let conn = store.conn().unwrap();
+            conn.execute(
+                "UPDATE session_events SET created_at = ?1 WHERE event_id IN (?2, ?3)",
+                rusqlite::params![old, old_event.event_id, pinned_event.event_id],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE session_events SET created_at = ?1 WHERE event_id = ?2",
+                rusqlite::params![recent, recent_event.event_id],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE sessions SET status = 'closed', updated_at = ?1 WHERE session_id = 'sess-old'",
+                rusqlite::params![old],
+            )
+            .unwrap();
+        }
+
+        assert_eq!(
+            store
+                .delete_unpinned_session_events_older_than(cutoff)
+                .unwrap(),
+            1
+        );
+        assert!(store.get_event(&old_event.event_id).unwrap().is_none());
+        assert!(store.get_event(&pinned_event.event_id).unwrap().is_some());
+        assert!(store.get_event(&recent_event.event_id).unwrap().is_some());
+
+        assert_eq!(
+            store.delete_inactive_sessions_older_than(cutoff).unwrap(),
+            1
+        );
+        assert!(store.get_session("sess-old").unwrap().is_none());
+
+        store
+            .upsert_source(&Source {
+                source_id: "src-retention".into(),
+                kind: "local".into(),
+                display_name: "S".into(),
+                enabled: true,
+                adapter_config_json: "{}".into(),
+                auth_ref: None,
+                first_indexed_at: None,
+                last_refresh_attempt_at: None,
+                last_refresh_success_at: None,
+                last_refresh_error: None,
+                freshness_ttl_secs: None,
+                upstream_revision: None,
+                created_at: recent.into(),
+                updated_at: recent.into(),
+            })
+            .unwrap();
+
+        store
+            .upsert_refresh_job(&RefreshJob {
+                job_id: "job-old".into(),
+                source_id: "src-retention".into(),
+                trigger_kind: JobTrigger::Manual,
+                status: JobStatus::Completed,
+                started_at: Some(old.into()),
+                finished_at: Some(old.into()),
+                error: None,
+                stats_json: "{}".into(),
+                created_at: old.into(),
+                updated_at: old.into(),
+            })
+            .unwrap();
+        store
+            .upsert_refresh_job(&RefreshJob {
+                job_id: "job-active".into(),
+                source_id: "src-retention".into(),
+                trigger_kind: JobTrigger::Manual,
+                status: JobStatus::Running,
+                started_at: Some(old.into()),
+                finished_at: None,
+                error: None,
+                stats_json: "{}".into(),
+                created_at: old.into(),
+                updated_at: old.into(),
+            })
+            .unwrap();
+
+        assert_eq!(
+            store
+                .delete_finished_refresh_jobs_older_than(cutoff)
+                .unwrap(),
+            1
+        );
+        assert!(store.get_refresh_job("job-old").unwrap().is_none());
+        assert!(store.get_refresh_job("job-active").unwrap().is_some());
     }
 
     #[test]

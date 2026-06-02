@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use chrono::Utc;
 use ck_adapter_filesystem::{FilesystemSourceAdapter, HeadingChunker, MarkdownNormalizer};
-use ck_app::AppServices;
+use ck_app::{AppServices, RetentionPolicy};
 use ck_artifacts::FileArtifactStore;
 use ck_auth::BearerAuth;
 use ck_config::{default_config, load_config};
@@ -48,11 +48,12 @@ struct RuntimeArgs {
 }
 
 fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .with_writer(io::stderr)
-        .try_init()
-        .ok();
+    ck_observability::init_observability(ck_observability::ObservabilityRuntimeConfig {
+        log_format: "text".to_string(),
+        otel_endpoint: None,
+        service_name: "context-kernal".to_string(),
+    })
+    .ok();
 
     let cli = Cli::parse();
     match cli.command {
@@ -60,7 +61,7 @@ fn main() -> Result<()> {
         Commands::Migrate(args) => migrate(args),
         Commands::Doctor(args) => doctor(args),
         Commands::ExportSchema => {
-            println!("schema export is not implemented in Milestone 0");
+            println!("{}", SqliteStore::schema_sql());
             Ok(())
         }
     }
@@ -70,7 +71,7 @@ fn serve(args: RuntimeArgs) -> Result<()> {
     let (store, config) = open_store(&args)?;
     store.migrate()?;
 
-    let data_dir = args.data_dir.unwrap_or_else(|| {
+    let data_dir = args.data_dir.clone().unwrap_or_else(|| {
         let db_path = PathBuf::from(&config.storage.database_path);
         db_path
             .parent()
@@ -84,6 +85,24 @@ fn serve(args: RuntimeArgs) -> Result<()> {
     // Wire all adapters
     let app = wire_app(&store, &data_dir, &config)?;
 
+    if config.retention.enabled {
+        let report = app.run_retention_gc(RetentionPolicy {
+            session_event_days: config.retention.session_event_days,
+            inactive_session_days: config.retention.inactive_session_days,
+            refresh_job_days: config.retention.refresh_job_days,
+            artifact_days: config.retention.artifact_days,
+            disabled_source_days: config.retention.disabled_source_days,
+        })?;
+        tracing::info!(
+            session_events_deleted = report.session_events_deleted,
+            inactive_sessions_deleted = report.inactive_sessions_deleted,
+            refresh_jobs_deleted = report.refresh_jobs_deleted,
+            artifacts_deleted = report.artifacts_deleted,
+            disabled_sources_deleted = report.disabled_sources_deleted,
+            "startup retention gc applied"
+        );
+    }
+
     let semantic_enabled = config.embeddings.enabled && app.semantic_available();
 
     let status = app.get_status(
@@ -93,41 +112,48 @@ fn serve(args: RuntimeArgs) -> Result<()> {
         semantic_enabled,
     )?;
 
-    let service = Arc::new(McpService::with_app(status, app));
+    let mcp_auth: Arc<dyn AuthPort> = if config.mcp.sse.require_auth {
+        if config.auth.tokens.is_empty() {
+            anyhow::bail!("SSE auth is required but no auth tokens are configured");
+        }
+        Arc::new(BearerAuth::with_policy(
+            config.auth.tokens.clone(),
+            false,
+            config.authorization.allow_tools.clone(),
+            config.authorization.allow_corpora.clone(),
+        ))
+    } else {
+        Arc::new(BearerAuth::no_auth())
+    };
+
+    let mut service = Arc::new(McpService::with_app_and_auth(status, app, mcp_auth.clone()));
 
     // Determine if SSE should be enabled
     let enable_sse = args.sse.is_some() || config.mcp.enable_sse;
     let sse_bind = args.sse.as_deref().unwrap_or(config.mcp.sse.bind.as_str());
 
-    if enable_sse {
-        // Wire auth
-        let auth: Arc<dyn AuthPort> = if config.mcp.sse.require_auth {
-            if config.auth.tokens.is_empty() {
-                anyhow::bail!("SSE auth is required but no auth tokens are configured");
-            }
-            Arc::new(BearerAuth::new(config.auth.tokens.clone(), false))
-        } else {
-            Arc::new(BearerAuth::no_auth())
-        };
-
-        let sse_state = ck_transport_sse::SseState {
-            mcp: service.clone(),
-            auth,
-        };
-
-        // Start SSE server in a background thread
-        let sse_bind_owned = sse_bind.to_string();
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-            rt.block_on(async {
-                if let Err(e) = ck_transport_sse::serve_sse(sse_state, &sse_bind_owned).await {
-                    tracing::error!(error = %e, "SSE server error");
-                }
+    let sse_reload_state: Option<std::sync::Arc<ck_transport_sse::ReloadableSseState>> =
+        if enable_sse {
+            let state = std::sync::Arc::new(ck_transport_sse::ReloadableSseState::new(
+                service.clone(),
+                mcp_auth.clone(),
+            ));
+            let state_clone = state.clone();
+            let sse_bind_owned = sse_bind.to_string();
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+                rt.block_on(async {
+                    if let Err(e) = ck_transport_sse::serve_sse(state_clone, &sse_bind_owned).await
+                    {
+                        tracing::error!(error = %e, "SSE server error");
+                    }
+                });
             });
-        });
-
-        tracing::info!(bind = sse_bind, "SSE MCP server started");
-    }
+            tracing::info!(bind = sse_bind, "SSE MCP server started");
+            Some(state)
+        } else {
+            None
+        };
 
     // Periodic refresh background thread
     let running = Arc::new(AtomicBool::new(true));
@@ -189,11 +215,56 @@ fn serve(args: RuntimeArgs) -> Result<()> {
     }
 
     // Always serve stdio (stdin loop)
+    let mut active_config = config.clone();
+    let config_path = args.config.clone();
     for line in io::stdin().lock().lines() {
         let line = line?;
         if line.trim().is_empty() {
             continue;
         }
+
+        if active_config.reload.enabled {
+            if let Some(path) = &config_path {
+                let mut reloaded = load_config(path)?;
+                if let Some(database) = &args.database {
+                    reloaded.storage.database_path = database.clone();
+                }
+                if reloaded != active_config {
+                    tracing::info!(config_path = path, "configuration reloaded");
+                    let reload_store = SqliteStore::open(&reloaded.storage.database_path)?;
+                    reload_store.migrate()?;
+                    let reload_storage_status = reload_store.status()?;
+                    let reload_app = wire_app(&reload_store, &data_dir, &reloaded)?;
+                    let reload_semantic_enabled =
+                        reloaded.embeddings.enabled && reload_app.semantic_available();
+                    let reload_status = reload_app.get_status(
+                        &started_at,
+                        reload_storage_status,
+                        &reloaded.retrieval.default_mode,
+                        reload_semantic_enabled,
+                    )?;
+                    service = Arc::new(McpService::with_app(reload_status, reload_app));
+                    active_config = reloaded;
+                    if let Some(sse_state) = &sse_reload_state {
+                        let reload_mcp_auth: Arc<dyn AuthPort> =
+                            if active_config.mcp.sse.require_auth {
+                                Arc::new(BearerAuth::with_policy(
+                                    active_config.auth.tokens.clone(),
+                                    false,
+                                    active_config.authorization.allow_tools.clone(),
+                                    active_config.authorization.allow_corpora.clone(),
+                                ))
+                            } else {
+                                Arc::new(BearerAuth::no_auth())
+                            };
+                        sse_state.replace_service(service.clone());
+                        sse_state.replace_auth(reload_mcp_auth);
+                        tracing::info!("SSE state reloaded with new config");
+                    }
+                }
+            }
+        }
+
         println!("{}", ck_transport_stdio::handle_line(&service, &line)?);
     }
 

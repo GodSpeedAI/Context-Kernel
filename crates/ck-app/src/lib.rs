@@ -1,10 +1,14 @@
 use anyhow::Result;
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use ck_core::entities::*;
 use ck_core::ports::*;
 use ck_core::types::*;
 use serde_json::json;
 use ulid::Ulid;
+
+pub use ck_memory::{
+    classify_event_kind, EventRetentionClass, SessionRetentionPolicy as MemoryRetentionPolicy,
+};
 
 /// Application use cases for Context Kernel.
 /// Each use case orchestrates ports to accomplish a domain operation.
@@ -19,6 +23,76 @@ pub struct AppServices {
     chunker: Box<dyn Chunker>,
     embedding: Option<Box<dyn EmbeddingPort>>,
     vector_search: Option<Box<dyn VectorSearchPort>>,
+}
+
+// --- retention GC ---
+
+#[derive(Debug, Clone)]
+pub struct RetentionPolicy {
+    pub session_event_days: i64,
+    pub inactive_session_days: i64,
+    pub refresh_job_days: i64,
+    pub artifact_days: i64,
+    pub disabled_source_days: i64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RetentionGcReport {
+    pub session_events_deleted: u64,
+    pub inactive_sessions_deleted: u64,
+    pub refresh_jobs_deleted: u64,
+    pub artifacts_deleted: u64,
+    pub disabled_sources_deleted: u64,
+    pub artifact_payload_errors: u64,
+}
+
+impl AppServices {
+    pub fn run_retention_gc(&self, policy: RetentionPolicy) -> Result<RetentionGcReport> {
+        let now = Utc::now();
+        let event_cutoff = (now - Duration::days(policy.session_event_days)).to_rfc3339();
+        let session_cutoff = (now - Duration::days(policy.inactive_session_days)).to_rfc3339();
+        let job_cutoff = (now - Duration::days(policy.refresh_job_days)).to_rfc3339();
+        let artifact_cutoff = (now - Duration::days(policy.artifact_days)).to_rfc3339();
+        let source_cutoff = (now - Duration::days(policy.disabled_source_days)).to_rfc3339();
+
+        let expired_artifact_ids = self.storage.list_artifacts_older_than(&artifact_cutoff)?;
+        let mut artifact_payload_errors: u64 = 0;
+        for artifact_id in &expired_artifact_ids {
+            if let Err(e) = self.artifact_store.delete_artifact_payload(artifact_id) {
+                tracing::warn!(artifact_id = %artifact_id, error = %e, "failed to delete artifact payload");
+                artifact_payload_errors += 1;
+            }
+        }
+
+        let report = RetentionGcReport {
+            session_events_deleted: self
+                .storage
+                .delete_unpinned_session_events_older_than(&event_cutoff)?,
+            inactive_sessions_deleted: self
+                .storage
+                .delete_inactive_sessions_older_than(&session_cutoff)?,
+            refresh_jobs_deleted: self
+                .storage
+                .delete_finished_refresh_jobs_older_than(&job_cutoff)?,
+            artifacts_deleted: self.storage.delete_artifacts_older_than(&artifact_cutoff)?,
+            disabled_sources_deleted: self
+                .storage
+                .delete_disabled_sources_older_than(&source_cutoff)?,
+            artifact_payload_errors,
+        };
+
+        tracing::info!(
+            session_events_deleted = report.session_events_deleted,
+            inactive_sessions_deleted = report.inactive_sessions_deleted,
+            refresh_jobs_deleted = report.refresh_jobs_deleted,
+            artifacts_deleted = report.artifacts_deleted,
+            disabled_sources_deleted = report.disabled_sources_deleted,
+            artifact_payload_errors = report.artifact_payload_errors,
+            "retention gc completed"
+        );
+
+        Ok(report)
+    }
 }
 
 impl AppServices {
@@ -106,6 +180,8 @@ impl AppServices {
                 content,
             )?;
 
+            self.storage.upsert_artifact(&artifact)?;
+
             let text = req.text.as_deref().unwrap_or_default();
             let display_text = if text.is_empty() {
                 artifact.summary.as_deref().unwrap_or_default()
@@ -135,13 +211,15 @@ impl AppServices {
                 // Store large text as artifact
                 let artifact_id = format!("art_{}", Ulid::new());
                 let content_type = "text/plain".to_string();
-                self.artifact_store.store_artifact(
+                let artifact = self.artifact_store.store_artifact(
                     &artifact_id,
                     Some(&req.session_id),
                     &req.kind,
                     Some(&content_type),
                     text.as_bytes(),
                 )?;
+
+                self.storage.upsert_artifact(&artifact)?;
 
                 let summary: String = text.chars().take(500).collect();
                 let event = self.session_memory.add_event(
@@ -429,6 +507,30 @@ impl AppServices {
                 (None, None)
             };
 
+        if let Some(cid) = &corpus_id {
+            if let Some(corpus) = self.storage.get_corpus(cid)? {
+                if corpus.visibility == "private" {
+                    let allowed_scopes: Vec<String> = req
+                        .filters
+                        .get("source_scope")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
+                    if !allowed_scopes.is_empty() && !allowed_scopes.contains(&cid.to_string()) {
+                        anyhow::bail!(
+                            "unauthorized corpus: {} is private and not in source_scope",
+                            cid
+                        );
+                    }
+                }
+            }
+        }
+
         // Search chunks via FTS (lexical)
         let mut scored = self.search.search_chunks(
             &req.query,
@@ -621,6 +723,7 @@ mod tests {
         health_updates: Vec<(String, SourceHealth, Option<String>)>,
         normalized_corpora: Vec<String>,
         fetch_should_fail: bool,
+        retention_calls: Vec<String>,
     }
 
     #[derive(Clone)]
@@ -690,8 +793,16 @@ mod tests {
             Ok(())
         }
 
-        fn get_corpus(&self, _corpus_id: &str) -> Result<Option<Corpus>> {
-            Ok(None)
+        fn get_corpus(&self, corpus_id: &str) -> Result<Option<Corpus>> {
+            Ok(self
+                .state
+                .0
+                .lock()
+                .unwrap()
+                .corpora
+                .iter()
+                .find(|c| c.corpus_id == corpus_id)
+                .cloned())
         }
 
         fn list_corpora(&self) -> Result<Vec<Corpus>> {
@@ -813,6 +924,64 @@ mod tests {
         fn count_jobs_by_status(&self, _status_str: &str) -> Result<u64> {
             Ok(0)
         }
+
+        fn delete_unpinned_session_events_older_than(&self, _cutoff_rfc3339: &str) -> Result<u64> {
+            self.state
+                .0
+                .lock()
+                .unwrap()
+                .retention_calls
+                .push("session_events".to_string());
+            Ok(1)
+        }
+
+        fn delete_inactive_sessions_older_than(&self, _cutoff_rfc3339: &str) -> Result<u64> {
+            self.state
+                .0
+                .lock()
+                .unwrap()
+                .retention_calls
+                .push("inactive_sessions".to_string());
+            Ok(2)
+        }
+
+        fn delete_finished_refresh_jobs_older_than(&self, _cutoff_rfc3339: &str) -> Result<u64> {
+            self.state
+                .0
+                .lock()
+                .unwrap()
+                .retention_calls
+                .push("refresh_jobs".to_string());
+            Ok(3)
+        }
+
+        fn delete_disabled_sources_older_than(&self, _cutoff_rfc3339: &str) -> Result<u64> {
+            self.state
+                .0
+                .lock()
+                .unwrap()
+                .retention_calls
+                .push("disabled_sources".to_string());
+            Ok(5)
+        }
+
+        fn delete_artifacts_older_than(&self, _cutoff_rfc3339: &str) -> Result<u64> {
+            self.state
+                .0
+                .lock()
+                .unwrap()
+                .retention_calls
+                .push("artifacts".to_string());
+            Ok(4)
+        }
+
+        fn list_artifacts_older_than(&self, _cutoff_rfc3339: &str) -> Result<Vec<String>> {
+            Ok(vec![])
+        }
+
+        fn upsert_artifact(&self, _artifact: &Artifact) -> Result<()> {
+            Ok(())
+        }
     }
 
     struct NoopSessionMemory;
@@ -876,6 +1045,10 @@ mod tests {
 
         fn read_artifact_content(&self, _artifact_id: &str) -> Result<Option<Vec<u8>>> {
             Ok(None)
+        }
+
+        fn delete_artifact_payload(&self, _artifact_id: &str) -> Result<bool> {
+            Ok(false)
         }
     }
 
@@ -1172,9 +1345,79 @@ mod tests {
             )]
         );
     }
-}
 
-// --- resolve_reference ---
+    #[test]
+    fn retention_gc_delegates_to_storage_and_reports_counts() {
+        let state = SharedState::new();
+        let app = test_app(state.clone());
+
+        let report = app
+            .run_retention_gc(RetentionPolicy {
+                session_event_days: 90,
+                inactive_session_days: 30,
+                refresh_job_days: 30,
+                artifact_days: 90,
+                disabled_source_days: 30,
+            })
+            .unwrap();
+
+        assert_eq!(
+            report,
+            RetentionGcReport {
+                session_events_deleted: 1,
+                inactive_sessions_deleted: 2,
+                refresh_jobs_deleted: 3,
+                artifacts_deleted: 4,
+                disabled_sources_deleted: 5,
+                artifact_payload_errors: 0,
+            }
+        );
+        assert_eq!(
+            state.0.lock().unwrap().retention_calls,
+            vec![
+                "session_events",
+                "inactive_sessions",
+                "refresh_jobs",
+                "artifacts",
+                "disabled_sources"
+            ]
+        );
+    }
+
+    #[test]
+    fn query_reference_rejects_private_corpus_outside_source_scope() {
+        let state = SharedState::new();
+        {
+            let mut s = state.0.lock().unwrap();
+            s.corpora.push(Corpus {
+                corpus_id: "private_docs".to_string(),
+                name: "Private Docs".to_string(),
+                kind: "library_docs".to_string(),
+                visibility: "private".to_string(),
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+            });
+        }
+        let app = test_app(state);
+
+        let err = app
+            .query_reference(QueryReferenceRequest {
+                canonical_id: Some("private_docs".to_string()),
+                query: "secret".to_string(),
+                mode: None,
+                top_k: 5,
+                version: None,
+                filters: serde_json::json!({"source_scope": ["public_docs"]}),
+            })
+            .unwrap_err();
+
+        assert!(
+            err.to_string().contains("unauthorized corpus"),
+            "got: {}",
+            err
+        );
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ResolveReferenceRequest {
@@ -1253,10 +1496,18 @@ impl AppServices {
             }
         }
 
-        let candidates = candidates_with_metadata
-            .into_iter()
-            .take(req.limit as usize)
-            .collect();
+        let candidates = if let Some(scope) = &req.source_scope {
+            candidates_with_metadata
+                .into_iter()
+                .filter(|c| scope.contains(&c.canonical_id))
+                .take(req.limit as usize)
+                .collect()
+        } else {
+            candidates_with_metadata
+                .into_iter()
+                .take(req.limit as usize)
+                .collect()
+        };
 
         Ok(ResolveReferenceResponse {
             candidates,

@@ -257,6 +257,32 @@ impl SourceAdapter for GitHubSourceAdapter {
     }
 }
 
+fn units_from_tree_response(response: &TreeResponse, config: &GitHubConfig) -> Result<Vec<String>> {
+    if response.truncated {
+        anyhow::bail!(
+            "GitHub tree API returned truncated results for {}/{}. \
+             The repository is too large for the recursive tree API. \
+             Configure a static `files` list in the source config to specify which files to index.",
+            config.owner,
+            config.repo
+        );
+    }
+
+    let prefix = config.path.as_deref().unwrap_or("");
+    let mut paths = Vec::new();
+    for entry in &response.tree {
+        if entry.entry_type != "blob" {
+            continue;
+        }
+        if !prefix.is_empty() && !entry.path.starts_with(prefix) {
+            continue;
+        }
+        paths.push(entry.path.clone());
+    }
+    paths.sort();
+    Ok(paths)
+}
+
 fn discover_via_tree_api(config: &GitHubConfig) -> Result<Vec<String>> {
     let url = config.tree_url();
     let response: TreeResponse = build_request(config, &url)
@@ -265,30 +291,7 @@ fn discover_via_tree_api(config: &GitHubConfig) -> Result<Vec<String>> {
         .into_json()
         .context("failed to parse GitHub tree response")?;
 
-    if response.truncated {
-        tracing::warn!(
-            "GitHub tree API returned truncated results for {}/{}; some files may be missing",
-            config.owner,
-            config.repo
-        );
-    }
-
-    let prefix = config.path.as_deref().unwrap_or("");
-
-    let mut paths = Vec::new();
-    for entry in &response.tree {
-        if entry.entry_type != "blob" {
-            continue;
-        }
-
-        if !prefix.is_empty() && !entry.path.starts_with(prefix) {
-            continue;
-        }
-
-        paths.push(entry.path.clone());
-    }
-    paths.sort();
-    Ok(paths)
+    units_from_tree_response(&response, config)
 }
 
 fn decode_content(response: &ContentsResponse) -> Result<Vec<u8>> {
@@ -605,6 +608,23 @@ mod tests {
 
         let bytes = decode_content(&response).unwrap();
         assert_eq!(String::from_utf8(bytes).unwrap(), "Hello World");
+    }
+
+    #[test]
+    fn discover_units_reports_truncated_tree_error() {
+        let response = TreeResponse {
+            tree: vec![TreeEntry {
+                path: "README.md".to_string(),
+                entry_type: "blob".to_string(),
+            }],
+            truncated: true,
+        };
+
+        let config: GitHubConfig =
+            serde_json::from_str(r#"{"owner": "test", "repo": "large-repo"}"#).unwrap();
+
+        let err = units_from_tree_response(&response, &config).unwrap_err();
+        assert!(err.to_string().contains("truncated"), "got: {}", err);
     }
 
     #[test]

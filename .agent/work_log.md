@@ -1,5 +1,61 @@
 # Work Log
 
+## 2026-06-02 18:00 EDT
+- Task: Updated all `.agent/` memory files to reflect completed deployment readiness state.
+- Files changed: `.agent/project_state.md`, `.agent/current_plan.md`, `.agent/evidence.md`, `.agent/decisions.md`, `.agent/open_questions.md`, `.agent/work_log.md`
+- Tests run: None (documentation-only update)
+- Results: All memory files now accurately reflect the completed 18-task deployment readiness plan.
+- Notes: This was the final step — updating memory files to match actual repository state after all deployment readiness work was completed.
+
+## 2026-06-02 17:00 EDT
+- Task: Deployment readiness tasks 14-18 — config templates, smoke tests, operations docs, release workflow, final release gate.
+- Files changed: `config/context-kernal.example.toml`, `config/context-kernal.local.example.toml`, `config/context-kernal.sse.example.toml`, `crates/ck-bin/tests/cli.rs` (4 new tests), `docs/operations.md`, `docs/configuration.md`, `docs/security.md`, `docs/release.md`, `.github/workflows/release.yml`
+- Tests run: `cargo test --workspace` (186 tests pass), `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo build --release -p ck-bin`
+- Results: All pass. Release binary `context-kernal` supports `migrate`, `doctor`, `export-schema`, and `serve` commands.
+- Notes: Final release gate verified. All 18 deployment readiness tasks complete.
+
+## 2026-06-02 16:00 EDT
+- Task: Deployment readiness tasks 11-13 — ck-memory crate, Context7/PDF adapter scope decisions.
+- Files changed: `crates/ck-memory/Cargo.toml`, `crates/ck-memory/src/lib.rs`, `Cargo.toml` (added workspace member), `crates/ck-app/Cargo.toml` (added ck-memory dep), `crates/ck-app/src/lib.rs` (re-exports)
+- Tests run: `cargo test -p ck-memory`, `cargo test --workspace`
+- Results: ck-memory tests pass. Context7 and PDF adapters removed from v1 scope.
+- Notes: ck-memory provides EventRetentionClass, classify_event_kind, SessionRetentionPolicy.
+
+## 2026-06-02 15:00 EDT
+- Task: Deployment readiness tasks 5-10 — artifact payload GC, source scope filtering, vector filtering, SSRF DNS resolution, GitHub truncated tree, web incremental refresh.
+- Files changed: `crates/ck-core/src/ports/artifact.rs`, `crates/ck-core/src/ports/storage.rs`, `crates/ck-core/src/ports/vector_search.rs`, `crates/ck-artifacts/src/lib.rs`, `crates/ck-storage-sqlite/src/lib.rs`, `crates/ck-vector/src/lib.rs`, `crates/ck-adapter-web/src/lib.rs`, `crates/ck-adapter-github/src/lib.rs`, `crates/ck-app/src/lib.rs`, `crates/ck-scheduler/src/lib.rs`
+- Tests run: `cargo test --workspace`
+- Results: All tests pass. Artifact payload GC, source scope filtering, vector filtering, SSRF DNS resolution, truncated tree detection, and conditional request headers all implemented.
+- Notes: StoragePort and ArtifactPort trait changes required updating all implementors (SqliteStore, MockStorage, TestStorage, NoopArtifactStore).
+
+## 2026-06-02 14:30 EDT
+- Task: Deployment readiness tasks 1-4 — copilot-instructions, ck-observability, ToolTelemetry, ReloadableSseState.
+- Files changed: `.github/copilot-instructions.md`, `crates/ck-observability/Cargo.toml`, `crates/ck-observability/src/lib.rs`, `Cargo.toml` (added workspace member), `crates/ck-mcp/src/lib.rs`, `crates/ck-transport-sse/src/lib.rs`, `crates/ck-bin/Cargo.toml`, `crates/ck-bin/src/main.rs`
+- Tests run: `cargo test --workspace`
+- Results: All tests pass. ck-observability provides text/JSON tracing init. ToolTelemetry instruments dispatch_tool. ReloadableSseState enables SSE config reload.
+- Notes: ck-bin now uses ck_observability::init_observability instead of direct tracing init.
+
+## 2026-06-02 14:00 EDT
+- Task: Task 10 — Add web incremental refresh hints (conditional request headers).
+- Files changed: `crates/ck-adapter-web/src/lib.rs`
+- Tests run: `cargo test -p ck-adapter-web` (41 tests pass)
+- Results: All 41 tests pass (3 new). Added `previous_etag` and `previous_last_modified` fields to `WebConfig`, conditional `If-None-Match` / `If-Modified-Since` headers in `fetch_content`, and 3 new tests.
+- Notes: ureq `Request::set` consumes self and returns `Self`; used reassignment pattern for conditional header injection.
+
+## 2026-06-02 10:05 EDT
+- Task: Created deployment readiness plan for remaining partials and release blockers.
+- Files changed: `docs/plans/2026-06-02-deployment-readiness.md`, `.agent/current_plan.md`.
+- Tests run: Not run; planning-only change.
+- Results: Plan created with release standard, TDD tasks, file targets, and validation commands.
+- Notes: Plan covers OTEL, SSE reload, artifact payload GC, source-scope authz, vector cleanup/filtering, adapter hardening, `ck-memory`, adapter scope decisions, config templates, smoke tests, docs, and release workflow.
+
+## 2026-06-02 10:05 EDT
+- Task: Implemented Milestone 10 hardening and packaging.
+- Files changed: `.agent/current_plan.md`, `.agent/project_state.md`, `.agent/work_log.md`, `.agent/decisions.md`, `.agent/open_questions.md`, `.agent/evidence.md`, `.github/workflows/ci.yml`, `crates/ck-core/src/ports/auth.rs`, `crates/ck-core/src/ports/storage.rs`, `crates/ck-config/src/lib.rs`, `crates/ck-auth/src/lib.rs`, `crates/ck-storage-sqlite/src/lib.rs`, `crates/ck-app/src/lib.rs`, `crates/ck-mcp/src/lib.rs`, `crates/ck-transport-sse/src/lib.rs`, `crates/ck-bin/src/main.rs`, `crates/ck-bin/tests/cli.rs`, `crates/ck-scheduler/src/lib.rs`, `docs/schema.md`, `docs/mcp-contracts.md`, `docs/install.md`, `docs/ci.md`.
+- Tests run: `cargo test -p ck-config -p ck-auth -p ck-storage-sqlite -p ck-app -p ck-mcp -p ck-bin`; `cargo fmt --check && cargo clippy --workspace --all-targets && cargo test --workspace`.
+- Results: All focused tests passed; full fmt/clippy/workspace test gate passed.
+- Notes: Implemented typed M10 config, retention GC, authz policy, schema export, startup retention application, stdio-loop file config reload, SSE policy enforcement, install docs, CI example. OTEL endpoint is represented in config and docs, but no OTEL exporter crate is wired.
+
 ## 2026-06-02 10:30 EDT
 - Task: Implement Milestones 7-9 from Context_Kernel_Service_Plan.md
 - Files changed:

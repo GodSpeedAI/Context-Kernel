@@ -2,6 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use assert_cmd::Command;
+use base64::Engine;
 use predicates::prelude::*;
 
 fn temp_db(dir: &tempfile::TempDir) -> PathBuf {
@@ -45,6 +46,21 @@ fn migrate_creates_sqlite_database() {
         .stdout(predicate::str::contains("migrated"));
 
     assert!(db_path.exists());
+}
+
+#[test]
+fn export_schema_prints_sqlite_schema() {
+    let mut cmd = Command::cargo_bin("context-kernal").unwrap();
+    cmd.arg("export-schema");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "CREATE TABLE IF NOT EXISTS sources",
+        ))
+        .stdout(predicate::str::contains(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts",
+        ));
 }
 
 #[test]
@@ -365,4 +381,150 @@ fn query_reference_includes_citations_after_ingest() {
         .success()
         .stdout(predicate::str::contains("query_id"))
         .stdout(predicate::str::contains("results"));
+}
+
+#[test]
+fn schema_export_can_initialize_database() {
+    let mut cmd = Command::cargo_bin("context-kernal").unwrap();
+    let output = cmd
+        .arg("export-schema")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let schema = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        schema.contains("schema_migrations"),
+        "schema should contain schema_migrations table"
+    );
+    assert!(
+        schema.contains("CREATE TABLE IF NOT EXISTS sources"),
+        "schema should contain sources table"
+    );
+    assert!(
+        schema.contains("CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts"),
+        "schema should contain FTS table"
+    );
+}
+
+#[test]
+fn migrate_then_doctor() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("kernel.db");
+
+    let mut cmd = Command::cargo_bin("context-kernal").unwrap();
+    cmd.args(["migrate", "--database", db_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("migrated"));
+
+    let mut cmd = Command::cargo_bin("context-kernal").unwrap();
+    cmd.args(["doctor", "--database", db_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("sqlite"))
+        .stdout(predicate::str::contains("fts5_enabled=true"));
+}
+
+#[test]
+fn retention_deletes_old_artifact_payload() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("kernel.db");
+    let data_dir = dir.path().join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+
+    let config_content = format!(
+        r#"
+[service]
+name = "context-kernal"
+
+[storage]
+database_path = "{}"
+
+[retrieval]
+default_mode = "hybrid"
+semantic_enabled = false
+
+[retention]
+enabled = true
+session_event_days = 90
+inactive_session_days = 30
+refresh_job_days = 30
+artifact_days = 0
+disabled_source_days = 30
+"#,
+        db_path.display()
+    );
+
+    let config_path = dir.path().join("test-config.toml");
+    std::fs::write(&config_path, &config_content).unwrap();
+
+    let store_input = tool_call(
+        1,
+        "store_context",
+        serde_json::json!({"session_id":"sess-ret","kind":"note","artifact_ref":{"content":base64::engine::general_purpose::STANDARD.encode(b"test artifact data for retention"),"content_type":"text/plain"},"metadata":{}}),
+    );
+
+    let mut cmd = Command::cargo_bin("context-kernal").unwrap();
+    cmd.args([
+        "serve",
+        "--config",
+        config_path.to_str().unwrap(),
+        "--database",
+        db_path.to_str().unwrap(),
+        "--data-dir",
+        data_dir.to_str().unwrap(),
+    ])
+    .write_stdin(store_input);
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("event_id"));
+}
+
+#[test]
+fn serve_with_local_config_template() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("kernel.db");
+    let data_dir = dir.path().join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+
+    let config_content = format!(
+        r#"
+[service]
+name = "context-kernal"
+
+[storage]
+database_path = "{}"
+
+[retrieval]
+default_mode = "hybrid"
+semantic_enabled = false
+
+[retention]
+enabled = false
+"#,
+        db_path.display()
+    );
+
+    let config_path = dir.path().join("test-config.toml");
+    std::fs::write(&config_path, &config_content).unwrap();
+
+    let input = tool_call(1, "get_status", serde_json::json!({}));
+
+    let mut cmd = Command::cargo_bin("context-kernal").unwrap();
+    cmd.args([
+        "serve",
+        "--config",
+        config_path.to_str().unwrap(),
+        "--database",
+        db_path.to_str().unwrap(),
+        "--data-dir",
+        data_dir.to_str().unwrap(),
+    ])
+    .write_stdin(input);
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains(r#""name":"context-kernel""#));
 }

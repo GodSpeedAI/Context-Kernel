@@ -1,0 +1,57 @@
+# Context Kernel - SSE Remote Serving Configuration
+# Usage: context-kernal serve --config config/context-kernal.sse.toml --sse 0.0.0.0:8765
+
+[service]
+name = "context-kernal"
+
+[storage]
+database_path = "./data/kernel.db"
+
+[retrieval]
+default_mode = "hybrid"
+semantic_enabled = false
+
+[mcp]
+enable_stdio = false
+enable_sse = true
+
+[mcp.sse]
+bind = "127.0.0.1:8765"
+base_path = "/mcp"
+require_auth = true
+
+[auth]
+trust_mode = "internal"
+# Generate tokens: openssl rand -hex 32
+tokens = ["${CONTEXT_KERNEL_AUTH_TOKEN}"]
+
+[scheduler]
+enable_periodic_refresh = true
+refresh_interval_secs = 1800
+
+[embeddings]
+enabled = false
+provider = "none"
+api_base = ""
+api_key = ""
+model = "text-embedding-3-small"
+dimensions = 1536
+
+[reload]
+enabled = true
+
+[retention]
+enabled = true
+session_event_days = 30
+inactive_session_days = 7
+refresh_job_days = 7
+artifact_days = 30
+disabled_source_days = 14
+
+[authorization]
+allow_tools = ["get_status", "store_context", "recall_context", "query_reference", "resolve_reference", "ingest_source", "refresh_source"]
+allow_corpora = ["*"]
+
+[observability]
+log_format = "json"
+otel_endpoint = "http://127.0.0.1:4317"

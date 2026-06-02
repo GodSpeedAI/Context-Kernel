@@ -64,4 +64,25 @@ pub trait StoragePort: Send + Sync {
 
     /// Count jobs by status string.
     fn count_jobs_by_status(&self, status_str: &str) -> Result<u64>;
+
+    /// Delete retention-eligible session events older than a timestamp, preserving pinned events.
+    fn delete_unpinned_session_events_older_than(&self, cutoff_rfc3339: &str) -> Result<u64>;
+
+    /// Delete closed/compacted sessions older than a timestamp.
+    fn delete_inactive_sessions_older_than(&self, cutoff_rfc3339: &str) -> Result<u64>;
+
+    /// Delete finished refresh jobs older than a timestamp.
+    fn delete_finished_refresh_jobs_older_than(&self, cutoff_rfc3339: &str) -> Result<u64>;
+
+    /// Delete disabled sources older than a timestamp.
+    fn delete_disabled_sources_older_than(&self, cutoff_rfc3339: &str) -> Result<u64>;
+
+    /// Insert or replace artifact metadata.
+    fn upsert_artifact(&self, artifact: &Artifact) -> Result<()>;
+
+    /// Delete artifact metadata rows older than a timestamp.
+    fn delete_artifacts_older_than(&self, cutoff_rfc3339: &str) -> Result<u64>;
+
+    /// List artifact IDs older than a cutoff timestamp.
+    fn list_artifacts_older_than(&self, cutoff_rfc3339: &str) -> Result<Vec<String>>;
 }

@@ -105,6 +105,23 @@ impl ArtifactPort for FileArtifactStore {
         let bytes = fs::read(&bin_path)?;
         Ok(Some(bytes))
     }
+
+    fn delete_artifact_payload(&self, artifact_id: &str) -> Result<bool> {
+        validate_id(artifact_id)?;
+        let bin_path = self.bin_path(artifact_id);
+        let meta_path = self.meta_path(artifact_id);
+
+        let mut deleted = false;
+        if bin_path.exists() {
+            fs::remove_file(&bin_path)?;
+            deleted = true;
+        }
+        if meta_path.exists() {
+            fs::remove_file(&meta_path)?;
+            deleted = true;
+        }
+        Ok(deleted)
+    }
 }
 
 #[cfg(test)]
@@ -159,6 +176,28 @@ mod tests {
         let (_tmp, store) = make_store();
         assert!(store.get_artifact("nope").unwrap().is_none());
         assert!(store.read_artifact_content("nope").unwrap().is_none());
+    }
+
+    #[test]
+    fn delete_artifact_removes_payload_file() {
+        let (_tmp, store) = make_store();
+        store
+            .store_artifact("art_1", Some("sess"), "note", Some("text/plain"), b"hello")
+            .unwrap();
+
+        assert!(store.read_artifact_content("art_1").unwrap().is_some());
+
+        let deleted = store.delete_artifact_payload("art_1").unwrap();
+        assert!(deleted);
+
+        assert!(store.read_artifact_content("art_1").unwrap().is_none());
+    }
+
+    #[test]
+    fn delete_nonexistent_artifact_returns_false() {
+        let (_tmp, store) = make_store();
+        let deleted = store.delete_artifact_payload("nope").unwrap();
+        assert!(!deleted);
     }
 
     #[test]

@@ -122,7 +122,7 @@ impl SchedulerPort for RefreshScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ck_core::entities::Source;
+    use ck_core::entities::{Artifact, Source};
     use ck_core::types::SourceHealth;
     use std::sync::Mutex;
 
@@ -324,6 +324,27 @@ mod tests {
                 })
                 .count() as u64;
             Ok(count)
+        }
+        fn delete_unpinned_session_events_older_than(&self, _cutoff_rfc3339: &str) -> Result<u64> {
+            Ok(0)
+        }
+        fn delete_inactive_sessions_older_than(&self, _cutoff_rfc3339: &str) -> Result<u64> {
+            Ok(0)
+        }
+        fn delete_finished_refresh_jobs_older_than(&self, _cutoff_rfc3339: &str) -> Result<u64> {
+            Ok(0)
+        }
+        fn delete_disabled_sources_older_than(&self, _cutoff_rfc3339: &str) -> Result<u64> {
+            Ok(0)
+        }
+        fn delete_artifacts_older_than(&self, _cutoff_rfc3339: &str) -> Result<u64> {
+            Ok(0)
+        }
+        fn list_artifacts_older_than(&self, _cutoff_rfc3339: &str) -> Result<Vec<String>> {
+            Ok(vec![])
+        }
+        fn upsert_artifact(&self, _artifact: &Artifact) -> Result<()> {
+            Ok(())
         }
     }
 

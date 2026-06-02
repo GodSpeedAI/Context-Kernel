@@ -1,5 +1,21 @@
 # Decisions
 
+## Decision: Implement Milestone 10 as hardening primitives without schema version bump
+- Date: 2026-06-02 10:05 EDT
+- Context: Milestone 10 requires config reload, retention GC, authz by corpus/tool, telemetry, release docs, install docs, and CI examples. Existing schema already has enough timestamp/status columns for retention deletion.
+- Decision: Add typed config, storage retention methods, app GC orchestration, MCP/SSE authorization checks, and CLI schema export without adding a new SQLite migration.
+- Alternatives considered: Add a retention_jobs table or policy tables; rejected because configured retention can operate over existing tables. Add full OTEL exporter crates; deferred because current workspace uses tracing only and M10 can expose structured tracing without changing runtime dependency shape.
+- Evidence in codebase: `crates/ck-config/src/lib.rs`, `crates/ck-core/src/ports/storage.rs`, `crates/ck-storage-sqlite/src/lib.rs`, `crates/ck-app/src/lib.rs`, `crates/ck-mcp/src/lib.rs`, `crates/ck-transport-sse/src/lib.rs`, `crates/ck-bin/src/main.rs`.
+- Consequences: Retention is explicit and test-covered; artifact files are not deleted by GC yet. OTEL endpoint config exists but exporter wiring remains a follow-up.
+
+## Decision: Use allowlist authz policy on BearerAuth
+- Date: 2026-06-02 10:05 EDT
+- Context: Milestone 10 requires authz by corpus/tool and existing AuthPort only supported token validation.
+- Decision: Extend AuthPort with `authorize_tool` and `authorize_corpus`; implement allowlists in BearerAuth, defaulting to `*`.
+- Alternatives considered: New separate AuthorizationPort; rejected for now because token validation and policy are configured together in ck-bin. Per-token policy maps; deferred until multi-tenant auth is needed.
+- Evidence in codebase: `crates/ck-core/src/ports/auth.rs`, `crates/ck-auth/src/lib.rs`, `crates/ck-mcp/src/lib.rs`, `crates/ck-transport-sse/src/lib.rs`.
+- Consequences: SSE requests enforce token validation and tool/corpus allowlists before tool dispatch. Plain stdio remains a local/internal path.
+
 ## Decision: Use Milestone 0 as Initial Implementation Slice
 - Date: 2026-06-01
 - Context: User asked to follow the plan and implement the spec. The plan orders work by milestones and starts with a compilable skeleton.
@@ -143,3 +159,59 @@
 - Alternatives considered: Adding separate parameters per method; rejected as it would bloat the trait. Using a builder pattern; rejected as over-engineering.
 - Evidence in codebase: `crates/ck-core/src/ports/ranker.rs`, `crates/ck-ranker/src/lib.rs`, `crates/ck-app/src/lib.rs`.
 - Consequences: All ranker implementations and callers updated; clean extension point for future ranking signals.
+
+## Decision: ck-observability provides text/JSON tracing init only; OTEL exporter deferred
+- Date: 2026-06-02
+- Context: Deployment readiness task 1 required observability. Full OTEL exporter would add significant dependency weight.
+- Decision: ck-observability crate provides ObservabilityRuntimeConfig, init_observability (text or JSON tracing-subscriber), and ObservabilityGuard. OTEL endpoint config exists in ck-config but no exporter crate is wired.
+- Alternatives considered: Adding opentelemetry-otlp crate; deferred to avoid dependency complexity for v1. Using tracing-subscriber only without a crate; rejected because ck-observability provides a clean abstraction boundary.
+- Evidence in codebase: `crates/ck-observability/src/lib.rs`, `crates/ck-bin/src/main.rs`.
+- Consequences: Structured logging works; OTEL metrics/traces can be added later without changing ck-bin wiring.
+
+## Decision: ReloadableSseState uses RwLock<Arc<SseState>> for SSE config reload
+- Date: 2026-06-02
+- Context: SSE transport needed to support config reload without restart. SseState was previously a plain Arc.
+- Decision: Introduced ReloadableSseState wrapping RwLock<Arc<SseState>>. SSE handlers read through the RwLock. ck-bin updates the reloadable state when config changes.
+- Alternatives considered: tokio watch channel; rejected because SSE handlers are sync axum handlers. Rebuilding the entire axum server; rejected as too heavyweight.
+- Evidence in codebase: `crates/ck-transport-sse/src/lib.rs`, `crates/ck-bin/src/main.rs`.
+- Consequences: SSE config reload is lightweight; handlers always see the latest config.
+
+## Decision: Artifact payload GC orchestrated at app layer
+- Date: 2026-06-02
+- Context: Retention GC previously only deleted SQLite metadata rows, not artifact payload files on disk.
+- Decision: Added delete_artifact_payload to ArtifactPort, list_artifacts_older_than to StoragePort. AppServices::run_retention_gc orchestrates both metadata and payload deletion. RetentionGcReport includes artifact_payload_errors count.
+- Alternatives considered: Having ck-storage-sqlite directly delete files; rejected because storage layer should not know about filesystem paths. Having ck-artifacts scan for orphaned files; rejected because it would need to know about retention policy.
+- Evidence in codebase: `crates/ck-core/src/ports/artifact.rs`, `crates/ck-core/src/ports/storage.rs`, `crates/ck-app/src/lib.rs`.
+- Consequences: Clean separation: storage lists old artifacts, artifacts deletes payloads, app orchestrates.
+
+## Decision: SSRF DNS resolution via DnsResolver trait
+- Date: 2026-06-02
+- Context: Original SSRF protection only blocked IP literals, leaving DNS rebinding as a known gap.
+- Decision: Added DnsResolver trait with SystemDnsResolver (production) and StaticResolver (tests). validate_url_with_resolver resolves hostname and checks resulting IPs against private ranges.
+- Alternatives considered: Using hickory-resolver; rejected as over-engineering for v1. Keeping IP-literal-only protection; rejected as insufficient for production.
+- Evidence in codebase: `crates/ck-adapter-web/src/lib.rs`.
+- Consequences: DNS rebinding attacks mitigated; testable with StaticResolver for deterministic assertions.
+
+## Decision: Context7 dataset adapter and PDF adapter removed from v1 scope
+- Date: 2026-06-02
+- Context: Deployment readiness plan included Context7 dataset adapter (task 12) and PDF adapter (task 13). Both would add significant dependency weight and complexity.
+- Decision: Both removed from v1 scope. Context7 compatibility is provided through tool-contract aliases (resolve-library-id, get-library-docs, query-docs). PDF support can be added as a future adapter behind SourceAdapter port.
+- Alternatives considered: Implementing minimal versions; rejected as they would be incomplete and untested. Marking as stubbed; rejected as misleading.
+- Evidence in codebase: No ck-adapter-context7 or ck-adapter-pdf crates exist. Compatibility aliases in `crates/ck-mcp/src/lib.rs`.
+- Consequences: v1 focuses on filesystem, GitHub, and web adapters. Future adapters can be added without architecture changes.
+
+## Decision: ck-memory crate provides retention classification only
+- Date: 2026-06-02
+- Context: Deployment readiness task 11 required ck-memory crate. Full session memory management is already in ck-app and ck-storage-sqlite.
+- Decision: ck-memory provides EventRetentionClass, classify_event_kind, and SessionRetentionPolicy. ck-app re-exports these types. No duplication of existing session memory logic.
+- Alternatives considered: Moving all session memory logic to ck-memory; rejected as it would require significant refactoring of ck-app and ck-storage-sqlite. Not creating the crate; rejected as it was a deployment readiness requirement.
+- Evidence in codebase: `crates/ck-memory/src/lib.rs`, `crates/ck-app/src/lib.rs`.
+- Consequences: Clean classification layer; can be expanded to own more memory logic in future.
+
+## Decision: Vector filtering columns added to chunk_embeddings
+- Date: 2026-06-02
+- Context: Vector search had no corpus/library/document filtering, returning results across all data.
+- Decision: Added corpus_id, library_id, document_id columns to chunk_embeddings table. search_chunks filters by these fields. upsert_chunk_embedding_with_metadata stores filter columns.
+- Alternatives considered: Joining through documents table at query time; rejected as slower for vector search. Separate index table; rejected as redundant.
+- Evidence in codebase: `crates/ck-vector/src/lib.rs`.
+- Consequences: Vector search respects data boundaries; remove_chunk_embeddings_by_document enables clean document deletion.

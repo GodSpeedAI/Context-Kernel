@@ -1,4 +1,4 @@
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
@@ -9,6 +9,51 @@ use ulid::Ulid;
 use ck_core::entities::{Document, RawContent, SourceUnit};
 use ck_core::ports::{Normalizer, SourceAdapter};
 
+pub trait DnsResolver: Send + Sync {
+    fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, Box<dyn std::error::Error + Send + Sync>>;
+}
+
+pub struct SystemDnsResolver;
+
+impl DnsResolver for SystemDnsResolver {
+    fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, Box<dyn std::error::Error + Send + Sync>> {
+        let addr = format!("{}:80", host);
+        let ips: Vec<IpAddr> = addr.to_socket_addrs()?.map(|sa| sa.ip()).collect();
+        Ok(ips)
+    }
+}
+
+pub struct StaticResolver {
+    host: String,
+    ip: IpAddr,
+}
+
+impl StaticResolver {
+    pub fn new(host: &str, ip: &str) -> Self {
+        Self {
+            host: host.to_string(),
+            ip: ip.parse().expect("valid IP"),
+        }
+    }
+}
+
+impl DnsResolver for StaticResolver {
+    fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, Box<dyn std::error::Error + Send + Sync>> {
+        if host == self.host {
+            Ok(vec![self.ip])
+        } else {
+            Ok(vec![])
+        }
+    }
+}
+
+fn is_private_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => is_blocked_ipv4(v4),
+        IpAddr::V6(v6) => is_blocked_ipv6(v6),
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct WebConfig {
     urls: Vec<String>,
@@ -17,6 +62,10 @@ struct WebConfig {
     max_depth: u32,
     #[serde(default)]
     allowed_domains: Vec<String>,
+    #[serde(default)]
+    previous_etag: Option<String>,
+    #[serde(default)]
+    previous_last_modified: Option<String>,
 }
 
 fn default_max_depth() -> u32 {
@@ -61,10 +110,17 @@ impl SourceAdapter for WebSourceAdapter {
             serde_json::from_str(config_json).context("invalid web adapter config JSON")?;
         validate_url(url, &config.allowed_domains)?;
 
-        let response = ureq::AgentBuilder::new()
-            .redirects(0)
-            .build()
-            .get(url)
+        let agent = ureq::AgentBuilder::new().redirects(0).build();
+        let mut req = agent.get(url);
+
+        if let Some(etag) = &config.previous_etag {
+            req = req.set("If-None-Match", etag);
+        }
+        if let Some(lm) = &config.previous_last_modified {
+            req = req.set("If-Modified-Since", lm);
+        }
+
+        let response = req
             .call()
             .with_context(|| format!("HTTP request failed for {}", url))?;
 
@@ -158,21 +214,11 @@ fn is_blocked_ipv6(ip: &Ipv6Addr) -> bool {
     false
 }
 
-fn is_blocked_host(host: &str) -> bool {
-    let bare = host.trim_start_matches('[').trim_end_matches(']');
-    if let Ok(ipv4) = bare.parse::<Ipv4Addr>() {
-        return is_blocked_ipv4(&ipv4);
-    }
-    if let Ok(ipv6) = bare.parse::<Ipv6Addr>() {
-        return is_blocked_ipv6(&ipv6);
-    }
-    if host == "localhost" {
-        return true;
-    }
-    false
-}
-
-pub fn validate_url(url: &str, allowed_domains: &[String]) -> Result<()> {
+pub fn validate_url_with_resolver(
+    url: &str,
+    allowed_domains: &[String],
+    resolver: &dyn DnsResolver,
+) -> Result<()> {
     let parsed = url::Url::parse(url).with_context(|| format!("invalid URL: {}", url))?;
 
     let scheme = parsed.scheme().to_lowercase();
@@ -184,8 +230,30 @@ pub fn validate_url(url: &str, allowed_domains: &[String]) -> Result<()> {
         .host_str()
         .ok_or_else(|| anyhow::anyhow!("URL has no host: {}", url))?;
 
-    if is_blocked_host(host) {
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(ip) = bare.parse::<IpAddr>() {
+        if is_private_ip(&ip) {
+            bail!("blocked host (private/reserved IP) in URL: {}", url);
+        }
+    } else if host == "localhost" {
         bail!("blocked host (private/reserved IP) in URL: {}", url);
+    } else {
+        match resolver.resolve(host) {
+            Ok(ips) => {
+                for ip in ips {
+                    if is_private_ip(&ip) {
+                        bail!(
+                            "blocked host (resolves to private IP {}) in URL: {}",
+                            ip,
+                            url
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(host = host, error = %e, "DNS resolution failed for URL host");
+            }
+        }
     }
 
     if !allowed_domains.is_empty() {
@@ -207,6 +275,10 @@ pub fn validate_url(url: &str, allowed_domains: &[String]) -> Result<()> {
     }
 
     Ok(())
+}
+
+pub fn validate_url(url: &str, allowed_domains: &[String]) -> Result<()> {
+    validate_url_with_resolver(url, allowed_domains, &SystemDnsResolver)
 }
 
 fn html_to_text(html: &str) -> String {
@@ -725,5 +797,89 @@ mod tests {
         let normalizer = WebNormalizer;
         let docs = normalizer.normalize(&raw, "src1", "corp1").unwrap();
         assert_eq!(docs[0].title, "untitled");
+    }
+
+    #[test]
+    fn validate_url_with_resolver_blocks_private_dns_resolution() {
+        let resolver = StaticResolver::new("docs.example.com", "127.0.0.1");
+        let err = validate_url_with_resolver("https://docs.example.com/page", &[], &resolver)
+            .unwrap_err();
+        assert!(err.to_string().contains("private IP"), "got: {}", err);
+    }
+
+    #[test]
+    fn validate_url_with_resolver_allows_public_dns_resolution() {
+        let resolver = StaticResolver::new("docs.example.com", "93.184.216.34");
+        let result = validate_url_with_resolver("https://docs.example.com/page", &[], &resolver);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_url_with_resolver_blocks_private_ipv6_dns() {
+        let resolver = StaticResolver::new("evil.example.com", "::1");
+        let err = validate_url_with_resolver("https://evil.example.com/page", &[], &resolver)
+            .unwrap_err();
+        assert!(err.to_string().contains("private IP"), "got: {}", err);
+    }
+
+    #[test]
+    fn validate_url_with_resolver_allows_unresolvable_host() {
+        struct EmptyResolver;
+        impl DnsResolver for EmptyResolver {
+            fn resolve(
+                &self,
+                _host: &str,
+            ) -> Result<Vec<IpAddr>, Box<dyn std::error::Error + Send + Sync>> {
+                Ok(vec![])
+            }
+        }
+        let result = validate_url_with_resolver(
+            "https://unresolvable.example.com/page",
+            &[],
+            &EmptyResolver,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn config_parsing_with_conditional_headers() {
+        let json = r#"{"urls": ["https://example.com"], "previous_etag": "\"abc123\"", "previous_last_modified": "Tue, 02 Jun 2026 10:00:00 GMT"}"#;
+        let config: WebConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.previous_etag, Some("\"abc123\"".to_string()));
+        assert_eq!(
+            config.previous_last_modified,
+            Some("Tue, 02 Jun 2026 10:00:00 GMT".to_string())
+        );
+    }
+
+    #[test]
+    fn config_parsing_conditional_headers_default_none() {
+        let json = r#"{"urls": ["https://example.com"]}"#;
+        let config: WebConfig = serde_json::from_str(json).unwrap();
+        assert!(config.previous_etag.is_none());
+        assert!(config.previous_last_modified.is_none());
+    }
+
+    #[test]
+    fn fetch_content_records_etag_and_last_modified_in_metadata() {
+        let mut metadata = serde_json::Map::new();
+        metadata.insert(
+            "title".to_string(),
+            serde_json::Value::String("Test".to_string()),
+        );
+        metadata.insert(
+            "etag".to_string(),
+            serde_json::Value::String("\"abc\"".to_string()),
+        );
+        metadata.insert(
+            "last_modified".to_string(),
+            serde_json::Value::String("Tue, 02 Jun 2026 10:00:00 GMT".to_string()),
+        );
+
+        let metadata_json = serde_json::Value::Object(metadata).to_string();
+        let parsed: serde_json::Value = serde_json::from_str(&metadata_json).unwrap();
+
+        assert_eq!(parsed["etag"], "\"abc\"");
+        assert_eq!(parsed["last_modified"], "Tue, 02 Jun 2026 10:00:00 GMT");
     }
 }

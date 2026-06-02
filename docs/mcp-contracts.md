@@ -1,8 +1,22 @@
 # MCP Contracts
 
-Milestone 0 implements the `get_status` tool over stdio JSON-RPC `tools/call`.
+The service exposes MCP tools over stdio JSON-RPC `tools/call` and, when enabled, the SSE HTTP transport.
 
-Request:
+Implemented canonical tools:
+- `get_status`
+- `store_context`
+- `recall_context`
+- `ingest_source`
+- `refresh_source`
+- `query_reference`
+- `resolve_reference`
+
+Implemented compatibility aliases:
+- `resolve-library-id` maps to `resolve_reference`
+- `get-library-docs` maps to `query_reference`
+- `query-docs` maps to `query_reference`
+
+`get_status` request:
 
 ```json
 {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_status","arguments":{}}}
@@ -20,3 +34,5 @@ Response result shape:
   "retrieval": {"default_mode": "hybrid", "semantic_enabled": false}
 }
 ```
+
+When SSE auth is enabled, bearer token validation happens at the HTTP boundary and tool/corpus authorization is enforced before the MCP tool dispatch. Plain stdio calls remain local/internal and use the direct `call_tool` path.

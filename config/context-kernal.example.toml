@@ -1,0 +1,61 @@
+# Context Kernel - Full Production Configuration
+# Usage: context-kernal serve --config context-kernal.toml
+
+[service]
+name = "context-kernal"
+
+[storage]
+# Path to the SQLite database file.
+# Parent directories are created automatically.
+database_path = "./data/kernel.db"
+
+[retrieval]
+# Retrieval mode: "lexical", "semantic", or "hybrid"
+default_mode = "hybrid"
+semantic_enabled = false
+
+[mcp]
+enable_stdio = true
+enable_sse = false
+
+[mcp.sse]
+bind = "127.0.0.1:8765"
+base_path = "/mcp"
+require_auth = false
+
+[auth]
+trust_mode = "internal"
+# Tokens for bearer authentication.
+# Use ${ENV_VAR} syntax to load from environment variables.
+# tokens = ["${CONTEXT_KERNEL_AUTH_TOKEN}"]
+
+[scheduler]
+enable_periodic_refresh = false
+refresh_interval_secs = 1800
+
+[embeddings]
+enabled = false
+provider = "none"
+# api_base = "https://api.openai.com/v1"
+# api_key = "${OPENAI_API_KEY}"
+model = "text-embedding-3-small"
+dimensions = 1536
+
+[reload]
+enabled = false
+
+[retention]
+enabled = false
+session_event_days = 90
+inactive_session_days = 30
+refresh_job_days = 30
+artifact_days = 90
+disabled_source_days = 30
+
+[authorization]
+allow_tools = ["*"]
+allow_corpora = ["*"]
+
+[observability]
+log_format = "text"
+# otel_endpoint = "http://127.0.0.1:4317"

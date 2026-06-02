@@ -1,0 +1,47 @@
+# Context Kernel - Local Development Configuration
+# Usage: context-kernal serve --config config/context-kernal.local.toml
+
+[service]
+name = "context-kernal"
+
+[storage]
+database_path = "./data/kernel.db"
+
+[retrieval]
+default_mode = "hybrid"
+semantic_enabled = false
+
+[mcp]
+enable_stdio = true
+enable_sse = false
+
+[scheduler]
+enable_periodic_refresh = false
+refresh_interval_secs = 1800
+
+[embeddings]
+enabled = false
+provider = "none"
+api_base = ""
+api_key = ""
+model = "text-embedding-3-small"
+dimensions = 1536
+
+[reload]
+enabled = false
+
+[retention]
+enabled = true
+session_event_days = 90
+inactive_session_days = 30
+refresh_job_days = 30
+artifact_days = 90
+disabled_source_days = 30
+
+[authorization]
+allow_tools = ["*"]
+allow_corpora = ["*"]
+
+[observability]
+log_format = "text"
+# otel_endpoint = "http://127.0.0.1:4317"

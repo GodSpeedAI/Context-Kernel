@@ -10,17 +10,27 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
   chunk_id TEXT NOT NULL,
   model_id TEXT NOT NULL,
   vector_blob BLOB NOT NULL,
+  corpus_id TEXT,
+  library_id TEXT,
+  document_id TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (chunk_id, model_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_corpus_id ON chunk_embeddings(corpus_id);
+CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_library_id ON chunk_embeddings(library_id);
+CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_document_id ON chunk_embeddings(document_id);
 
 CREATE TABLE IF NOT EXISTS session_event_embeddings (
   event_id TEXT NOT NULL,
   model_id TEXT NOT NULL,
   vector_blob BLOB NOT NULL,
+  session_id TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (event_id, model_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_session_event_embeddings_session_id ON session_event_embeddings(session_id);
 "#;
 
 #[derive(Clone)]
@@ -98,9 +108,28 @@ impl VectorSearchPort for SqliteVectorStore {
         let conn = self.conn()?;
         let blob = encode_vector(vector);
         conn.execute(
-            "INSERT OR REPLACE INTO chunk_embeddings (chunk_id, model_id, vector_blob) \
-             VALUES (?1, ?2, ?3)",
+            "INSERT OR REPLACE INTO chunk_embeddings (chunk_id, model_id, vector_blob, corpus_id, library_id, document_id) \
+             VALUES (?1, ?2, ?3, NULL, NULL, NULL)",
             rusqlite::params![chunk_id, model_id, blob],
+        )?;
+        Ok(())
+    }
+
+    fn upsert_chunk_embedding_with_metadata(
+        &self,
+        chunk_id: &str,
+        model_id: &str,
+        vector: &[f64],
+        corpus_id: Option<&str>,
+        library_id: Option<&str>,
+        document_id: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn()?;
+        let blob = encode_vector(vector);
+        conn.execute(
+            "INSERT OR REPLACE INTO chunk_embeddings (chunk_id, model_id, vector_blob, corpus_id, library_id, document_id) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![chunk_id, model_id, blob, corpus_id, library_id, document_id],
         )?;
         Ok(())
     }
@@ -125,17 +154,30 @@ impl VectorSearchPort for SqliteVectorStore {
         &self,
         query_vector: &[f64],
         model_id: &str,
-        _corpus_id: Option<&str>,
-        _library_id: Option<&str>,
+        corpus_id: Option<&str>,
+        library_id: Option<&str>,
         limit: i64,
     ) -> Result<Vec<ScoredItem>> {
         let conn = self.conn()?;
-        let mut stmt =
-            conn.prepare("SELECT chunk_id, vector_blob FROM chunk_embeddings WHERE model_id = ?1")?;
-        let rows = stmt.query_map(rusqlite::params![model_id], |row| {
-            let id: String = row.get(0)?;
-            let blob: Vec<u8> = row.get(1)?;
-            Ok((id, blob))
+
+        let mut sql =
+            "SELECT chunk_id, vector_blob FROM chunk_embeddings WHERE model_id = ?".to_string();
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(model_id.to_string())];
+
+        if let Some(c) = corpus_id {
+            sql.push_str(" AND corpus_id = ?");
+            params.push(Box::new(c.to_string()));
+        }
+        if let Some(l) = library_id {
+            sql.push_str(" AND library_id = ?");
+            params.push(Box::new(l.to_string()));
+        }
+
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
         })?;
 
         let mut scored: Vec<ScoredItem> = Vec::new();
@@ -163,18 +205,26 @@ impl VectorSearchPort for SqliteVectorStore {
         &self,
         query_vector: &[f64],
         model_id: &str,
-        _session_id: Option<&str>,
+        session_id: Option<&str>,
         limit: i64,
     ) -> Result<Vec<ScoredItem>> {
         let conn = self.conn()?;
-        let mut stmt = conn.prepare(
-            "SELECT event_id, vector_blob FROM session_event_embeddings WHERE model_id = ?1",
-        )?;
 
-        let rows = stmt.query_map(rusqlite::params![model_id], |row| {
-            let id: String = row.get(0)?;
-            let blob: Vec<u8> = row.get(1)?;
-            Ok((id, blob))
+        let mut sql =
+            "SELECT event_id, vector_blob FROM session_event_embeddings WHERE model_id = ?"
+                .to_string();
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(model_id.to_string())];
+
+        if let Some(s) = session_id {
+            sql.push_str(" AND session_id = ?");
+            params.push(Box::new(s.to_string()));
+        }
+
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
         })?;
 
         let mut scored: Vec<ScoredItem> = Vec::new();
@@ -198,11 +248,12 @@ impl VectorSearchPort for SqliteVectorStore {
         Ok(scored)
     }
 
-    fn remove_chunk_embeddings_by_document(&self, _document_id: &str) -> Result<()> {
-        tracing::warn!(
-            "remove_chunk_embeddings_by_document is a no-op in ck-vector v1; \
-             use app-layer chunk ID deletion instead"
-        );
+    fn remove_chunk_embeddings_by_document(&self, document_id: &str) -> Result<()> {
+        let conn = self.conn()?;
+        conn.execute(
+            "DELETE FROM chunk_embeddings WHERE document_id = ?1",
+            rusqlite::params![document_id],
+        )?;
         Ok(())
     }
 }
@@ -413,5 +464,164 @@ mod tests {
         let results = cloned.search_chunks(&v, "m1", None, None, 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "chunk-1");
+    }
+
+    #[test]
+    fn search_chunks_filters_by_corpus_id() {
+        let (store, _dir) = test_store();
+        let vec_a = vec![1.0, 0.0, 0.0];
+        let vec_b = vec![0.0, 1.0, 0.0];
+        let query = vec![1.0, 0.0, 0.0];
+
+        store
+            .upsert_chunk_embedding_with_metadata(
+                "chunk-a",
+                "model-1",
+                &vec_a,
+                Some("corpus-1"),
+                None,
+                None,
+            )
+            .unwrap();
+        store
+            .upsert_chunk_embedding_with_metadata(
+                "chunk-b",
+                "model-1",
+                &vec_b,
+                Some("corpus-2"),
+                None,
+                None,
+            )
+            .unwrap();
+
+        let results = store
+            .search_chunks(&query, "model-1", Some("corpus-1"), None, 10)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "chunk-a");
+    }
+
+    #[test]
+    fn search_chunks_filters_by_library_id() {
+        let (store, _dir) = test_store();
+        let vec_a = vec![1.0, 0.0];
+        let query = vec![1.0, 0.0];
+
+        store
+            .upsert_chunk_embedding_with_metadata(
+                "chunk-a",
+                "model-1",
+                &vec_a,
+                None,
+                Some("lib-1"),
+                None,
+            )
+            .unwrap();
+        store
+            .upsert_chunk_embedding_with_metadata(
+                "chunk-b",
+                "model-1",
+                &vec_a,
+                None,
+                Some("lib-2"),
+                None,
+            )
+            .unwrap();
+
+        let results = store
+            .search_chunks(&query, "model-1", None, Some("lib-1"), 10)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "chunk-a");
+    }
+
+    #[test]
+    fn remove_chunk_embeddings_by_document_deletes_rows() {
+        let (store, _dir) = test_store();
+        let vec_a = vec![1.0, 0.0];
+        let query = vec![1.0, 0.0];
+
+        store
+            .upsert_chunk_embedding_with_metadata(
+                "chunk-a",
+                "model-1",
+                &vec_a,
+                None,
+                None,
+                Some("doc-1"),
+            )
+            .unwrap();
+        store
+            .upsert_chunk_embedding_with_metadata(
+                "chunk-b",
+                "model-1",
+                &vec_a,
+                None,
+                None,
+                Some("doc-1"),
+            )
+            .unwrap();
+        store
+            .upsert_chunk_embedding_with_metadata(
+                "chunk-c",
+                "model-1",
+                &vec_a,
+                None,
+                None,
+                Some("doc-2"),
+            )
+            .unwrap();
+
+        store.remove_chunk_embeddings_by_document("doc-1").unwrap();
+
+        let results = store
+            .search_chunks(&query, "model-1", None, None, 10)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "chunk-c");
+    }
+
+    #[test]
+    fn search_chunks_filters_by_both_corpus_and_library() {
+        let (store, _dir) = test_store();
+        let vec_a = vec![1.0, 0.0];
+        let query = vec![1.0, 0.0];
+
+        store
+            .upsert_chunk_embedding_with_metadata(
+                "chunk-a",
+                "model-1",
+                &vec_a,
+                Some("corpus-1"),
+                Some("lib-1"),
+                None,
+            )
+            .unwrap();
+        store
+            .upsert_chunk_embedding_with_metadata(
+                "chunk-b",
+                "model-1",
+                &vec_a,
+                Some("corpus-1"),
+                Some("lib-2"),
+                None,
+            )
+            .unwrap();
+        store
+            .upsert_chunk_embedding_with_metadata(
+                "chunk-c",
+                "model-1",
+                &vec_a,
+                Some("corpus-2"),
+                Some("lib-1"),
+                None,
+            )
+            .unwrap();
+
+        let results = store
+            .search_chunks(&query, "model-1", Some("corpus-1"), Some("lib-1"), 10)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "chunk-a");
     }
 }

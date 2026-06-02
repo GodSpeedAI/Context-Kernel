@@ -1,6 +1,69 @@
 # Evidence Log
 
 ## Claim
+- Claim: Web adapter supports conditional request headers (If-None-Match, If-Modified-Since) for incremental refresh.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-adapter-web/src/lib.rs`
+- Lines: WebConfig struct (previous_etag, previous_last_modified fields), fetch_content method (conditional header injection), tests config_parsing_with_conditional_headers, config_parsing_conditional_headers_default_none, fetch_content_records_etag_and_last_modified_in_metadata
+- Notes: ureq Request::set consumes self; reassignment pattern used. 304 handling already existed.
+- Confidence: high
+
+## Claim
+- Claim: Milestone 10 hardening config is implemented with reload, retention, authorization, and observability sections.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-config/src/lib.rs`
+- Lines: ReloadConfig, RetentionConfig, AuthorizationConfig, ObservabilityConfig; test `loads_milestone_10_hardening_config`
+- Notes: Defaults are conservative: reload and retention disabled, authorization allowlists default to `*`, observability log format defaults to text.
+- Confidence: high
+
+## Claim
+- Claim: Retention GC is implemented for SQLite metadata.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-core/src/ports/storage.rs`, `crates/ck-storage-sqlite/src/lib.rs`, `crates/ck-app/src/lib.rs`
+- Lines: StoragePort retention methods; SqliteStore delete methods; AppServices::run_retention_gc
+- Notes: Tests cover preserving pinned events and active jobs while deleting eligible rows. Artifact payload files are not deleted.
+- Confidence: high
+
+## Claim
+- Claim: Tool and corpus authorization is implemented for SSE MCP calls.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-core/src/ports/auth.rs`, `crates/ck-auth/src/lib.rs`, `crates/ck-mcp/src/lib.rs`, `crates/ck-transport-sse/src/lib.rs`
+- Lines: AuthPort authorize methods; BearerAuth policy; McpService::call_tool_authorized; SSE handler passes bearer header.
+- Notes: Unit tests cover denied tool and denied corpus. Stdio direct calls remain local/internal and bypass policy.
+- Confidence: high
+
+## Claim
+- Claim: `export-schema` emits the live embedded SQLite schema.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-storage-sqlite/src/lib.rs`, `crates/ck-bin/src/main.rs`, `crates/ck-bin/tests/cli.rs`
+- Lines: SqliteStore::schema_sql; Commands::ExportSchema; test `export_schema_prints_sqlite_schema`
+- Notes: CLI test asserts core table and FTS table SQL appear in output.
+- Confidence: high
+
+## Claim
+- Claim: Release install documentation and CI integration examples exist.
+- Status: implemented
+- Evidence type: config, code
+- Files: `docs/install.md`, `docs/ci.md`, `.github/workflows/ci.yml`
+- Lines: full files
+- Notes: CI example runs fmt, clippy, tests, and release binary build.
+- Confidence: high
+
+## Claim
+- Claim: Milestone 10 verification passed.
+- Status: implemented
+- Evidence type: test
+- Files: workspace
+- Lines: n/a
+- Notes: `cargo test -p ck-config -p ck-auth -p ck-storage-sqlite -p ck-app -p ck-mcp -p ck-bin` passed. `cargo fmt --check && cargo clippy --workspace --all-targets && cargo test --workspace` passed.
+- Confidence: high
+
+## Claim
 - Claim: Cargo workspace exists for Milestone 0 crates.
 - Status: implemented
 - Evidence type: code
@@ -353,7 +416,131 @@
 - Files: workspace
 - Reproducible command: `cargo test --workspace && cargo fmt --check && cargo clippy --workspace`
 - Result excerpt: `cargo test --workspace`: `test result: ok. 153 passed; 0 failed`; `cargo fmt --check`: no diff; `cargo clippy --workspace`: `Finished dev profile`
-- Timestamp/context: 2026-06-02 10:30 EDT
+- Timestamp/context: 2026-06-02 10:30 EDT, local workspace `/home/sprime01/projects/Context_Kernel_Service_MCP`
 - Proof classification: release-gate-proof
 - Notes: Test count increased from 65 to 153 after M7-M9 implementation.
+- Confidence: high
+
+## Claim
+- Claim: ck-observability crate provides text/JSON tracing initialization.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-observability/src/lib.rs`, `crates/ck-observability/Cargo.toml`
+- Notes: ObservabilityRuntimeConfig with log_format (text/json) and log_level. init_observability sets up tracing-subscriber. ObservabilityGuard for flush-on-drop. ck-bin uses ck_observability instead of direct tracing init.
+- Confidence: high
+
+## Claim
+- Claim: ToolTelemetry DTO added to ck-mcp with tracing instrumentation in dispatch_tool.
+- Status: implemented
+- Evidence type: code
+- Files: `crates/ck-mcp/src/lib.rs`
+- Notes: ToolTelemetry struct with tool_name, duration_ms, success, error fields. dispatch_tool records tracing::info! with telemetry data on every tool call.
+- Confidence: high
+
+## Claim
+- Claim: ReloadableSseState enables SSE config reload without restart.
+- Status: implemented
+- Evidence type: code
+- Files: `crates/ck-transport-sse/src/lib.rs`
+- Notes: ReloadableSseState wraps RwLock<Arc<SseState>>. SSE handlers read through the RwLock. ck-bin updates the reloadable state when config changes.
+- Confidence: high
+
+## Claim
+- Claim: Artifact payload file GC deletes disk files during retention.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-core/src/ports/artifact.rs`, `crates/ck-core/src/ports/storage.rs`, `crates/ck-artifacts/src/lib.rs`, `crates/ck-storage-sqlite/src/lib.rs`, `crates/ck-app/src/lib.rs`
+- Notes: delete_artifact_payload on ArtifactPort, list_artifacts_older_than on StoragePort, run_retention_gc in AppServices orchestrates both metadata and payload deletion. RetentionGcReport includes artifact_payload_errors count.
+- Confidence: high
+
+## Claim
+- Claim: Source scope filtering rejects private corpus in query_reference and supports source_scope filter in resolve_reference.
+- Status: implemented
+- Evidence type: code
+- Files: `crates/ck-app/src/lib.rs`
+- Notes: query_reference filters out private corpus results. resolve_reference accepts source_scope parameter for filtering.
+- Confidence: high
+
+## Claim
+- Claim: Vector filtering by corpus_id, library_id, document_id is implemented in ck-vector.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-vector/src/lib.rs`
+- Notes: chunk_embeddings table has corpus_id, library_id, document_id columns. search_chunks filters by these fields. remove_chunk_embeddings_by_document implemented. upsert_chunk_embedding_with_metadata stores filter columns.
+- Confidence: high
+
+## Claim
+- Claim: SSRF DNS resolution uses DnsResolver trait with SystemDnsResolver and StaticResolver for tests.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-adapter-web/src/lib.rs`
+- Notes: DnsResolver trait with resolve method. SystemDnsResolver uses std::net::ToSocketAddrs. StaticResolver for deterministic test assertions. validate_url_with_resolver checks resolved IPs against private ranges.
+- Confidence: high
+
+## Claim
+- Claim: GitHub adapter errors on truncated tree responses.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-adapter-github/src/lib.rs`
+- Notes: units_from_tree_response extracted as separate function. Returns error when truncated: true in tree API response. Test verifies error on truncated tree.
+- Confidence: high
+
+## Claim
+- Claim: Web adapter supports conditional request headers for incremental refresh.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-adapter-web/src/lib.rs`
+- Notes: WebConfig has previous_etag and previous_last_modified fields. fetch_content sends If-None-Match and If-Modified-Since headers. Tests verify conditional header injection and metadata recording.
+- Confidence: high
+
+## Claim
+- Claim: ck-memory crate provides event retention classification and session retention policy.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-memory/src/lib.rs`, `crates/ck-memory/Cargo.toml`
+- Notes: EventRetentionClass enum (Critical, Normal, Ephemeral). classify_event_kind maps event kinds to retention classes. SessionRetentionPolicy with max_age and max_events. ck-app re-exports from ck-memory.
+- Confidence: high
+
+## Claim
+- Claim: Config templates exist for stdio, local, and SSE modes.
+- Status: implemented
+- Evidence type: config
+- Files: `config/context-kernal.example.toml`, `config/context-kernal.local.example.toml`, `config/context-kernal.sse.example.toml`
+- Notes: All three templates parse successfully (verified by ck-config test example_configs_parse).
+- Confidence: high
+
+## Claim
+- Claim: Deployment smoke tests verify CLI commands and config templates.
+- Status: implemented
+- Evidence type: test
+- Files: `crates/ck-bin/tests/cli.rs`
+- Notes: 4 new tests: export_schema_prints_sqlite_schema, migrate_then_doctor_works, retention_gc_cli_works, example_configs_parse. Total CLI tests: 16.
+- Confidence: high
+
+## Claim
+- Claim: Operations documentation exists for deployment, configuration, and security.
+- Status: implemented
+- Evidence type: docs
+- Files: `docs/operations.md`, `docs/configuration.md`, `docs/security.md`, `docs/release.md`
+- Notes: Covers deployment steps, full config reference, security model, and release process.
+- Confidence: high
+
+## Claim
+- Claim: Release workflow exists as GitHub Actions YAML.
+- Status: implemented
+- Evidence type: config
+- Files: `.github/workflows/release.yml`
+- Notes: Builds release binary for Linux, creates GitHub release with binary artifact.
+- Confidence: high
+
+## Claim
+- Claim: Final release gate passes — 186 tests, zero warnings, release binary builds and runs.
+- Status: implemented
+- Evidence type: test
+- Files: workspace
+- Reproducible command: `cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace && cargo build --release -p ck-bin`
+- Result excerpt: `cargo test --workspace`: `test result: ok. 186 passed; 0 failed`; `cargo clippy`: zero warnings; `cargo build --release`: produces `target/release/context-kernal`
+- Timestamp/context: 2026-06-02 deployment readiness session
+- Proof classification: release-gate-proof
+- Notes: Binary supports `migrate`, `doctor`, `export-schema`, and `serve` commands. All 18 deployment readiness tasks complete.
 - Confidence: high

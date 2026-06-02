@@ -4,14 +4,11 @@
 - None.
 
 ## Non-Blocking
-- `.github/copilot-instructions.md` is required by `AGENTS.md` but is missing.
-- Whether `export-schema` should emit live SQLite schema text or docs/schema.md content.
-- Session memory helpers (retention policy, event typing, pinned facts) are not yet in a separate ck-memory crate; they're embedded in ck-app and ck-storage-sqlite.
-- Vector search does not filter by corpus_id/library_id/session_id at the storage layer for v1; filtering happens at the app layer or is deferred.
-- remove_chunk_embeddings_by_document is a no-op in ck-vector for v1; the app layer should delete by chunk IDs.
-- SSRF protection does not perform DNS resolution; DNS rebinding attacks are not mitigated for v1.
-- GitHub adapter uses tree API which may not work for very large repos; pagination support may be needed.
-- Web adapter does not implement ETag/Last-Modified caching for incremental refresh in v1.
+- Observability is structured tracing plus config for an OTEL endpoint; no OpenTelemetry exporter/metrics backend is wired yet (ck-observability crate exists with text/JSON tracing init). This is a future enhancement, not a v1 blocker.
+- Context7 dataset adapter is not part of v1 deployment. Context7 compatibility is provided through tool-contract aliases (resolve-library-id, get-library-docs, query-docs) only. Can be added as a future adapter behind SourceAdapter port.
+- PDF source adapter is not part of v1 deployment. Filesystem, GitHub, and web adapters cover the primary documentation use case. Can be added as a future adapter behind SourceAdapter port.
+- Config reload for SSE updates the ReloadableSseState but does not restart the axum server (port/listen changes require restart). This is acceptable for v1.
+- Vector search uses brute-force cosine similarity; sqlite-vec or external vector DB can be swapped in later without domain changes.
 
 ## Active Assumptions
 - The service binary name is `context-kernal`, matching the plan.
@@ -19,5 +16,6 @@
 - The `data_dir` CLI flag is used for artifact storage; the database path is separate via `--database`.
 - Compatibility aliases (resolve-library-id, get-library-docs, query-docs) map to the canonical tools as specified in the plan.
 - `SourceHealth::Degraded` is the intended failing health state unless the domain model is explicitly expanded later.
-- Brute-force cosine similarity is acceptable for v1 vector search; can be swapped for sqlite-vec or external vector DB later.
 - OpenAI-compatible embedding API is the primary semantic provider; other providers can be added behind EmbeddingPort.
+- `export-schema` emits the live embedded SQLite migration SQL from `ck-storage-sqlite`.
+- Release workflow builds for x86_64-unknown-linux-gnu only; cross-compilation for other targets can be added to `.github/workflows/release.yml`.

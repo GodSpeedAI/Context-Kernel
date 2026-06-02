@@ -15,4 +15,5 @@ pub trait ArtifactPort: Send + Sync {
 
     fn get_artifact(&self, artifact_id: &str) -> Result<Option<Artifact>>;
     fn read_artifact_content(&self, artifact_id: &str) -> Result<Option<Vec<u8>>>;
+    fn delete_artifact_payload(&self, artifact_id: &str) -> Result<bool>;
 }

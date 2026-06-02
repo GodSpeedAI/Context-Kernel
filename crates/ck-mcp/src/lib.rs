@@ -1,10 +1,12 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use base64::Engine;
 use ck_app::{
     AppServices, IngestSourceRequest, QueryReferenceRequest, RecallContextRequest,
     RefreshSourceRequest, ResolveReferenceRequest, StoreContextRequest,
 };
-use ck_core::KernelStatus;
+use ck_core::{ports::AuthPort, KernelStatus};
 use serde_json::Value;
 use thiserror::Error;
 
@@ -24,43 +26,134 @@ impl From<anyhow::Error> for McpError {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ToolTelemetry {
+    pub tool_name: String,
+    pub outcome: String,
+    pub duration_ms: u64,
+}
+
+impl ToolTelemetry {
+    pub fn success(tool_name: &str, duration_ms: u64) -> Self {
+        Self {
+            tool_name: tool_name.to_string(),
+            outcome: "success".to_string(),
+            duration_ms,
+        }
+    }
+
+    pub fn failure(tool_name: &str, duration_ms: u64) -> Self {
+        Self {
+            tool_name: tool_name.to_string(),
+            outcome: "failure".to_string(),
+            duration_ms,
+        }
+    }
+}
+
 pub struct McpService {
     status: KernelStatus,
     app: Option<AppServices>,
+    auth: Option<Arc<dyn AuthPort>>,
 }
 
 impl McpService {
     pub fn new(status: KernelStatus) -> Self {
-        Self { status, app: None }
+        Self {
+            status,
+            app: None,
+            auth: None,
+        }
     }
 
     pub fn with_app(status: KernelStatus, app: AppServices) -> Self {
         Self {
             status,
             app: Some(app),
+            auth: None,
+        }
+    }
+
+    pub fn with_app_and_auth(
+        status: KernelStatus,
+        app: AppServices,
+        auth: Arc<dyn AuthPort>,
+    ) -> Self {
+        Self {
+            status,
+            app: Some(app),
+            auth: Some(auth),
         }
     }
 
     pub fn call_tool(&self, name: &str, arguments: Value) -> Result<Value, McpError> {
-        match name {
+        self.dispatch_tool(name, arguments)
+    }
+
+    pub fn call_tool_authorized(
+        &self,
+        token: Option<&str>,
+        name: &str,
+        arguments: Value,
+    ) -> Result<Value, McpError> {
+        self.authorize(token, name, &arguments)?;
+        self.dispatch_tool(name, arguments)
+    }
+
+    fn dispatch_tool(&self, name: &str, arguments: Value) -> Result<Value, McpError> {
+        let start = std::time::Instant::now();
+        let result = match name {
             "get_status" => Ok(serde_json::to_value(&self.status).expect("status serializes")),
-
             "store_context" => self.handle_store_context(arguments),
-
             "recall_context" => self.handle_recall_context(arguments),
-
             "ingest_source" => self.handle_ingest_source(arguments),
-
             "refresh_source" => self.handle_refresh_source(arguments),
-
             "query_reference" | "get-library-docs" | "query-docs" => {
                 self.handle_query_reference(arguments)
             }
-
             "resolve_reference" | "resolve-library-id" => self.handle_resolve_reference(arguments),
-
             other => Err(McpError::UnknownTool(other.to_string())),
+        };
+        let elapsed = start.elapsed().as_millis() as u64;
+        match &result {
+            Ok(_) => tracing::info!(
+                tool_name = name,
+                duration_ms = elapsed,
+                outcome = "success",
+                "tool call completed"
+            ),
+            Err(e) => {
+                tracing::warn!(tool_name = name, duration_ms = elapsed, outcome = "error", error = %e, "tool call failed")
+            }
         }
+        result
+    }
+
+    fn authorize(
+        &self,
+        token: Option<&str>,
+        name: &str,
+        arguments: &Value,
+    ) -> Result<(), McpError> {
+        let Some(auth) = &self.auth else {
+            return Ok(());
+        };
+
+        if !auth.authorize_tool(token, name) {
+            return Err(McpError::InvalidArguments(format!(
+                "unauthorized tool: {name}"
+            )));
+        }
+
+        for corpus_id in corpus_ids_from_arguments(name, arguments) {
+            if !auth.authorize_corpus(token, &corpus_id) {
+                return Err(McpError::InvalidArguments(format!(
+                    "unauthorized corpus: {corpus_id}"
+                )));
+            }
+        }
+
+        Ok(())
     }
 
     fn require_app(&self) -> Result<&AppServices, McpError> {
@@ -347,10 +440,60 @@ impl McpService {
     }
 }
 
+fn corpus_ids_from_arguments(name: &str, arguments: &Value) -> Vec<String> {
+    match name {
+        "ingest_source" => arguments
+            .get("source")
+            .and_then(|s| s.get("corpus_id"))
+            .and_then(Value::as_str)
+            .map(|s| vec![s.to_string()])
+            .unwrap_or_default(),
+        "query_reference" | "get-library-docs" | "query-docs" => arguments
+            .get("canonical_id")
+            .or_else(|| arguments.get("context7CompatibleLibraryID"))
+            .and_then(Value::as_str)
+            .filter(|s| !s.starts_with('/'))
+            .map(|s| vec![s.to_string()])
+            .unwrap_or_default(),
+        "resolve_reference" | "resolve-library-id" => arguments
+            .get("source_scope")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ck_core::ports::AuthPort;
     use serde_json::json;
+
+    struct TestAuth;
+
+    impl AuthPort for TestAuth {
+        fn validate_token(&self, token: &str) -> bool {
+            token == "allowed"
+        }
+
+        fn is_local_trust_mode(&self) -> bool {
+            false
+        }
+
+        fn authorize_tool(&self, token: Option<&str>, tool_name: &str) -> bool {
+            token == Some("allowed") && matches!(tool_name, "get_status" | "query_reference")
+        }
+
+        fn authorize_corpus(&self, token: Option<&str>, corpus_id: &str) -> bool {
+            token == Some("allowed") && corpus_id == "public_docs"
+        }
+    }
 
     #[test]
     fn get_status_returns_stable_contract_shape() {
@@ -429,5 +572,62 @@ mod tests {
             Err(McpError::UnknownTool(_)) => panic!("should not be unknown tool"),
             _ => panic!("unexpected"),
         }
+    }
+
+    #[test]
+    fn authorized_call_rejects_disallowed_tool() {
+        let status = KernelStatus::placeholder();
+        let service = McpService {
+            status,
+            app: None,
+            auth: Some(Arc::new(TestAuth)),
+        };
+
+        let result = service.call_tool_authorized(Some("allowed"), "ingest_source", json!({}));
+
+        match result {
+            Err(McpError::InvalidArguments(msg)) => {
+                assert!(msg.contains("unauthorized tool"));
+            }
+            other => panic!("unexpected result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn authorized_call_rejects_disallowed_corpus() {
+        let status = KernelStatus::placeholder();
+        let service = McpService {
+            status,
+            app: None,
+            auth: Some(Arc::new(TestAuth)),
+        };
+
+        let result = service.call_tool_authorized(
+            Some("allowed"),
+            "query_reference",
+            json!({"canonical_id":"private_docs"}),
+        );
+
+        match result {
+            Err(McpError::InvalidArguments(msg)) => {
+                assert!(msg.contains("unauthorized corpus"));
+            }
+            other => panic!("unexpected result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tool_telemetry_records_name_and_outcome() {
+        let event = ToolTelemetry::success("get_status", 12);
+        assert_eq!(event.tool_name, "get_status");
+        assert_eq!(event.outcome, "success");
+        assert_eq!(event.duration_ms, 12);
+    }
+
+    #[test]
+    fn tool_telemetry_failure_records_outcome() {
+        let event = ToolTelemetry::failure("ingest_source", 500);
+        assert_eq!(event.outcome, "failure");
+        assert_eq!(event.duration_ms, 500);
     }
 }

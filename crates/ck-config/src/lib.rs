@@ -17,6 +17,14 @@ pub struct KernelConfig {
     pub scheduler: SchedulerConfig,
     #[serde(default)]
     pub embeddings: EmbeddingsConfig,
+    #[serde(default)]
+    pub reload: ReloadConfig,
+    #[serde(default)]
+    pub retention: RetentionConfig,
+    #[serde(default)]
+    pub authorization: AuthorizationConfig,
+    #[serde(default)]
+    pub observability: ObservabilityConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,6 +125,107 @@ pub struct EmbeddingsConfig {
     pub dimensions: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ReloadConfig {
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RetentionConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_session_event_retention_days")]
+    pub session_event_days: i64,
+    #[serde(default = "default_session_retention_days")]
+    pub inactive_session_days: i64,
+    #[serde(default = "default_refresh_job_retention_days")]
+    pub refresh_job_days: i64,
+    #[serde(default = "default_artifact_retention_days")]
+    pub artifact_days: i64,
+    #[serde(default = "default_disabled_source_retention_days")]
+    pub disabled_source_days: i64,
+}
+
+impl Default for RetentionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            session_event_days: default_session_event_retention_days(),
+            inactive_session_days: default_session_retention_days(),
+            refresh_job_days: default_refresh_job_retention_days(),
+            artifact_days: default_artifact_retention_days(),
+            disabled_source_days: default_disabled_source_retention_days(),
+        }
+    }
+}
+
+fn default_session_event_retention_days() -> i64 {
+    90
+}
+
+fn default_session_retention_days() -> i64 {
+    30
+}
+
+fn default_refresh_job_retention_days() -> i64 {
+    30
+}
+
+fn default_artifact_retention_days() -> i64 {
+    90
+}
+
+fn default_disabled_source_retention_days() -> i64 {
+    30
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthorizationConfig {
+    #[serde(default = "default_allow_all_tools")]
+    pub allow_tools: Vec<String>,
+    #[serde(default = "default_allow_all_corpora")]
+    pub allow_corpora: Vec<String>,
+}
+
+impl Default for AuthorizationConfig {
+    fn default() -> Self {
+        Self {
+            allow_tools: default_allow_all_tools(),
+            allow_corpora: default_allow_all_corpora(),
+        }
+    }
+}
+
+fn default_allow_all_tools() -> Vec<String> {
+    vec!["*".to_string()]
+}
+
+fn default_allow_all_corpora() -> Vec<String> {
+    vec!["*".to_string()]
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObservabilityConfig {
+    #[serde(default = "default_log_format")]
+    pub log_format: String,
+    #[serde(default)]
+    pub otel_endpoint: Option<String>,
+}
+
+impl Default for ObservabilityConfig {
+    fn default() -> Self {
+        Self {
+            log_format: default_log_format(),
+            otel_endpoint: None,
+        }
+    }
+}
+
+fn default_log_format() -> String {
+    "text".to_string()
+}
+
 impl Default for EmbeddingsConfig {
     fn default() -> Self {
         Self {
@@ -168,6 +277,10 @@ pub fn default_config() -> KernelConfig {
         auth: AuthConfig::default(),
         scheduler: SchedulerConfig::default(),
         embeddings: EmbeddingsConfig::default(),
+        reload: ReloadConfig::default(),
+        retention: RetentionConfig::default(),
+        authorization: AuthorizationConfig::default(),
+        observability: ObservabilityConfig::default(),
     }
 }
 
@@ -322,5 +435,86 @@ dimensions = 1536
         let config = default_config();
         assert!(!config.embeddings.enabled);
         assert_eq!(config.embeddings.provider, "none");
+    }
+
+    #[test]
+    fn example_configs_parse() {
+        let example_paths = [
+            "../../config/context-kernal.example.toml",
+            "../../config/context-kernal.sse.example.toml",
+            "../../config/context-kernal.local.example.toml",
+        ];
+
+        for path in &example_paths {
+            if std::path::Path::new(path).exists() {
+                let config = load_config(path);
+                assert!(
+                    config.is_ok(),
+                    "failed to parse {}: {:?}",
+                    path,
+                    config.err()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn loads_milestone_10_hardening_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("context-kernal.toml");
+        fs::write(
+            &path,
+            r#"
+[service]
+name = "context-kernal"
+
+[storage]
+database_path = "/tmp/kernel.db"
+
+[retrieval]
+default_mode = "hybrid"
+semantic_enabled = false
+
+[reload]
+enabled = true
+
+[retention]
+enabled = true
+session_event_days = 14
+inactive_session_days = 7
+refresh_job_days = 3
+artifact_days = 21
+disabled_source_days = 10
+
+[authorization]
+allow_tools = ["get_status", "query_reference"]
+allow_corpora = ["public_docs"]
+
+[observability]
+log_format = "json"
+otel_endpoint = "http://127.0.0.1:4317"
+"#,
+        )
+        .unwrap();
+
+        let config = load_config(&path).unwrap();
+
+        assert!(config.reload.enabled);
+        assert!(config.retention.enabled);
+        assert_eq!(config.retention.session_event_days, 14);
+        assert_eq!(config.retention.inactive_session_days, 7);
+        assert_eq!(config.retention.refresh_job_days, 3);
+        assert_eq!(config.retention.artifact_days, 21);
+        assert_eq!(config.retention.disabled_source_days, 10);
+        assert_eq!(
+            config.authorization.allow_tools,
+            vec!["get_status".to_string(), "query_reference".to_string()]
+        );
+        assert_eq!(config.authorization.allow_corpora, vec!["public_docs"]);
+        assert_eq!(config.observability.log_format, "json");
+        assert_eq!(
+            config.observability.otel_endpoint.as_deref(),
+            Some("http://127.0.0.1:4317")
+        );
     }
 }
