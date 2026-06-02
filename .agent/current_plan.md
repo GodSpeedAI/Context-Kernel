@@ -1,62 +1,53 @@
 # Current Plan
 
 ## Objective
-- Verify and address still-valid review findings from `tmp/cr.md`, then strike each completed item in that file.
+- Implement Milestones 7-9 from Context_Kernel_Service_Plan.md
 
 ## Status
-- Completed 2026-06-02 08:06 EDT.
-- `tmp/cr.md` review text struck with completion notes added.
-- Validation passed: `cargo test --workspace`, `cargo fmt --check`, `cargo clippy --workspace`.
+- In progress.
 
 ## Scope
-- Scheduler/storage atomic refresh job enqueue and claim.
-- Ranker FTS score normalization.
-- Config MCP stdio defaults.
-- App refresh/ingest health and excerpt behavior.
-- Auth fail-closed token validation and SSE auth misconfiguration handling.
-- Evidence metadata requested by review.
-- Project memory updates.
+- M7: Hybrid ranking — query intent weighting, session affinity, de-duplication, result collapsing
+- M8: Optional embeddings — EmbeddingPort, VectorSearchPort, pluggable provider, vector store, semantic/hybrid retrieval, graceful fallback
+- M9: GitHub/web adapters — GitHub repo adapter, website fetch adapter, SSRF protections, incremental refresh hints
 
 ## Constraints
-- `.github/copilot-instructions.md` is required by AGENTS.md but missing; proceed with source code and `.agent` memory as evidence.
-- Preserve ports-and-adapters boundaries; storage primitives belong in `StoragePort` and adapter implementations.
-- Use the existing `SourceHealth::Degraded` variant for failed ingest state because `SourceHealth::Failing` does not exist.
-- Keep changes minimal and add focused regression tests before production changes.
+- Preserve ports-and-adapters boundaries
+- Keep ck-core free of infrastructure dependencies (no tokio, no SQL, no HTTP)
+- Synchronous core (rusqlite style); async only in transport layer
+- Match existing code patterns and naming conventions
+- All new crates must have tests
 
 ## Files / Crates Expected To Change
-- `tmp/cr.md`
-- `.agent/current_plan.md`
-- `.agent/project_state.md`
-- `.agent/work_log.md`
-- `.agent/evidence.md`
-- `.agent/open_questions.md`
-- `.agent/decisions.md`
-- `crates/ck-core/src/ports/storage.rs`
-- `crates/ck-core/src/ports/scheduler.rs`
-- `crates/ck-storage-sqlite/src/lib.rs`
-- `crates/ck-scheduler/src/lib.rs`
-- `crates/ck-ranker/src/lib.rs`
-- `crates/ck-config/src/lib.rs`
-- `crates/ck-app/src/lib.rs`
-- `crates/ck-auth/Cargo.toml`
-- `crates/ck-auth/src/lib.rs`
-- `crates/ck-bin/src/main.rs`
+- `crates/ck-core/src/ports/` — add embedding.rs, vector_search.rs; update ranker.rs, mod.rs
+- `crates/ck-ranker/src/lib.rs` — enhance with intent weighting, affinity, de-dup
+- `crates/ck-embeddings/` — NEW crate
+- `crates/ck-vector/` — NEW crate
+- `crates/ck-adapter-github/` — NEW crate
+- `crates/ck-adapter-web/` — NEW crate
+- `crates/ck-config/src/lib.rs` — add embeddings config
+- `crates/ck-app/src/lib.rs` — wire semantic retrieval, intent-aware ranking
+- `crates/ck-bin/src/main.rs` — wire new crates
+- `Cargo.toml` — add new workspace members and dependencies
+- `crates/ck-bin/tests/cli.rs` — integration tests
 
 ## Steps
-1. Completed — Add focused regression tests for still-valid review findings.
-2. Completed — Run targeted tests and confirm expected failures.
-3. Completed — Implement minimal production changes through existing ports and adapters.
-4. Completed — Run targeted tests, then workspace format/test/clippy validation.
-5. Completed — Strike completed items in `tmp/cr.md`.
-6. Completed — Update project memory files with evidence and any decisions/open questions.
+1. Add EmbeddingPort and VectorSearchPort traits to ck-core
+2. Update RankerPort to accept query intent and session context
+3. Enhance ck-ranker with intent weighting, session affinity, de-duplication
+4. Create ck-embeddings crate with OpenAI-compatible provider and no-op fallback
+5. Create ck-vector crate with SQLite brute-force cosine similarity
+6. Create ck-adapter-github crate with GitHub API adapter
+7. Create ck-adapter-web crate with HTTP fetch adapter + SSRF protections
+8. Update ck-config with embeddings configuration section
+9. Update ck-app to integrate semantic retrieval and intent-aware ranking
+10. Update ck-bin to wire all new crates
+11. Add integration tests
+12. Verify: cargo test --workspace, cargo fmt --check, cargo clippy --workspace
 
 ## Validation Plan
-- Passed: `cargo test -p ck-config`
-- Passed: `cargo test -p ck-auth`
-- Passed: `cargo test -p ck-ranker`
-- Passed: `cargo test -p ck-app`
-- Passed: `cargo test -p ck-storage-sqlite`
-- Passed: `cargo test -p ck-scheduler`
-- Passed: `cargo test --workspace`
-- Passed: `cargo fmt --check`
-- Passed: `cargo clippy --workspace`
+- All existing 65 tests continue to pass
+- New unit tests for each new crate
+- New integration tests for M7-M9 features
+- cargo fmt --check clean
+- cargo clippy --workspace zero warnings

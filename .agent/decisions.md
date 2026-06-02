@@ -103,3 +103,43 @@
 - Alternatives considered: Warn and continue with SSE disabled; rejected because failing fast is clearer and avoids running a surprising partial service.
 - Evidence in codebase: `crates/ck-bin/src/main.rs`; workspace integration tests still pass.
 - Consequences: Misconfigured deployments receive an immediate startup error instead of an unauthenticated SSE server.
+
+## Decision: Implement Milestones 7-9 Together
+- Date: 2026-06-02 10:30 EDT
+- Context: User requested implementation of milestones 7 through 9. They share infrastructure (enhanced ranking, embedding ports, source adapters) and build on each other.
+- Decision: Implement all three milestones in a single session using parallel subagent delegation for independent crates.
+- Alternatives considered: One milestone at a time; rejected because the independent crates (ck-ranker, ck-embeddings, ck-vector, ck-adapter-github, ck-adapter-web) can be built in parallel.
+- Evidence in codebase: All three milestones' acceptance criteria are met with 153 passing tests.
+- Consequences: Larger change set but efficient; all three milestones verified together.
+
+## Decision: Use ureq for synchronous HTTP in adapters and embeddings
+- Date: 2026-06-02 10:30 EDT
+- Context: M8 (embeddings) and M9 (GitHub/web adapters) need HTTP client capabilities. The codebase is synchronous (rusqlite) with async only in transport layer.
+- Decision: Use ureq (synchronous HTTP client) for all HTTP needs in adapters and embeddings.
+- Alternatives considered: reqwest (async, would require tokio in domain crates); rejected to preserve sync architecture. std::process::Command + curl; rejected as fragile.
+- Evidence in codebase: `crates/ck-embeddings/Cargo.toml`, `crates/ck-adapter-github/Cargo.toml`, `crates/ck-adapter-web/Cargo.toml` all depend on ureq.
+- Consequences: Consistent sync HTTP across all adapters; no tokio dependency in domain/adapter crates.
+
+## Decision: Brute-force cosine similarity for vector search v1
+- Date: 2026-06-02 10:30 EDT
+- Context: M8 requires a vector search adapter. The spec says brute-force cosine over small corpora is acceptable for v1.
+- Decision: SqliteVectorStore loads all vectors for a model and computes cosine similarity in-memory. No corpus/library/session filtering at the vector layer for v1.
+- Alternatives considered: sqlite-vec; deferred as an optimization. In-memory HNSW; rejected as over-engineering for v1.
+- Evidence in codebase: `crates/ck-vector/src/lib.rs` search_chunks loads all vectors for model_id and computes similarity.
+- Consequences: Simple and correct; performance acceptable for small corpora; can be swapped for sqlite-vec or external vector DB later without domain changes.
+
+## Decision: SSRF protection via IP parsing without DNS resolution
+- Date: 2026-06-02 10:30 EDT
+- Context: M9 web adapter needs SSRF protections. DNS rebinding attacks are a known SSRF vector.
+- Decision: Block private IP ranges by parsing IP literals in URLs. Do not perform DNS resolution for v1 (accepts the DNS rebinding risk for now).
+- Alternatives considered: Full DNS resolution with IP checking; deferred as it adds complexity and may break legitimate CDN-hosted docs.
+- Evidence in codebase: `crates/ck-adapter-web/src/lib.rs` validate_url function.
+- Consequences: Protects against basic SSRF via IP literals; DNS rebinding mitigation can be added in a future milestone.
+
+## Decision: RankerPort updated to accept RankContext instead of bare parameters
+- Date: 2026-06-02 10:30 EDT
+- Context: M7 requires query intent, session affinity, and debug mode in ranking. The existing RankerPort only accepted query and items.
+- Decision: Added RankContext struct with intent, session_id, and debug fields. Updated all RankerPort methods to accept RankContext.
+- Alternatives considered: Adding separate parameters per method; rejected as it would bloat the trait. Using a builder pattern; rejected as over-engineering.
+- Evidence in codebase: `crates/ck-core/src/ports/ranker.rs`, `crates/ck-ranker/src/lib.rs`, `crates/ck-app/src/lib.rs`.
+- Consequences: All ranker implementations and callers updated; clean extension point for future ranking signals.

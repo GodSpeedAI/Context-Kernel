@@ -1,6 +1,7 @@
 mod artifact;
 mod auth;
 mod chunker;
+mod embedding;
 mod lexical_search;
 mod normalizer;
 mod ranker;
@@ -8,10 +9,12 @@ mod scheduler;
 mod session_memory;
 mod source_adapter;
 mod storage;
+mod vector_search;
 
 pub use artifact::*;
 pub use auth::*;
 pub use chunker::*;
+pub use embedding::*;
 pub use lexical_search::*;
 pub use normalizer::*;
 pub use ranker::*;
@@ -19,3 +22,4 @@ pub use scheduler::*;
 pub use session_memory::*;
 pub use source_adapter::*;
 pub use storage::*;
+pub use vector_search::*;

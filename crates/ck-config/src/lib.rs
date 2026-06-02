@@ -15,6 +15,8 @@ pub struct KernelConfig {
     pub auth: AuthConfig,
     #[serde(default)]
     pub scheduler: SchedulerConfig,
+    #[serde(default)]
+    pub embeddings: EmbeddingsConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,6 +101,47 @@ fn default_refresh_interval() -> u64 {
     1800
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmbeddingsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_embedding_provider")]
+    pub provider: String,
+    #[serde(default)]
+    pub api_base: String,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default = "default_embedding_model")]
+    pub model: String,
+    #[serde(default = "default_embedding_dimensions")]
+    pub dimensions: usize,
+}
+
+impl Default for EmbeddingsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: default_embedding_provider(),
+            api_base: String::new(),
+            api_key: String::new(),
+            model: default_embedding_model(),
+            dimensions: default_embedding_dimensions(),
+        }
+    }
+}
+
+fn default_embedding_provider() -> String {
+    "none".to_string()
+}
+
+fn default_embedding_model() -> String {
+    "text-embedding-3-small".to_string()
+}
+
+fn default_embedding_dimensions() -> usize {
+    1536
+}
+
 pub fn load_config(path: impl AsRef<Path>) -> Result<KernelConfig> {
     let raw = fs::read_to_string(path)?;
     let expanded = expand_env_vars(&raw);
@@ -124,6 +167,7 @@ pub fn default_config() -> KernelConfig {
         },
         auth: AuthConfig::default(),
         scheduler: SchedulerConfig::default(),
+        embeddings: EmbeddingsConfig::default(),
     }
 }
 
@@ -235,5 +279,48 @@ refresh_interval_secs = 3600
         assert_eq!(config.auth.tokens, vec!["secret123"]);
         assert!(config.scheduler.enable_periodic_refresh);
         assert_eq!(config.scheduler.refresh_interval_secs, 3600);
+    }
+
+    #[test]
+    fn loads_embeddings_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("context-kernal.toml");
+        fs::write(
+            &path,
+            r#"
+[service]
+name = "context-kernal"
+
+[storage]
+database_path = "/tmp/kernel.db"
+
+[retrieval]
+default_mode = "hybrid"
+semantic_enabled = false
+
+[embeddings]
+enabled = true
+provider = "openai"
+api_base = "https://api.openai.com/v1"
+api_key = "$OPENAI_API_KEY"
+model = "text-embedding-3-small"
+dimensions = 1536
+"#,
+        )
+        .unwrap();
+
+        let config = load_config(&path).unwrap();
+
+        assert!(config.embeddings.enabled);
+        assert_eq!(config.embeddings.provider, "openai");
+        assert_eq!(config.embeddings.model, "text-embedding-3-small");
+        assert_eq!(config.embeddings.dimensions, 1536);
+    }
+
+    #[test]
+    fn embeddings_default_is_disabled() {
+        let config = default_config();
+        assert!(!config.embeddings.enabled);
+        assert_eq!(config.embeddings.provider, "none");
     }
 }

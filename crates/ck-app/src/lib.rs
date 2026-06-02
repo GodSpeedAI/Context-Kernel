@@ -17,6 +17,8 @@ pub struct AppServices {
     source_adapter: Box<dyn SourceAdapter>,
     normalizer: Box<dyn Normalizer>,
     chunker: Box<dyn Chunker>,
+    embedding: Option<Box<dyn EmbeddingPort>>,
+    vector_search: Option<Box<dyn VectorSearchPort>>,
 }
 
 impl AppServices {
@@ -40,7 +42,25 @@ impl AppServices {
             source_adapter,
             normalizer,
             chunker,
+            embedding: None,
+            vector_search: None,
         }
+    }
+
+    /// Set optional embedding and vector search ports for semantic retrieval.
+    pub fn with_semantic(
+        mut self,
+        embedding: Box<dyn EmbeddingPort>,
+        vector_search: Box<dyn VectorSearchPort>,
+    ) -> Self {
+        self.embedding = Some(embedding);
+        self.vector_search = Some(vector_search);
+        self
+    }
+
+    /// Whether semantic retrieval is available.
+    pub fn semantic_available(&self) -> bool {
+        self.embedding.as_ref().is_some_and(|e| e.is_available())
     }
 }
 
@@ -197,7 +217,14 @@ impl AppServices {
             self.search
                 .search_session_events(&req.query, session_filter, safe_top_k * 3)?;
 
-        let results = self.ranker.rank_recall_results(&req.query, scored)?;
+        let rank_ctx = RankContext {
+            intent: QueryIntent::RecallContext,
+            session_id: req.session_id.clone(),
+            debug: false,
+        };
+        let results = self
+            .ranker
+            .rank_recall_results(&req.query, scored, rank_ctx)?;
 
         let results = results.into_iter().take(safe_top_k as usize).collect();
 
@@ -387,7 +414,7 @@ pub struct QueryReferenceResponse {
 impl AppServices {
     pub fn query_reference(&self, req: QueryReferenceRequest) -> Result<QueryReferenceResponse> {
         let query_id = format!("qry_{}", Ulid::new());
-        let mode = req.mode.unwrap_or_else(|| "lexical".to_string());
+        let mode = req.mode.unwrap_or_else(|| "hybrid".to_string());
         let safe_top_k = req.top_k.max(1);
 
         // Determine corpus/library filter from canonical_id
@@ -402,18 +429,67 @@ impl AppServices {
                 (None, None)
             };
 
-        // Search chunks via FTS
-        let scored = self.search.search_chunks(
+        // Search chunks via FTS (lexical)
+        let mut scored = self.search.search_chunks(
             &req.query,
             corpus_id.as_deref(),
             library_id.as_deref(),
             safe_top_k * 3,
         )?;
 
+        // Semantic search when available and mode allows it
+        let use_semantic = (mode == "semantic" || mode == "hybrid") && self.semantic_available();
+        if use_semantic {
+            if let (Some(embedding), Some(vector_search)) = (&self.embedding, &self.vector_search) {
+                if let Ok(Some(query_vector)) = embedding.embed(&req.query) {
+                    let model_id = embedding.model_id();
+                    match vector_search.search_chunks(
+                        &query_vector,
+                        model_id,
+                        corpus_id.as_deref(),
+                        library_id.as_deref(),
+                        safe_top_k * 3,
+                    ) {
+                        Ok(semantic_results) => {
+                            // Merge semantic results into scored items
+                            for sr in semantic_results {
+                                if let Some(existing) = scored.iter_mut().find(|s| s.id == sr.id) {
+                                    // Add semantic score to existing breakdown
+                                    if existing.score_breakdown.as_object_mut().is_none() {
+                                        existing.score_breakdown = serde_json::json!({});
+                                    }
+                                    if let Some(m) = existing.score_breakdown.as_object_mut() {
+                                        m.insert(
+                                            "semantic".to_string(),
+                                            serde_json::json!(sr.score),
+                                        );
+                                    }
+                                } else {
+                                    scored.push(sr);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "semantic search failed, using lexical only");
+                        }
+                    }
+                }
+            }
+        }
+
         // Enrich scored items with trust and freshness metadata
         let enriched = self.enrich_scored_items(scored)?;
 
-        let results = self.ranker.rank_retrieval_results(&req.query, enriched)?;
+        // Build rank context with query intent
+        let context = RankContext {
+            intent: QueryIntent::QueryDocs,
+            session_id: None,
+            debug: false,
+        };
+
+        let results = self
+            .ranker
+            .rank_retrieval_results(&req.query, enriched, context)?;
 
         // Build citations and excerpts for each result
         let mut final_results = Vec::new();
@@ -874,6 +950,7 @@ mod tests {
             &self,
             _query: &str,
             _candidates: Vec<ScoredItem>,
+            _context: RankContext,
         ) -> Result<Vec<ResolvedCandidate>> {
             Ok(vec![])
         }
@@ -882,6 +959,7 @@ mod tests {
             &self,
             _query: &str,
             _items: Vec<ScoredItem>,
+            _context: RankContext,
         ) -> Result<Vec<RetrievalResult>> {
             Ok(vec![])
         }
@@ -890,6 +968,7 @@ mod tests {
             &self,
             _query: &str,
             _items: Vec<ScoredItem>,
+            _context: RankContext,
         ) -> Result<Vec<RecalledEvent>> {
             Ok(vec![])
         }
@@ -1125,11 +1204,39 @@ impl AppServices {
             .search
             .search_library_aliases(&req.query, req.limit * 3)?;
 
-        // Enrich with library metadata
-        let mut candidates_with_metadata = Vec::new();
+        // Enrich scored items with trust metadata before ranking
+        let mut enriched = Vec::new();
         for item in scored {
+            let mut breakdown = item.score_breakdown;
             if let Some(lib) = self.storage.get_library_identity(&item.id)? {
-                let aliases = self.storage.list_library_aliases(&item.id)?;
+                if let Some(ts) = lib.trust_score {
+                    if let Some(m) = breakdown.as_object_mut() {
+                        m.insert("trust_score".to_string(), serde_json::json!(ts));
+                    }
+                }
+            }
+            enriched.push(ScoredItem {
+                id: item.id,
+                score: item.score,
+                score_breakdown: breakdown,
+            });
+        }
+
+        let context = RankContext {
+            intent: QueryIntent::ResolveLibrary,
+            session_id: None,
+            debug: false,
+        };
+
+        let ranked = self
+            .ranker
+            .rank_resolution_candidates(&req.query, enriched, context)?;
+
+        // Enrich ranked candidates with library metadata
+        let mut candidates_with_metadata = Vec::new();
+        for candidate in ranked {
+            if let Some(lib) = self.storage.get_library_identity(&candidate.canonical_id)? {
+                let aliases = self.storage.list_library_aliases(&candidate.canonical_id)?;
                 let alias_strs: Vec<String> = aliases.iter().map(|a| a.alias.clone()).collect();
 
                 candidates_with_metadata.push(ResolvedCandidate {
@@ -1140,18 +1247,11 @@ impl AppServices {
                     aliases: alias_strs,
                     summary: lib.summary,
                     trust_score: lib.trust_score,
-                    score: item.score,
-                    score_breakdown: item.score_breakdown,
+                    score: candidate.score,
+                    score_breakdown: candidate.score_breakdown,
                 });
             }
         }
-
-        // Sort by score descending
-        candidates_with_metadata.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
 
         let candidates = candidates_with_metadata
             .into_iter()

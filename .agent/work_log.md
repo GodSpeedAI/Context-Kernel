@@ -1,5 +1,30 @@
 # Work Log
 
+## 2026-06-02 10:30 EDT
+- Task: Implement Milestones 7-9 from Context_Kernel_Service_Plan.md
+- Files changed:
+  - `Cargo.toml` — added 4 new workspace members (ck-embeddings, ck-vector, ck-adapter-github, ck-adapter-web) and new dependencies (ureq, url)
+  - `crates/ck-core/src/ports/` — added embedding.rs (EmbeddingPort), vector_search.rs (VectorSearchPort), updated ranker.rs (RankContext with intent/session_id/debug), updated mod.rs
+  - `crates/ck-ranker/src/lib.rs` — rewrote with intent-specific weight profiles, session affinity, de-duplication, debug mode, semantic score integration (15 tests)
+  - `crates/ck-embeddings/` — NEW crate with NoopEmbeddingProvider and OpenAIEmbeddingProvider (5 tests)
+  - `crates/ck-vector/` — NEW crate with SqliteVectorStore (brute-force cosine similarity) (14 tests)
+  - `crates/ck-adapter-github/` — NEW crate with GitHubSourceAdapter and GitHubNormalizer (18 tests)
+  - `crates/ck-adapter-web/` — NEW crate with WebSourceAdapter, SSRF protections, HTML-to-text, WebNormalizer (34 tests)
+  - `crates/ck-config/src/lib.rs` — added EmbeddingsConfig section with provider/api_base/api_key/model/dimensions
+  - `crates/ck-app/src/lib.rs` — added optional EmbeddingPort/VectorSearchPort, semantic retrieval in query_reference, intent-aware ranking in all use cases
+  - `crates/ck-bin/src/main.rs` — wires embeddings/vector when configured, passes config to wire_app
+  - `crates/ck-bin/Cargo.toml` — added ck-embeddings and ck-vector dependencies
+- Tests run: `cargo test --workspace` (153 tests pass), `cargo fmt --check` (clean), `cargo clippy --workspace` (zero warnings)
+- Results: All milestones 7-9 acceptance criteria met. Test count increased from 65 to 153.
+- Notes: Used parallel subagent delegation for 5 independent crate implementations (ck-ranker, ck-embeddings, ck-vector, ck-adapter-github, ck-adapter-web).
+
+## 2026-06-02 12:30 EDT
+- Task: Milestone 9 — Create ck-adapter-github crate (GitHub repo source adapter)
+- Files changed: `Cargo.toml` (added workspace member), `crates/ck-adapter-github/Cargo.toml`, `crates/ck-adapter-github/src/lib.rs`
+- Tests run: `cargo check -p ck-adapter-github` (clean, zero warnings), `cargo test -p ck-adapter-github` (18 tests pass)
+- Results: Crate compiles and all 18 unit tests pass. Implements GitHubSourceAdapter (SourceAdapter trait, kind="github_repo"), GitHubNormalizer (Normalizer trait), and config parsing for static file lists and tree API discovery.
+- Notes: Uses ureq for HTTP requests (already in workspace deps). Supports both static `files` array in config and dynamic tree API discovery. Token supports `$ENV_VAR` syntax.
+
 ## 2026-06-02 08:06 EDT
 - Task: Addressed 11 review findings from `tmp/cr.md` and struck completed review text.
 - Files changed: `tmp/cr.md`, `Cargo.toml`, `Cargo.lock`, `.agent/current_plan.md`, `.agent/project_state.md`, `.agent/work_log.md`, `.agent/decisions.md`, `.agent/open_questions.md`, `.agent/evidence.md`, `crates/ck-core/src/ports/storage.rs`, `crates/ck-core/src/ports/scheduler.rs`, `crates/ck-storage-sqlite/src/lib.rs`, `crates/ck-scheduler/src/lib.rs`, `crates/ck-ranker/src/lib.rs`, `crates/ck-config/src/lib.rs`, `crates/ck-app/src/lib.rs`, `crates/ck-auth/Cargo.toml`, `crates/ck-auth/src/lib.rs`, `crates/ck-bin/src/main.rs`.

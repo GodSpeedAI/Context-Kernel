@@ -250,3 +250,110 @@
 - Proof classification: release-gate-proof
 - Notes: Workspace count is now 65 tests after review regression coverage was added.
 - Confidence: high
+
+## Claim
+- Claim: GitHub source adapter crate (ck-adapter-github) implements SourceAdapter and Normalizer ports.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-adapter-github/src/lib.rs`, `crates/ck-adapter-github/Cargo.toml`
+- Reproducible command: `cargo test -p ck-adapter-github`
+- Result excerpt: `running 18 tests ... test result: ok. 18 passed; 0 failed`
+- Timestamp/context: 2026-06-02 12:30 EDT
+- Proof classification: focused-slice
+- Notes: GitHubSourceAdapter implements SourceAdapter (kind="github_repo") with static file list and tree API discovery. GitHubNormalizer implements Normalizer with GitHub metadata passthrough. Uses ureq for HTTP, base64 for content decoding. Token supports $ENV_VAR syntax.
+- Confidence: high
+
+## Claim
+- Claim: Milestone 7 — LexicalRanker implements intent-specific weight profiles, session affinity, de-duplication, and debug mode.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-ranker/src/lib.rs`, `crates/ck-core/src/ports/ranker.rs`
+- Reproducible command: `cargo test -p ck-ranker`
+- Result excerpt: `running 15 tests ... test result: ok. 15 passed; 0 failed`
+- Timestamp/context: 2026-06-02 10:30 EDT
+- Proof classification: focused-slice
+- Notes: Tests cover intent_weighting_changes_ranking_order, session_affinity_boosts_matching_session_items, deduplication_collapses_same_document_chunks, debug_mode_includes_detailed_breakdown, semantic_score_included_in_weighted_combination.
+- Confidence: high
+
+## Claim
+- Claim: Milestone 8 — EmbeddingPort and VectorSearchPort traits defined in ck-core.
+- Status: implemented
+- Evidence type: code
+- Files: `crates/ck-core/src/ports/embedding.rs`, `crates/ck-core/src/ports/vector_search.rs`, `crates/ck-core/src/ports/mod.rs`
+- Reproducible command: `cargo check -p ck-core`
+- Timestamp/context: 2026-06-02 10:30 EDT
+- Proof classification: code-presence
+- Notes: EmbeddingPort has embed/embed_batch/model_id/dimensions/is_available. VectorSearchPort has upsert_chunk_embedding/upsert_session_event_embedding/search_chunks/search_session_events/remove_chunk_embeddings_by_document.
+- Confidence: high
+
+## Claim
+- Claim: Milestone 8 — ck-embeddings provides NoopEmbeddingProvider and OpenAIEmbeddingProvider.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-embeddings/src/lib.rs`, `crates/ck-embeddings/Cargo.toml`
+- Reproducible command: `cargo test -p ck-embeddings`
+- Result excerpt: `running 5 tests ... test result: ok. 5 passed; 0 failed`
+- Timestamp/context: 2026-06-02 10:30 EDT
+- Proof classification: focused-slice
+- Notes: NoopEmbeddingProvider returns None/unavailable. OpenAIEmbeddingProvider uses ureq for sync HTTP to OpenAI-compatible API. Graceful fallback when not configured.
+- Confidence: high
+
+## Claim
+- Claim: Milestone 8 — ck-vector provides SqliteVectorStore with brute-force cosine similarity.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-vector/src/lib.rs`, `crates/ck-vector/Cargo.toml`
+- Reproducible command: `cargo test -p ck-vector`
+- Result excerpt: `running 14 tests ... test result: ok. 14 passed; 0 failed`
+- Timestamp/context: 2026-06-02 10:30 EDT
+- Proof classification: focused-slice
+- Notes: Tests cover encode_decode_roundtrip, cosine_similarity correctness, upsert_and_search, model filtering, limit enforcement, clone reopens database.
+- Confidence: high
+
+## Claim
+- Claim: Milestone 8 — Semantic retrieval integrated into query_reference with graceful fallback.
+- Status: implemented
+- Evidence type: code
+- Files: `crates/ck-app/src/lib.rs`
+- Reproducible command: `cargo test --workspace`
+- Result excerpt: `test result: ok. 153 passed; 0 failed`
+- Timestamp/context: 2026-06-02 10:30 EDT
+- Proof classification: release-gate-proof
+- Notes: AppServices has optional embedding/vector_search fields. query_reference merges FTS + vector results when semantic is available. semantic_available() method for status reporting.
+- Confidence: high
+
+## Claim
+- Claim: Milestone 9 — ck-adapter-web provides WebSourceAdapter with SSRF protections.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-adapter-web/src/lib.rs`, `crates/ck-adapter-web/Cargo.toml`
+- Reproducible command: `cargo test -p ck-adapter-web`
+- Result excerpt: `running 34 tests ... test result: ok. 34 passed; 0 failed`
+- Timestamp/context: 2026-06-02 10:30 EDT
+- Proof classification: focused-slice
+- Notes: 12 SSRF-specific tests covering private IP blocking, scheme blocking, IPv6 blocking, allowed_domains enforcement, localhost blocking. HTML-to-text conversion and title extraction tested.
+- Confidence: high
+
+## Claim
+- Claim: Milestone 9 — ck-adapter-github provides GitHubSourceAdapter with tree API and static file list.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-adapter-github/src/lib.rs`, `crates/ck-adapter-github/Cargo.toml`
+- Reproducible command: `cargo test -p ck-adapter-github`
+- Result excerpt: `running 18 tests ... test result: ok. 18 passed; 0 failed`
+- Timestamp/context: 2026-06-02 10:30 EDT
+- Proof classification: focused-slice
+- Notes: Supports both static `files` array and dynamic tree API discovery. Token auth with $ENV_VAR syntax. Base64 content decoding. GitHubNormalizer preserves metadata.
+- Confidence: high
+
+## Claim
+- Claim: Workspace tests pass, cargo fmt is clean, cargo clippy completes with zero warnings after M7-M9.
+- Status: implemented
+- Evidence type: test
+- Files: workspace
+- Reproducible command: `cargo test --workspace && cargo fmt --check && cargo clippy --workspace`
+- Result excerpt: `cargo test --workspace`: `test result: ok. 153 passed; 0 failed`; `cargo fmt --check`: no diff; `cargo clippy --workspace`: `Finished dev profile`
+- Timestamp/context: 2026-06-02 10:30 EDT
+- Proof classification: release-gate-proof
+- Notes: Test count increased from 65 to 153 after M7-M9 implementation.
+- Confidence: high

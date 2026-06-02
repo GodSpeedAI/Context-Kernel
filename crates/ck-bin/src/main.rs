@@ -10,11 +10,13 @@ use ck_app::AppServices;
 use ck_artifacts::FileArtifactStore;
 use ck_auth::BearerAuth;
 use ck_config::{default_config, load_config};
-use ck_core::ports::{AuthPort, StoragePort};
+use ck_core::ports::{AuthPort, EmbeddingPort, StoragePort, VectorSearchPort};
+use ck_embeddings::{NoopEmbeddingProvider, OpenAIEmbeddingProvider};
 use ck_mcp::McpService;
 use ck_ranker::LexicalRanker;
 use ck_search_fts::FtsSearch;
 use ck_storage_sqlite::SqliteStore;
+use ck_vector::SqliteVectorStore;
 use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
@@ -80,13 +82,15 @@ fn serve(args: RuntimeArgs) -> Result<()> {
     let storage_status = store.status()?;
 
     // Wire all adapters
-    let app = wire_app(&store, &data_dir)?;
+    let app = wire_app(&store, &data_dir, &config)?;
+
+    let semantic_enabled = config.embeddings.enabled && app.semantic_available();
 
     let status = app.get_status(
         &started_at,
         storage_status,
         &config.retrieval.default_mode,
-        config.retrieval.semantic_enabled,
+        semantic_enabled,
     )?;
 
     let service = Arc::new(McpService::with_app(status, app));
@@ -129,7 +133,8 @@ fn serve(args: RuntimeArgs) -> Result<()> {
     let running = Arc::new(AtomicBool::new(true));
     if config.scheduler.enable_periodic_refresh {
         let refresh_store = store.clone();
-        let refresh_app = wire_app(&refresh_store, &data_dir)?;
+        let refresh_config = config.clone();
+        let refresh_app = wire_app(&refresh_store, &data_dir, &refresh_config)?;
         let interval_secs = config.scheduler.refresh_interval_secs;
         let refresh_running = running.clone();
 
@@ -229,17 +234,52 @@ fn open_store(args: &RuntimeArgs) -> Result<(SqliteStore, ck_config::KernelConfi
     Ok((store, config))
 }
 
-fn wire_app(store: &SqliteStore, data_dir: &str) -> Result<AppServices> {
+fn wire_app(
+    store: &SqliteStore,
+    data_dir: &str,
+    config: &ck_config::KernelConfig,
+) -> Result<AppServices> {
     let db_path = store.path().to_path_buf();
 
-    Ok(AppServices::new(
+    let mut app = AppServices::new(
         Box::new(store.clone()),
         Box::new(store.clone()),
         Box::new(FileArtifactStore::new(PathBuf::from(data_dir))),
-        Box::new(FtsSearch::open(db_path)?),
+        Box::new(FtsSearch::open(db_path.clone())?),
         Box::new(LexicalRanker),
         Box::new(FilesystemSourceAdapter),
         Box::new(MarkdownNormalizer),
         Box::new(HeadingChunker),
-    ))
+    );
+
+    // Wire semantic retrieval when configured
+    if config.embeddings.enabled && config.embeddings.provider != "none" {
+        let embedding: Box<dyn EmbeddingPort> = if config.embeddings.provider == "openai" {
+            Box::new(OpenAIEmbeddingProvider::new(
+                config.embeddings.api_base.clone(),
+                config.embeddings.api_key.clone(),
+                config.embeddings.model.clone(),
+                config.embeddings.dimensions,
+            ))
+        } else {
+            tracing::warn!(
+                provider = %config.embeddings.provider,
+                "unknown embedding provider, falling back to noop"
+            );
+            Box::new(NoopEmbeddingProvider)
+        };
+
+        let vector_store: Box<dyn VectorSearchPort> = Box::new(SqliteVectorStore::open(&db_path)?);
+
+        app = app.with_semantic(embedding, vector_store);
+
+        tracing::info!(
+            provider = %config.embeddings.provider,
+            model = %config.embeddings.model,
+            dimensions = config.embeddings.dimensions,
+            "semantic retrieval configured"
+        );
+    }
+
+    Ok(app)
 }
