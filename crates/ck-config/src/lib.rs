@@ -9,6 +9,12 @@ pub struct KernelConfig {
     pub service: ServiceConfig,
     pub storage: StorageConfig,
     pub retrieval: RetrievalConfig,
+    #[serde(default)]
+    pub mcp: McpConfig,
+    #[serde(default)]
+    pub auth: AuthConfig,
+    #[serde(default)]
+    pub scheduler: SchedulerConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,6 +31,72 @@ pub struct StorageConfig {
 pub struct RetrievalConfig {
     pub default_mode: String,
     pub semantic_enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct McpConfig {
+    #[serde(default = "default_enable_stdio")]
+    pub enable_stdio: bool,
+    #[serde(default)]
+    pub enable_sse: bool,
+    #[serde(default)]
+    pub sse: SseConfig,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            enable_stdio: true,
+            enable_sse: false,
+            sse: SseConfig::default(),
+        }
+    }
+}
+
+fn default_enable_stdio() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct SseConfig {
+    #[serde(default = "default_sse_bind")]
+    pub bind: String,
+    #[serde(default = "default_sse_base_path")]
+    pub base_path: String,
+    #[serde(default)]
+    pub require_auth: bool,
+}
+
+fn default_sse_bind() -> String {
+    "127.0.0.1:8765".to_string()
+}
+
+fn default_sse_base_path() -> String {
+    "/mcp".to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct AuthConfig {
+    #[serde(default = "default_trust_mode")]
+    pub trust_mode: String,
+    #[serde(default)]
+    pub tokens: Vec<String>,
+}
+
+fn default_trust_mode() -> String {
+    "internal".to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct SchedulerConfig {
+    #[serde(default)]
+    pub enable_periodic_refresh: bool,
+    #[serde(default = "default_refresh_interval")]
+    pub refresh_interval_secs: u64,
+}
+
+fn default_refresh_interval() -> u64 {
+    1800
 }
 
 pub fn load_config(path: impl AsRef<Path>) -> Result<KernelConfig> {
@@ -45,6 +117,13 @@ pub fn default_config() -> KernelConfig {
             default_mode: "hybrid".to_string(),
             semantic_enabled: false,
         },
+        mcp: McpConfig {
+            enable_stdio: true,
+            enable_sse: false,
+            sse: SseConfig::default(),
+        },
+        auth: AuthConfig::default(),
+        scheduler: SchedulerConfig::default(),
     }
 }
 
@@ -101,5 +180,60 @@ semantic_enabled = false
         assert_eq!(config.storage.database_path, "/tmp/kernel.db");
         assert_eq!(config.retrieval.default_mode, "hybrid");
         assert!(!config.retrieval.semantic_enabled);
+        assert!(config.mcp.enable_stdio);
+    }
+
+    #[test]
+    fn mcp_default_enables_stdio() {
+        assert!(McpConfig::default().enable_stdio);
+        assert!(default_config().mcp.enable_stdio);
+    }
+
+    #[test]
+    fn loads_sse_and_auth_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("context-kernal.toml");
+        fs::write(
+            &path,
+            r#"
+[service]
+name = "context-kernal"
+
+[storage]
+database_path = "/tmp/kernel.db"
+
+[retrieval]
+default_mode = "hybrid"
+semantic_enabled = false
+
+[mcp]
+enable_stdio = true
+enable_sse = true
+
+[mcp.sse]
+bind = "0.0.0.0:9999"
+require_auth = true
+
+[auth]
+trust_mode = "internal"
+tokens = ["secret123"]
+
+[scheduler]
+enable_periodic_refresh = true
+refresh_interval_secs = 3600
+"#,
+        )
+        .unwrap();
+
+        let config = load_config(&path).unwrap();
+
+        assert!(config.mcp.enable_sse);
+        assert!(config.mcp.enable_stdio);
+        assert_eq!(config.mcp.sse.bind, "0.0.0.0:9999");
+        assert!(config.mcp.sse.require_auth);
+        assert_eq!(config.auth.trust_mode, "internal");
+        assert_eq!(config.auth.tokens, vec!["secret123"]);
+        assert!(config.scheduler.enable_periodic_refresh);
+        assert_eq!(config.scheduler.refresh_interval_secs, 3600);
     }
 }

@@ -2,7 +2,7 @@ use anyhow::Result;
 use base64::Engine;
 use ck_app::{
     AppServices, IngestSourceRequest, QueryReferenceRequest, RecallContextRequest,
-    ResolveReferenceRequest, StoreContextRequest,
+    RefreshSourceRequest, ResolveReferenceRequest, StoreContextRequest,
 };
 use ck_core::KernelStatus;
 use serde_json::Value;
@@ -12,7 +12,7 @@ use thiserror::Error;
 pub enum McpError {
     #[error("unknown tool: {0}")]
     UnknownTool(String),
-    #[error("invalid arguments: {0}")]
+    #[error("invalid_arguments: {0}")]
     InvalidArguments(String),
     #[error("{0}")]
     Internal(String),
@@ -50,6 +50,8 @@ impl McpService {
             "recall_context" => self.handle_recall_context(arguments),
 
             "ingest_source" => self.handle_ingest_source(arguments),
+
+            "refresh_source" => self.handle_refresh_source(arguments),
 
             "query_reference" | "get-library-docs" | "query-docs" => {
                 self.handle_query_reference(arguments)
@@ -318,6 +320,31 @@ impl McpService {
             "mode": resp.mode,
         }))
     }
+
+    fn handle_refresh_source(&self, arguments: Value) -> Result<Value, McpError> {
+        let app = self.require_app()?;
+
+        let source_id = arguments["source_id"].as_str().unwrap_or("").to_string();
+
+        if source_id.is_empty() {
+            return Err(McpError::InvalidArguments(
+                "source_id is required".to_string(),
+            ));
+        }
+
+        let req = RefreshSourceRequest { source_id };
+
+        let resp = app.refresh_source(req)?;
+
+        Ok(serde_json::json!({
+            "job": {
+                "job_id": resp.job.job_id,
+                "source_id": resp.job.source_id,
+                "status": resp.job.status,
+                "trigger": resp.job.trigger,
+            }
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -382,6 +409,20 @@ mod tests {
             "get-library-docs",
             json!({"context7CompatibleLibraryID": "/vercel/next.js", "topic": "routing"}),
         );
+        assert!(result.is_err());
+        match result {
+            Err(McpError::Internal(_)) => {}
+            Err(McpError::UnknownTool(_)) => panic!("should not be unknown tool"),
+            _ => panic!("unexpected"),
+        }
+    }
+
+    #[test]
+    fn refresh_source_without_app_returns_error() {
+        let status = KernelStatus::placeholder();
+        let service = McpService::new(status);
+
+        let result = service.call_tool("refresh_source", json!({"source_id": "test"}));
         assert!(result.is_err());
         match result {
             Err(McpError::Internal(_)) => {}

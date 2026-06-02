@@ -1,0 +1,12 @@
+[package]
+name = "ck-scheduler"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+ck-core = { path = "../ck-core" }
+chrono.workspace = true
+tracing.workspace = true
+ulid.workspace = true

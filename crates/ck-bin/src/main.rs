@@ -1,12 +1,16 @@
 use std::io::{self, BufRead};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use anyhow::Result;
 use chrono::Utc;
 use ck_adapter_filesystem::{FilesystemSourceAdapter, HeadingChunker, MarkdownNormalizer};
 use ck_app::AppServices;
 use ck_artifacts::FileArtifactStore;
+use ck_auth::BearerAuth;
 use ck_config::{default_config, load_config};
+use ck_core::ports::{AuthPort, StoragePort};
 use ck_mcp::McpService;
 use ck_ranker::LexicalRanker;
 use ck_search_fts::FtsSearch;
@@ -37,6 +41,8 @@ struct RuntimeArgs {
     database: Option<String>,
     #[arg(long)]
     data_dir: Option<String>,
+    #[arg(long)]
+    sse: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -83,8 +89,101 @@ fn serve(args: RuntimeArgs) -> Result<()> {
         config.retrieval.semantic_enabled,
     )?;
 
-    let service = McpService::with_app(status, app);
+    let service = Arc::new(McpService::with_app(status, app));
 
+    // Determine if SSE should be enabled
+    let enable_sse = args.sse.is_some() || config.mcp.enable_sse;
+    let sse_bind = args.sse.as_deref().unwrap_or(config.mcp.sse.bind.as_str());
+
+    if enable_sse {
+        // Wire auth
+        let auth: Arc<dyn AuthPort> = if config.mcp.sse.require_auth {
+            if config.auth.tokens.is_empty() {
+                anyhow::bail!("SSE auth is required but no auth tokens are configured");
+            }
+            Arc::new(BearerAuth::new(config.auth.tokens.clone(), false))
+        } else {
+            Arc::new(BearerAuth::no_auth())
+        };
+
+        let sse_state = ck_transport_sse::SseState {
+            mcp: service.clone(),
+            auth,
+        };
+
+        // Start SSE server in a background thread
+        let sse_bind_owned = sse_bind.to_string();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            rt.block_on(async {
+                if let Err(e) = ck_transport_sse::serve_sse(sse_state, &sse_bind_owned).await {
+                    tracing::error!(error = %e, "SSE server error");
+                }
+            });
+        });
+
+        tracing::info!(bind = sse_bind, "SSE MCP server started");
+    }
+
+    // Periodic refresh background thread
+    let running = Arc::new(AtomicBool::new(true));
+    if config.scheduler.enable_periodic_refresh {
+        let refresh_store = store.clone();
+        let refresh_app = wire_app(&refresh_store, &data_dir)?;
+        let interval_secs = config.scheduler.refresh_interval_secs;
+        let refresh_running = running.clone();
+
+        std::thread::spawn(move || {
+            tracing::info!(interval_secs, "periodic refresh thread started");
+            while refresh_running.load(Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_secs(interval_secs));
+
+                if !refresh_running.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                match refresh_store.list_stale_sources() {
+                    Ok(stale) => {
+                        if stale.is_empty() {
+                            tracing::debug!("no stale sources to refresh");
+                        } else {
+                            tracing::info!(count = stale.len(), "refreshing stale sources");
+                            for source in &stale {
+                                let req = ck_app::RefreshSourceRequest {
+                                    source_id: source.source_id.clone(),
+                                };
+                                match refresh_app.refresh_source(req) {
+                                    Ok(resp) => {
+                                        tracing::info!(
+                                            source_id = %source.source_id,
+                                            job_id = %resp.job.job_id,
+                                            "refreshed stale source"
+                                        );
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            source_id = %source.source_id,
+                                            error = %e,
+                                            "failed to refresh stale source"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "failed to list stale sources"
+                        );
+                    }
+                }
+            }
+            tracing::info!("periodic refresh thread stopped");
+        });
+    }
+
+    // Always serve stdio (stdin loop)
     for line in io::stdin().lock().lines() {
         let line = line?;
         if line.trim().is_empty() {
@@ -92,6 +191,8 @@ fn serve(args: RuntimeArgs) -> Result<()> {
         }
         println!("{}", ck_transport_stdio::handle_line(&service, &line)?);
     }
+
+    running.store(false, Ordering::Relaxed);
 
     Ok(())
 }

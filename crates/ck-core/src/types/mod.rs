@@ -87,3 +87,13 @@ pub enum RecallScope {
     Recent,
     All,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[derive(Default)]
+pub enum SourceHealth {
+    #[default]
+    Unknown,
+    Healthy,
+    Degraded,
+}

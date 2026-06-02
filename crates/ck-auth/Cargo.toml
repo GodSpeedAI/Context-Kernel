@@ -1,0 +1,9 @@
+[package]
+name = "ck-auth"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+ck-core = { path = "../ck-core" }
+subtle.workspace = true

@@ -39,3 +39,67 @@
 - Alternatives considered: Adding library_id to chunks table; rejected to match the plan's schema.
 - Evidence in codebase: `crates/ck-search-fts/src/lib.rs` search_chunks method joins chunks→documents for library_id filtering.
 - Consequences: Slightly more complex queries but matches the normalized schema design.
+
+## Decision: Implement Milestones 4-6 Together
+- Date: 2026-06-01
+- Context: User requested implementation of milestones 4 through 6. They share infrastructure (enhanced storage, scheduler, auth) and build on each other.
+- Decision: Implement all three milestones in a single session.
+- Alternatives considered: One milestone at a time; rejected because M5 (scheduler) depends on M4 (source health/stale detection) and M6 (SSE) depends on M5 (auth).
+- Evidence in codebase: All three milestones' acceptance criteria are met with 57 passing tests.
+- Consequences: Larger change set but efficient; all three milestones verified together.
+
+## Decision: Synchronous core with tokio only in transport layer
+- Date: 2026-06-01
+- Context: M6 adds SSE transport requiring async HTTP (axum + tokio), but the rest of the codebase is synchronous (rusqlite).
+- Decision: Keep tokio confined to ck-transport-sse and ck-bin's SSE thread. SSE server runs in a background std::thread with its own tokio runtime.
+- Alternatives considered: Making the entire codebase async; rejected because it would require rewriting all storage/search code and adding tokio to ck-core.
+- Evidence in codebase: `ck-transport-sse/Cargo.toml` depends on tokio/axum; `ck-bin/src/main.rs` creates a tokio runtime inside a std::thread for SSE.
+- Consequences: Clean separation between sync domain logic and async transport; no tokio dependency in ck-core.
+
+## Decision: Separate AppServices instance for periodic refresh thread
+- Date: 2026-06-01
+- Context: Periodic refresh thread needs its own AppServices because AppServices is not Clone.
+- Decision: Create a second AppServices via wire_app() for the refresh thread.
+- Alternatives considered: Wrapping AppServices in Arc; rejected because AppServices owns Box<dyn trait> ports that are not thread-safe.
+- Evidence in codebase: `crates/ck-bin/src/main.rs` lines 129-130 create `refresh_store` and `refresh_app`.
+- Consequences: Two SQLite connections for refresh thread; acceptable for a local service.
+
+## Decision: Hybrid scoring weights (FTS 0.7, trust 0.2, freshness 0.1)
+- Date: 2026-06-01
+- Context: M4 requires enhanced ranking with trust and freshness signals.
+- Decision: Use fixed weights: FTS 0.7, trust 0.2, freshness 0.1. Trust is normalized to [0,1] by dividing by 100. Freshness is computed from last_refresh_success_at and freshness_ttl_secs.
+- Alternatives considered: Configurable weights; deferred as a future enhancement.
+- Evidence in codebase: `crates/ck-ranker/src/lib.rs` combine_scores method.
+- Consequences: Simple but effective ranking; can be made configurable later.
+
+## Decision: Add StoragePort primitives for refresh job atomicity
+- Date: 2026-06-02 08:06 EDT
+- Context: Review found scheduler enqueue and claim used read-modify-write sequences that could race and scanned job histories.
+- Decision: Add `insert_active_refresh_job` and `claim_next_refresh_job_for_source` to `StoragePort`; SQLite uses a partial unique index for active jobs and `UPDATE ... RETURNING` for claim.
+- Alternatives considered: Relax scheduler documentation to best-effort; rejected because SQLite can enforce the needed atomic primitives. Keeping direct scheduler read/modify/write; rejected because it preserves the race.
+- Evidence in codebase: `crates/ck-core/src/ports/storage.rs`, `crates/ck-storage-sqlite/src/lib.rs`, `crates/ck-scheduler/src/lib.rs`; tests `insert_active_refresh_job_returns_existing_active_job` and `claim_next_refresh_job_for_source_is_single_use`.
+- Consequences: StoragePort implementors must provide refresh-job atomic primitives; current repository implementations were updated.
+
+## Decision: Persist refresh corpus identity through corpus_sources
+- Date: 2026-06-02 08:06 EDT
+- Context: Review asked refresh to use `source.corpus_id`, but `Source` has no `corpus_id` field. Schema already has `corpus_sources`.
+- Decision: Add `link_source_to_corpus` and `find_corpus_id_for_source` to `StoragePort`; ingest records the link and refresh reads it.
+- Alternatives considered: Add `corpus_id` to `Source`; rejected because it would duplicate existing schema intent and require broader entity/schema changes. Parse corpus from adapter config; rejected because config is not a stable storage relation.
+- Evidence in codebase: `crates/ck-core/src/ports/storage.rs`, `crates/ck-storage-sqlite/src/lib.rs`, `crates/ck-app/src/lib.rs`; test `refresh_source_reuses_persisted_corpus_id`.
+- Consequences: Refresh is idempotent against the persisted corpus relation; StoragePort interface expanded.
+
+## Decision: Use SourceHealth::Degraded for ingest failures
+- Date: 2026-06-02 08:06 EDT
+- Context: Review asked for `SourceHealth::Failing`, but current enum variants are `Unknown`, `Healthy`, and `Degraded`.
+- Decision: On ingest failure after source creation, call `update_source_health(..., SourceHealth::Degraded, Some(error))` and return the original error.
+- Alternatives considered: Add a new `Failing` enum variant; rejected as unnecessary schema/API expansion for a narrow bug fix and inconsistent with scheduler failure handling.
+- Evidence in codebase: `crates/ck-core/src/types/mod.rs`, `crates/ck-app/src/lib.rs`, `crates/ck-scheduler/src/lib.rs`; test `ingest_source_marks_source_degraded_on_failure`.
+- Consequences: Failed ingest now updates health consistently with existing failure semantics.
+
+## Decision: Fail fast on SSE auth misconfiguration
+- Date: 2026-06-02 08:06 EDT
+- Context: Review found `require_auth = true` with empty tokens silently created no-auth mode.
+- Decision: `ck-bin` returns an error before starting SSE when auth is required and token list is empty.
+- Alternatives considered: Warn and continue with SSE disabled; rejected because failing fast is clearer and avoids running a surprising partial service.
+- Evidence in codebase: `crates/ck-bin/src/main.rs`; workspace integration tests still pass.
+- Consequences: Misconfigured deployments receive an immediate startup error instead of an unauthenticated SSE server.

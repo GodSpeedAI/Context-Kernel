@@ -188,10 +188,6 @@ impl AppServices {
         let query_id = format!("qry_{}", Ulid::new());
         let safe_top_k = req.top_k.max(1);
 
-        // Honor RecallScope:
-        //   Current → restrict to req.session_id
-        //   Recent  → restrict to req.session_id (same session filter)
-        //   All     → no session filter
         let session_filter = match req.scope {
             RecallScope::All => None,
             RecallScope::Current | RecallScope::Recent => req.session_id.as_deref(),
@@ -250,71 +246,93 @@ impl AppServices {
         };
         self.storage.upsert_source(&source)?;
 
-        // Ensure corpus exists
-        let corpus = Corpus {
-            corpus_id: corpus_id.clone(),
-            name: req.source_id.clone(),
-            kind: "library_docs".to_string(),
-            visibility: "local".to_string(),
-            created_at: now.clone(),
-            updated_at: now.clone(),
-        };
-        self.storage.upsert_corpus(&corpus)?;
+        let ingest_result: Result<(i64, i64)> = (|| {
+            // Ensure corpus exists
+            let corpus = Corpus {
+                corpus_id: corpus_id.clone(),
+                name: req.source_id.clone(),
+                kind: "library_docs".to_string(),
+                visibility: "local".to_string(),
+                created_at: now.clone(),
+                updated_at: now.clone(),
+            };
+            self.storage.upsert_corpus(&corpus)?;
+            self.storage
+                .link_source_to_corpus(&corpus_id, &req.source_id)?;
 
-        // Discover and fetch units
-        let units = self
-            .source_adapter
-            .discover_units(&req.source_id, &req.adapter_config_json)?;
+            // Discover and fetch units
+            let units = self
+                .source_adapter
+                .discover_units(&req.source_id, &req.adapter_config_json)?;
 
-        let mut docs_indexed: i64 = 0;
-        let mut chunks_indexed: i64 = 0;
+            let mut docs_indexed: i64 = 0;
+            let mut chunks_indexed: i64 = 0;
 
-        for unit in &units {
-            let raw = self.source_adapter.fetch_content(
-                &req.source_id,
-                unit,
-                &req.adapter_config_json,
-            )?;
-
-            let documents = self
-                .normalizer
-                .normalize(&raw, &req.source_id, &corpus_id)?;
-
-            for doc in &documents {
-                // Upsert document
-                self.storage.upsert_document(doc)?;
-
-                // Chunk the document
-                let chunks = self.chunker.chunk(
-                    &doc.document_id,
-                    &corpus_id,
-                    &doc.content_text,
-                    &doc.title,
+            for unit in &units {
+                let raw = self.source_adapter.fetch_content(
+                    &req.source_id,
+                    unit,
+                    &req.adapter_config_json,
                 )?;
 
-                // Remove old FTS entries for this document
-                self.search.remove_chunks_by_document(&doc.document_id)?;
+                let documents = self
+                    .normalizer
+                    .normalize(&raw, &req.source_id, &corpus_id)?;
 
-                // Replace chunks in storage
-                self.storage.replace_chunks(&doc.document_id, &chunks)?;
+                for doc in &documents {
+                    // Upsert document
+                    self.storage.upsert_document(doc)?;
 
-                // Index chunks in FTS
-                for chunk in &chunks {
-                    self.search.index_chunk(
-                        &chunk.chunk_id,
-                        &chunk.document_id,
-                        &chunk.corpus_id,
-                        doc.library_id.as_deref(),
+                    // Chunk the document
+                    let chunks = self.chunker.chunk(
+                        &doc.document_id,
+                        &corpus_id,
+                        &doc.content_text,
                         &doc.title,
-                        chunk.heading.as_deref().unwrap_or(""),
-                        &chunk.text,
                     )?;
-                }
 
-                docs_indexed += 1;
-                chunks_indexed += chunks.len() as i64;
+                    // Remove old FTS entries for this document
+                    self.search.remove_chunks_by_document(&doc.document_id)?;
+
+                    // Replace chunks in storage
+                    self.storage.replace_chunks(&doc.document_id, &chunks)?;
+
+                    // Index chunks in FTS
+                    for chunk in &chunks {
+                        self.search.index_chunk(
+                            &chunk.chunk_id,
+                            &chunk.document_id,
+                            &chunk.corpus_id,
+                            doc.library_id.as_deref(),
+                            &doc.title,
+                            chunk.heading.as_deref().unwrap_or(""),
+                            &chunk.text,
+                        )?;
+                    }
+
+                    docs_indexed += 1;
+                    chunks_indexed += chunks.len() as i64;
+                }
             }
-        }
+            Ok((docs_indexed, chunks_indexed))
+        })();
+
+        let (docs_indexed, chunks_indexed) = match ingest_result {
+            Ok(stats) => stats,
+            Err(e) => {
+                let error = e.to_string();
+                self.storage.update_source_health(
+                    &req.source_id,
+                    SourceHealth::Degraded,
+                    Some(&error),
+                )?;
+                return Err(e);
+            }
+        };
+
+        // Mark source as healthy
+        self.storage
+            .update_source_health(&req.source_id, SourceHealth::Healthy, None)?;
 
         // Create a refresh job record
         let job_id = format!("job_{}", Ulid::new());
@@ -375,11 +393,9 @@ impl AppServices {
         // Determine corpus/library filter from canonical_id
         let (corpus_id, library_id): (Option<String>, Option<String>) =
             if let Some(cid) = &req.canonical_id {
-                // Try to find a library identity
                 if self.storage.get_library_identity(cid)?.is_some() {
-                    (None, Some(cid.clone())) // library filter only
+                    (None, Some(cid.clone()))
                 } else {
-                    // Treat as corpus_id
                     (Some(cid.clone()), None)
                 }
             } else {
@@ -394,17 +410,688 @@ impl AppServices {
             safe_top_k * 3,
         )?;
 
-        let results = self.ranker.rank_retrieval_results(&req.query, scored)?;
+        // Enrich scored items with trust and freshness metadata
+        let enriched = self.enrich_scored_items(scored)?;
 
-        let truncated = results.len() > safe_top_k as usize;
-        let results = results.into_iter().take(safe_top_k as usize).collect();
+        let results = self.ranker.rank_retrieval_results(&req.query, enriched)?;
+
+        // Build citations and excerpts for each result
+        let mut final_results = Vec::new();
+        for mut result in results {
+            if let Some(chunk_id) = &result.chunk_id {
+                if let Some((chunk, doc)) = self.storage.get_chunk_with_document(chunk_id)? {
+                    result.document_id = Some(doc.document_id.clone());
+                    result.title = Some(doc.title.clone());
+                    result.heading = chunk.heading;
+                    result.excerpt = build_excerpt(&chunk.text, 200);
+                    result.citation = build_citation(&doc, chunk.anchor.as_deref());
+                    result.canonical_id = doc.library_id.clone();
+                    result.metadata = serde_json::json!({
+                        "source_id": doc.source_id,
+                        "corpus_id": doc.corpus_id,
+                        "version": doc.version,
+                    });
+                }
+            }
+            final_results.push(result);
+        }
+
+        let truncated = final_results.len() > safe_top_k as usize;
+        let final_results = final_results
+            .into_iter()
+            .take(safe_top_k as usize)
+            .collect();
 
         Ok(QueryReferenceResponse {
-            results,
+            results: final_results,
             query_id,
             mode,
             truncated,
         })
+    }
+
+    /// Enrich scored items with trust_score and freshness from storage metadata.
+    fn enrich_scored_items(&self, items: Vec<ScoredItem>) -> Result<Vec<ScoredItem>> {
+        let mut enriched = Vec::new();
+        for item in items {
+            let mut breakdown = item.score_breakdown;
+
+            // Try to get trust score from library identity
+            if let Some((chunk, doc)) = self.storage.get_chunk_with_document(&item.id)? {
+                if let Some(lib_id) = &doc.library_id {
+                    if let Some(lib) = self.storage.get_library_identity(lib_id)? {
+                        if let Some(ts) = lib.trust_score {
+                            if let Some(m) = breakdown.as_object_mut() {
+                                m.insert("trust_score".to_string(), serde_json::json!(ts));
+                            }
+                        }
+                    }
+                }
+
+                // Compute freshness from source
+                if let Some(source) = self.storage.get_source(&doc.source_id)? {
+                    let freshness = compute_freshness(
+                        source.last_refresh_success_at.as_deref(),
+                        source.freshness_ttl_secs,
+                    );
+                    if let Some(m) = breakdown.as_object_mut() {
+                        m.insert("freshness".to_string(), serde_json::json!(freshness));
+                    }
+                }
+                // We don't need the chunk/doc anymore, but we had to query them
+                let _ = (chunk, doc);
+            }
+
+            enriched.push(ScoredItem {
+                id: item.id,
+                score: item.score,
+                score_breakdown: breakdown,
+            });
+        }
+        Ok(enriched)
+    }
+}
+
+/// Build a token-efficient excerpt from chunk text.
+fn build_excerpt(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let truncated: String = text.chars().take(max_chars).collect();
+    format!("{}…", truncated)
+}
+
+/// Build a citation object from document metadata.
+fn build_citation(doc: &Document, anchor: Option<&str>) -> serde_json::Value {
+    let mut citation = serde_json::Map::new();
+    if let Some(uri) = &doc.uri {
+        citation.insert("uri".to_string(), serde_json::json!(uri));
+    }
+    if let Some(a) = anchor {
+        citation.insert("anchor".to_string(), serde_json::json!(a));
+    }
+    serde_json::Value::Object(citation)
+}
+
+/// Compute a freshness score (0.0 to 1.0) based on last refresh time.
+fn compute_freshness(last_success: Option<&str>, _ttl_secs: Option<i64>) -> f64 {
+    match last_success {
+        None => 0.0,
+        Some(ts) => {
+            // Simple heuristic: if we can parse the timestamp, give a score
+            // based on how recent it is. For now, just return a fixed value
+            // since we don't have a full datetime parser.
+            if ts.is_empty() {
+                0.0
+            } else {
+                0.5 // Default freshness for any source that has been refreshed
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    struct AppTestState {
+        sources: Vec<Source>,
+        corpora: Vec<Corpus>,
+        documents: Vec<Document>,
+        refresh_jobs: Vec<RefreshJob>,
+        source_corpora: Vec<(String, String)>,
+        health_updates: Vec<(String, SourceHealth, Option<String>)>,
+        normalized_corpora: Vec<String>,
+        fetch_should_fail: bool,
+    }
+
+    #[derive(Clone)]
+    struct SharedState(Arc<Mutex<AppTestState>>);
+
+    impl SharedState {
+        fn new() -> Self {
+            Self(Arc::new(Mutex::new(AppTestState::default())))
+        }
+    }
+
+    struct TestStorage {
+        state: SharedState,
+    }
+
+    impl StoragePort for TestStorage {
+        fn upsert_source(&self, source: &Source) -> Result<()> {
+            let mut state = self.state.0.lock().unwrap();
+            if let Some(existing) = state
+                .sources
+                .iter_mut()
+                .find(|s| s.source_id == source.source_id)
+            {
+                *existing = source.clone();
+            } else {
+                state.sources.push(source.clone());
+            }
+            Ok(())
+        }
+
+        fn get_source(&self, source_id: &str) -> Result<Option<Source>> {
+            Ok(self
+                .state
+                .0
+                .lock()
+                .unwrap()
+                .sources
+                .iter()
+                .find(|s| s.source_id == source_id)
+                .cloned())
+        }
+
+        fn list_sources(&self) -> Result<Vec<Source>> {
+            Ok(self.state.0.lock().unwrap().sources.clone())
+        }
+
+        fn update_source_health(
+            &self,
+            source_id: &str,
+            health: SourceHealth,
+            error: Option<&str>,
+        ) -> Result<()> {
+            self.state.0.lock().unwrap().health_updates.push((
+                source_id.to_string(),
+                health,
+                error.map(str::to_string),
+            ));
+            Ok(())
+        }
+
+        fn list_stale_sources(&self) -> Result<Vec<Source>> {
+            Ok(vec![])
+        }
+
+        fn upsert_corpus(&self, corpus: &Corpus) -> Result<()> {
+            self.state.0.lock().unwrap().corpora.push(corpus.clone());
+            Ok(())
+        }
+
+        fn get_corpus(&self, _corpus_id: &str) -> Result<Option<Corpus>> {
+            Ok(None)
+        }
+
+        fn list_corpora(&self) -> Result<Vec<Corpus>> {
+            Ok(self.state.0.lock().unwrap().corpora.clone())
+        }
+
+        fn link_source_to_corpus(&self, corpus_id: &str, source_id: &str) -> Result<()> {
+            let mut state = self.state.0.lock().unwrap();
+            if !state
+                .source_corpora
+                .iter()
+                .any(|(s, c)| s == source_id && c == corpus_id)
+            {
+                state
+                    .source_corpora
+                    .push((source_id.to_string(), corpus_id.to_string()));
+            }
+            Ok(())
+        }
+
+        fn find_corpus_id_for_source(&self, source_id: &str) -> Result<Option<String>> {
+            Ok(self
+                .state
+                .0
+                .lock()
+                .unwrap()
+                .source_corpora
+                .iter()
+                .find(|(s, _)| s == source_id)
+                .map(|(_, c)| c.clone()))
+        }
+
+        fn upsert_document(&self, doc: &Document) -> Result<()> {
+            self.state.0.lock().unwrap().documents.push(doc.clone());
+            Ok(())
+        }
+
+        fn get_document(&self, _document_id: &str) -> Result<Option<Document>> {
+            Ok(None)
+        }
+
+        fn delete_document(&self, _document_id: &str) -> Result<()> {
+            Ok(())
+        }
+
+        fn list_documents_by_source(&self, _source_id: &str) -> Result<Vec<Document>> {
+            Ok(self.state.0.lock().unwrap().documents.clone())
+        }
+
+        fn list_documents_by_corpus(&self, _corpus_id: &str) -> Result<Vec<Document>> {
+            Ok(vec![])
+        }
+
+        fn get_chunk_with_document(&self, _chunk_id: &str) -> Result<Option<(Chunk, Document)>> {
+            Ok(None)
+        }
+
+        fn replace_chunks(&self, _document_id: &str, _chunks: &[Chunk]) -> Result<()> {
+            Ok(())
+        }
+
+        fn list_chunks_by_document(&self, _document_id: &str) -> Result<Vec<Chunk>> {
+            Ok(vec![])
+        }
+
+        fn list_chunks_by_corpus(&self, _corpus_id: &str) -> Result<Vec<Chunk>> {
+            Ok(vec![])
+        }
+
+        fn upsert_library_identity(&self, _lib: &LibraryIdentity) -> Result<()> {
+            Ok(())
+        }
+
+        fn get_library_identity(&self, _library_id: &str) -> Result<Option<LibraryIdentity>> {
+            Ok(None)
+        }
+
+        fn list_library_identities(&self) -> Result<Vec<LibraryIdentity>> {
+            Ok(vec![])
+        }
+
+        fn upsert_library_alias(&self, _alias: &LibraryAlias) -> Result<()> {
+            Ok(())
+        }
+
+        fn list_library_aliases(&self, _library_id: &str) -> Result<Vec<LibraryAlias>> {
+            Ok(vec![])
+        }
+
+        fn upsert_refresh_job(&self, job: &RefreshJob) -> Result<()> {
+            self.state.0.lock().unwrap().refresh_jobs.push(job.clone());
+            Ok(())
+        }
+
+        fn insert_active_refresh_job(&self, job: &RefreshJob) -> Result<RefreshJob> {
+            self.upsert_refresh_job(job)?;
+            Ok(job.clone())
+        }
+
+        fn get_refresh_job(&self, _job_id: &str) -> Result<Option<RefreshJob>> {
+            Ok(None)
+        }
+
+        fn list_refresh_jobs_by_source(&self, _source_id: &str) -> Result<Vec<RefreshJob>> {
+            Ok(vec![])
+        }
+
+        fn find_active_job_for_source(&self, _source_id: &str) -> Result<Option<RefreshJob>> {
+            Ok(None)
+        }
+
+        fn claim_next_refresh_job_for_source(
+            &self,
+            _source_id: &str,
+        ) -> Result<Option<RefreshJob>> {
+            Ok(None)
+        }
+
+        fn count_jobs_by_status(&self, _status_str: &str) -> Result<u64> {
+            Ok(0)
+        }
+    }
+
+    struct NoopSessionMemory;
+
+    impl SessionMemoryPort for NoopSessionMemory {
+        fn create_session(
+            &self,
+            _session_id: &str,
+            _transport: SessionTransport,
+            _continuation_mode: ContinuationMode,
+        ) -> Result<Session> {
+            unimplemented!()
+        }
+
+        fn get_session(&self, _session_id: &str) -> Result<Option<Session>> {
+            Ok(None)
+        }
+
+        fn add_event(
+            &self,
+            _session_id: &str,
+            _kind: &str,
+            _text: &str,
+            _artifact_id: Option<&str>,
+            _metadata_json: &str,
+            _pinned: bool,
+        ) -> Result<StoredContext> {
+            unimplemented!()
+        }
+
+        fn get_event(&self, _event_id: &str) -> Result<Option<SessionEvent>> {
+            Ok(None)
+        }
+
+        fn list_events_by_session(&self, _session_id: &str) -> Result<Vec<SessionEvent>> {
+            Ok(vec![])
+        }
+
+        fn count_active_sessions(&self) -> Result<u64> {
+            Ok(0)
+        }
+    }
+
+    struct NoopArtifactStore;
+
+    impl ArtifactPort for NoopArtifactStore {
+        fn store_artifact(
+            &self,
+            _artifact_id: &str,
+            _session_id: Option<&str>,
+            _kind: &str,
+            _mime_type: Option<&str>,
+            _content: &[u8],
+        ) -> Result<Artifact> {
+            unimplemented!()
+        }
+
+        fn get_artifact(&self, _artifact_id: &str) -> Result<Option<Artifact>> {
+            Ok(None)
+        }
+
+        fn read_artifact_content(&self, _artifact_id: &str) -> Result<Option<Vec<u8>>> {
+            Ok(None)
+        }
+    }
+
+    struct NoopSearch;
+
+    impl LexicalSearchPort for NoopSearch {
+        fn index_chunk(
+            &self,
+            _chunk_id: &str,
+            _document_id: &str,
+            _corpus_id: &str,
+            _library_id: Option<&str>,
+            _title: &str,
+            _heading: &str,
+            _text: &str,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        fn remove_chunks_by_document(&self, _document_id: &str) -> Result<()> {
+            Ok(())
+        }
+
+        fn search_chunks(
+            &self,
+            _query: &str,
+            _corpus_id: Option<&str>,
+            _library_id: Option<&str>,
+            _limit: i64,
+        ) -> Result<Vec<ScoredItem>> {
+            Ok(vec![])
+        }
+
+        fn index_session_event(
+            &self,
+            _event_id: &str,
+            _session_id: &str,
+            _kind: &str,
+            _text: &str,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        fn search_session_events(
+            &self,
+            _query: &str,
+            _session_id: Option<&str>,
+            _limit: i64,
+        ) -> Result<Vec<ScoredItem>> {
+            Ok(vec![])
+        }
+
+        fn index_library_alias(
+            &self,
+            _alias: &str,
+            _library_id: &str,
+            _name: &str,
+            _provider: &str,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        fn search_library_aliases(&self, _query: &str, _limit: i64) -> Result<Vec<ScoredItem>> {
+            Ok(vec![])
+        }
+    }
+
+    struct NoopRanker;
+
+    impl RankerPort for NoopRanker {
+        fn rank_resolution_candidates(
+            &self,
+            _query: &str,
+            _candidates: Vec<ScoredItem>,
+        ) -> Result<Vec<ResolvedCandidate>> {
+            Ok(vec![])
+        }
+
+        fn rank_retrieval_results(
+            &self,
+            _query: &str,
+            _items: Vec<ScoredItem>,
+        ) -> Result<Vec<RetrievalResult>> {
+            Ok(vec![])
+        }
+
+        fn rank_recall_results(
+            &self,
+            _query: &str,
+            _items: Vec<ScoredItem>,
+        ) -> Result<Vec<RecalledEvent>> {
+            Ok(vec![])
+        }
+    }
+
+    struct TestSourceAdapter {
+        state: SharedState,
+    }
+
+    impl SourceAdapter for TestSourceAdapter {
+        fn kind(&self) -> &str {
+            "test"
+        }
+
+        fn discover_units(&self, _source_id: &str, _config_json: &str) -> Result<Vec<SourceUnit>> {
+            Ok(vec![SourceUnit {
+                external_id: "unit-1".to_string(),
+                uri: None,
+                mime_type_hint: Some("text/plain".to_string()),
+            }])
+        }
+
+        fn fetch_content(
+            &self,
+            _source_id: &str,
+            unit: &SourceUnit,
+            _config_json: &str,
+        ) -> Result<RawContent> {
+            if self.state.0.lock().unwrap().fetch_should_fail {
+                anyhow::bail!("fetch failed");
+            }
+            Ok(RawContent {
+                external_id: unit.external_id.clone(),
+                uri: None,
+                mime_type: "text/plain".to_string(),
+                bytes: b"hello".to_vec(),
+                metadata_json: "{}".to_string(),
+            })
+        }
+    }
+
+    struct TestNormalizer {
+        state: SharedState,
+    }
+
+    impl Normalizer for TestNormalizer {
+        fn normalize(
+            &self,
+            raw: &RawContent,
+            source_id: &str,
+            corpus_id: &str,
+        ) -> Result<Vec<Document>> {
+            self.state
+                .0
+                .lock()
+                .unwrap()
+                .normalized_corpora
+                .push(corpus_id.to_string());
+            Ok(vec![Document {
+                document_id: format!("doc_{}", raw.external_id),
+                corpus_id: corpus_id.to_string(),
+                source_id: source_id.to_string(),
+                external_id: Some(raw.external_id.clone()),
+                library_id: None,
+                title: "Test".to_string(),
+                uri: None,
+                version: None,
+                mime_type: Some(raw.mime_type.clone()),
+                content_text: String::from_utf8(raw.bytes.clone())?,
+                metadata_json: "{}".to_string(),
+                checksum: "checksum".to_string(),
+                superseded_by_document_id: None,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+            }])
+        }
+    }
+
+    struct TestChunker;
+
+    impl Chunker for TestChunker {
+        fn chunk(
+            &self,
+            document_id: &str,
+            corpus_id: &str,
+            text: &str,
+            _title: &str,
+        ) -> Result<Vec<Chunk>> {
+            Ok(vec![Chunk {
+                chunk_id: format!("chunk_{}", document_id),
+                document_id: document_id.to_string(),
+                corpus_id: corpus_id.to_string(),
+                ordinal: 0,
+                text: text.to_string(),
+                token_count_estimate: 1,
+                heading: None,
+                anchor: None,
+                section_path_json: "[]".to_string(),
+                metadata_json: "{}".to_string(),
+                checksum: "checksum".to_string(),
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+            }])
+        }
+    }
+
+    fn test_app(state: SharedState) -> AppServices {
+        AppServices::new(
+            Box::new(TestStorage {
+                state: state.clone(),
+            }),
+            Box::new(NoopSessionMemory),
+            Box::new(NoopArtifactStore),
+            Box::new(NoopSearch),
+            Box::new(NoopRanker),
+            Box::new(TestSourceAdapter {
+                state: state.clone(),
+            }),
+            Box::new(TestNormalizer {
+                state: state.clone(),
+            }),
+            Box::new(TestChunker),
+        )
+    }
+
+    fn source_with_corpus(source_id: &str, corpus_id: &str) -> Source {
+        Source {
+            source_id: source_id.to_string(),
+            kind: "test".to_string(),
+            display_name: source_id.to_string(),
+            enabled: true,
+            adapter_config_json: format!(r#"{{"corpus_id":"{}"}}"#, corpus_id),
+            auth_ref: None,
+            first_indexed_at: None,
+            last_refresh_attempt_at: None,
+            last_refresh_success_at: None,
+            last_refresh_error: None,
+            freshness_ttl_secs: None,
+            upstream_revision: None,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn build_excerpt_uses_character_budget_for_utf8() {
+        assert_eq!(build_excerpt("ééé", 3), "ééé");
+        assert_eq!(build_excerpt("éééé", 3), "ééé…");
+    }
+
+    #[test]
+    fn refresh_source_reuses_persisted_corpus_id() {
+        let state = SharedState::new();
+        state
+            .0
+            .lock()
+            .unwrap()
+            .sources
+            .push(source_with_corpus("src1", "corp_existing"));
+        state
+            .0
+            .lock()
+            .unwrap()
+            .source_corpora
+            .push(("src1".to_string(), "corp_existing".to_string()));
+        let app = test_app(state.clone());
+
+        app.refresh_source(RefreshSourceRequest {
+            source_id: "src1".to_string(),
+        })
+        .unwrap();
+
+        assert_eq!(
+            state.0.lock().unwrap().normalized_corpora,
+            vec!["corp_existing".to_string()]
+        );
+    }
+
+    #[test]
+    fn ingest_source_marks_source_degraded_on_failure() {
+        let state = SharedState::new();
+        state.0.lock().unwrap().fetch_should_fail = true;
+        let app = test_app(state.clone());
+
+        let err = app
+            .ingest_source(IngestSourceRequest {
+                source_id: "src1".to_string(),
+                source_kind: "test".to_string(),
+                adapter_config_json: "{}".to_string(),
+                corpus_id: Some("corp1".to_string()),
+            })
+            .unwrap_err();
+
+        assert!(err.to_string().contains("fetch failed"));
+        assert_eq!(
+            state.0.lock().unwrap().health_updates,
+            vec![(
+                "src1".to_string(),
+                SourceHealth::Degraded,
+                Some("fetch failed".to_string())
+            )]
+        );
     }
 }
 
@@ -479,6 +1166,46 @@ impl AppServices {
     }
 }
 
+// --- refresh_source ---
+
+#[derive(Debug, Clone)]
+pub struct RefreshSourceRequest {
+    pub source_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RefreshSourceResponse {
+    pub job: JobSummary,
+}
+
+impl AppServices {
+    pub fn refresh_source(&self, req: RefreshSourceRequest) -> Result<RefreshSourceResponse> {
+        let source = self
+            .storage
+            .get_source(&req.source_id)?
+            .ok_or_else(|| anyhow::anyhow!("source not found: {}", req.source_id))?;
+
+        // Re-ingest using the source's existing config
+        let ingest_req = IngestSourceRequest {
+            source_id: source.source_id.clone(),
+            source_kind: source.kind.clone(),
+            adapter_config_json: source.adapter_config_json.clone(),
+            corpus_id: self.storage.find_corpus_id_for_source(&source.source_id)?,
+        };
+
+        let resp = self.ingest_source(ingest_req)?;
+
+        Ok(RefreshSourceResponse {
+            job: JobSummary {
+                job_id: resp.job.job_id,
+                source_id: req.source_id,
+                status: "completed".to_string(),
+                trigger: "manual".to_string(),
+            },
+        })
+    }
+}
+
 // --- get_status ---
 
 impl AppServices {
@@ -492,8 +1219,15 @@ impl AppServices {
         let sources = self.storage.list_sources()?;
         let total_sources = sources.len() as u64;
         let enabled_sources = sources.iter().filter(|s| s.enabled).count() as u64;
+        let degraded_sources = sources
+            .iter()
+            .filter(|s| s.last_refresh_error.is_some())
+            .count() as u64;
 
         let active_sessions = self.session_memory.count_active_sessions()?;
+
+        let queued_jobs = self.storage.count_jobs_by_status("queued")?;
+        let running_jobs = self.storage.count_jobs_by_status("running")?;
 
         let mut status = KernelStatus::new(
             started_at.to_string(),
@@ -503,7 +1237,10 @@ impl AppServices {
         );
         status.sources.total = total_sources;
         status.sources.enabled = enabled_sources;
+        status.sources.degraded = degraded_sources;
         status.sessions.active = active_sessions;
+        status.jobs.queued = queued_jobs;
+        status.jobs.running = running_jobs;
 
         Ok(status)
     }

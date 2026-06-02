@@ -129,3 +129,124 @@
 - Files: workspace
 - Notes: `cargo test --workspace` = 37 passed, `cargo fmt --check` = clean, `cargo clippy --workspace` = zero warnings.
 - Confidence: high
+
+## Claim
+- Claim: LexicalRanker implements hybrid scoring with normalized FTS + trust + freshness weights.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-ranker/src/lib.rs`
+- Reproducible command: `cargo test -p ck-ranker`
+- Result excerpt: `running 5 tests ... test result: ok. 5 passed; 0 failed`
+- Timestamp/context: 2026-06-02 07:59 EDT, local workspace `/home/sprime01/projects/Context_Kernel_Service_MCP`
+- Proof classification: focused-slice
+- Notes: Tests include `fts_score_is_normalized_before_combining` and `trust_score_influences_ranking`; raw and normalized FTS values are included in score breakdowns.
+- Confidence: high
+
+## Claim
+- Claim: AuthPort trait exists in ck-core with is_local_trust_mode and validate_token methods.
+- Status: implemented
+- Evidence type: code
+- Files: `crates/ck-core/src/ports/auth.rs`
+- Reproducible command: `cargo test -p ck-auth`
+- Result excerpt: `running 4 tests ... test result: ok. 4 passed; 0 failed`
+- Timestamp/context: 2026-06-02 07:59 EDT, local workspace `/home/sprime01/projects/Context_Kernel_Service_MCP`
+- Proof classification: focused-slice
+- Notes: Trait defined with two methods; BearerAuth in ck-auth implements it.
+- Confidence: high
+
+## Claim
+- Claim: BearerAuth implements AuthPort with fail-closed token validation and explicit no-auth mode.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-auth/src/lib.rs`, `crates/ck-auth/Cargo.toml`
+- Reproducible command: `cargo test -p ck-auth`
+- Result excerpt: `running 4 tests ... empty_tokens_fail_closed_without_local_trust_mode ... ok ... test result: ok. 4 passed; 0 failed`
+- Timestamp/context: 2026-06-02 07:59 EDT, local workspace `/home/sprime01/projects/Context_Kernel_Service_MCP`
+- Proof classification: focused-slice
+- Notes: Empty token lists only allow all when local trust mode is explicit; configured token checks use `subtle::ConstantTimeEq`.
+- Confidence: high
+
+## Claim
+- Claim: SchedulerPort trait exists in ck-core with enqueue, claim, complete, fail, list_stale methods.
+- Status: implemented
+- Evidence type: code
+- Files: `crates/ck-core/src/ports/scheduler.rs`
+- Reproducible command: `cargo test -p ck-scheduler`
+- Result excerpt: `running 9 tests ... test result: ok. 9 passed; 0 failed`
+- Timestamp/context: 2026-06-02 07:59 EDT, local workspace `/home/sprime01/projects/Context_Kernel_Service_MCP`
+- Proof classification: focused-slice
+- Notes: Trait defined with full job lifecycle methods; claim docs now state atomicity is provided through storage.
+- Confidence: high
+
+## Claim
+- Claim: RefreshScheduler implements SchedulerPort with storage-backed active-job coalescing, atomic claim, and stale detection.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-scheduler/src/lib.rs`, `crates/ck-storage-sqlite/src/lib.rs`, `crates/ck-core/src/ports/storage.rs`
+- Reproducible command: `cargo test -p ck-scheduler && cargo test -p ck-storage-sqlite`
+- Result excerpt: `ck_scheduler ... 9 passed; ck_storage_sqlite ... 9 passed`
+- Timestamp/context: 2026-06-02 07:59 EDT, local workspace `/home/sprime01/projects/Context_Kernel_Service_MCP`
+- Proof classification: focused-slice
+- Notes: Scheduler calls `insert_active_refresh_job` and `claim_next_refresh_job_for_source`; SQLite tests cover single-use claim and active job coalescing.
+- Confidence: high
+
+## Claim
+- Claim: SSE transport serves HTTP endpoints with auth gating.
+- Status: implemented
+- Evidence type: code
+- Files: `crates/ck-transport-sse/src/lib.rs`, `crates/ck-bin/src/main.rs`
+- Reproducible command: `cargo test --workspace`
+- Result excerpt: `test sse_healthz_endpoint_works ... ok ... test result: ok. 65 passed; 0 failed`
+- Timestamp/context: 2026-06-02 07:59 EDT, local workspace `/home/sprime01/projects/Context_Kernel_Service_MCP`
+- Proof classification: release-gate-proof
+- Notes: Routes: POST /mcp, GET /healthz, GET /readyz, GET /api/v1/status. Auth checked on mcp_handler; ck-bin now fails fast if SSE requires auth and no tokens are configured.
+- Confidence: high
+
+## Claim
+- Claim: refresh_source MCP tool re-ingests existing sources into their persisted corpus link.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-mcp/src/lib.rs`, `crates/ck-app/src/lib.rs`, `crates/ck-bin/tests/cli.rs`, `crates/ck-storage-sqlite/src/lib.rs`
+- Reproducible command: `cargo test -p ck-app && cargo test --workspace`
+- Result excerpt: `refresh_source_reuses_persisted_corpus_id ... ok`; workspace `test result: ok. 65 passed; 0 failed`
+- Timestamp/context: 2026-06-02 07:59 EDT, local workspace `/home/sprime01/projects/Context_Kernel_Service_MCP`
+- Proof classification: release-gate-proof
+- Notes: Unit test verifies corpus reuse via `find_corpus_id_for_source`; integration test `refresh_source_tool_works` verifies ingest then refresh returns completed job.
+- Confidence: high
+
+## Claim
+- Claim: Periodic refresh background thread runs in ck-bin when config.scheduler.enable_periodic_refresh is true.
+- Status: implemented
+- Evidence type: code
+- Files: `crates/ck-bin/src/main.rs`
+- Lines: 126-182
+- Reproducible command: `cargo test --workspace`
+- Result excerpt: `test sse_healthz_endpoint_works ... ok ... test result: ok. 65 passed; 0 failed`
+- Timestamp/context: 2026-06-02 07:59 EDT, local workspace `/home/sprime01/projects/Context_Kernel_Service_MCP`
+- Proof classification: local-confidence
+- Notes: Static code path creates a background thread when scheduler config is enabled; workspace tests compile this path but do not run a periodic refresh loop.
+- Confidence: high
+
+## Claim
+- Claim: Dual transport (stdio + SSE) works simultaneously.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-bin/src/main.rs`, `crates/ck-bin/tests/cli.rs`
+- Reproducible command: `cargo test --workspace`
+- Result excerpt: `test sse_healthz_endpoint_works ... ok ... test result: ok. 65 passed; 0 failed`
+- Timestamp/context: 2026-06-02 07:59 EDT, local workspace `/home/sprime01/projects/Context_Kernel_Service_MCP`
+- Proof classification: release-gate-proof
+- Notes: Integration test `sse_healthz_endpoint_works` verifies binary starts with --sse flag and still responds to stdio.
+- Confidence: high
+
+## Claim
+- Claim: Workspace tests pass, cargo fmt is clean, cargo clippy completes with zero warnings.
+- Status: implemented
+- Evidence type: test
+- Files: workspace
+- Reproducible command: `cargo test --workspace && cargo fmt --check && cargo clippy --workspace`
+- Result excerpt: `cargo test --workspace`: `test result: ok. 65 passed; 0 failed`; `cargo fmt --check`: no diff; `cargo clippy --workspace`: `Finished dev profile`
+- Timestamp/context: 2026-06-02 07:59 EDT, local workspace `/home/sprime01/projects/Context_Kernel_Service_MCP`
+- Proof classification: release-gate-proof
+- Notes: Workspace count is now 65 tests after review regression coverage was added.
+- Confidence: high

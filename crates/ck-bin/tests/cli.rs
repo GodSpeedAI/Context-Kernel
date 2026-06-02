@@ -263,3 +263,106 @@ fn get_library_docs_alias_works() {
         .success()
         .stdout(predicate::str::contains("results").or(predicate::str::contains("query_id")));
 }
+
+#[test]
+fn refresh_source_tool_works() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = temp_db(&dir);
+    let data_dir = temp_data_dir(&dir);
+
+    let docs_dir = dir.path().join("docs");
+    fs::create_dir_all(&docs_dir).unwrap();
+    fs::write(
+        docs_dir.join("test.md"),
+        "# Refresh Test\n\nThis is a test document for refresh.\n",
+    )
+    .unwrap();
+
+    let config = serde_json::json!({"source_id":"refresh_test_docs","kind":"filesystem_tree","path": docs_dir.display().to_string()});
+
+    let ingest_input = tool_call(1, "ingest_source", serde_json::json!({"source": config}));
+    let refresh_input = tool_call(
+        2,
+        "refresh_source",
+        serde_json::json!({"source_id":"refresh_test_docs"}),
+    );
+
+    let mut cmd = Command::cargo_bin("context-kernal").unwrap();
+    cmd.args([
+        "serve",
+        "--database",
+        db_path.to_str().unwrap(),
+        "--data-dir",
+        data_dir.to_str().unwrap(),
+    ])
+    .write_stdin(format!("{ingest_input}\n{refresh_input}"));
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("job_id"))
+        .stdout(predicate::str::contains("completed").or(predicate::str::contains("queued")));
+}
+
+#[test]
+fn sse_healthz_endpoint_works() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = temp_db(&dir);
+    let data_dir = temp_data_dir(&dir);
+
+    let input = tool_call(1, "get_status", serde_json::json!({}));
+
+    let mut cmd = Command::cargo_bin("context-kernal").unwrap();
+    cmd.args([
+        "serve",
+        "--database",
+        db_path.to_str().unwrap(),
+        "--data-dir",
+        data_dir.to_str().unwrap(),
+        "--sse",
+        "127.0.0.1:0",
+    ])
+    .write_stdin(input);
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains(r#""name":"context-kernel""#));
+}
+
+#[test]
+fn query_reference_includes_citations_after_ingest() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = temp_db(&dir);
+    let data_dir = temp_data_dir(&dir);
+
+    let docs_dir = dir.path().join("docs");
+    fs::create_dir_all(&docs_dir).unwrap();
+    fs::write(
+        docs_dir.join("citations.md"),
+        "# Citation Test\n\nThis document discusses WebAssembly compilation techniques.\n",
+    )
+    .unwrap();
+
+    let config = serde_json::json!({"source_id":"citation_test_docs","kind":"filesystem_tree","path": docs_dir.display().to_string()});
+
+    let ingest_input = tool_call(1, "ingest_source", serde_json::json!({"source": config}));
+    let query_input = tool_call(
+        2,
+        "query_reference",
+        serde_json::json!({"query":"WebAssembly compilation","top_k":5}),
+    );
+
+    let mut cmd = Command::cargo_bin("context-kernal").unwrap();
+    cmd.args([
+        "serve",
+        "--database",
+        db_path.to_str().unwrap(),
+        "--data-dir",
+        data_dir.to_str().unwrap(),
+    ])
+    .write_stdin(format!("{ingest_input}\n{query_input}"));
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("query_id"))
+        .stdout(predicate::str::contains("results"));
+}

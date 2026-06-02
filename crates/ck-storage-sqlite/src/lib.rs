@@ -8,7 +8,8 @@ use ck_core::entities::{
 };
 use ck_core::ports::{SessionMemoryPort, StoragePort};
 use ck_core::types::{
-    ContinuationMode, JobStatus, JobTrigger, SessionStatus, SessionTransport, StorageStatus,
+    ContinuationMode, JobStatus, JobTrigger, SessionStatus, SessionTransport, SourceHealth,
+    StorageStatus,
 };
 use rusqlite::Connection;
 use ulid::Ulid;
@@ -433,6 +434,28 @@ impl StoragePort for SqliteStore {
         Ok(out)
     }
 
+    fn link_source_to_corpus(&self, corpus_id: &str, source_id: &str) -> Result<()> {
+        let conn = self.conn()?;
+        conn.execute(
+            "INSERT OR IGNORE INTO corpus_sources (corpus_id, source_id) VALUES (?1, ?2)",
+            rusqlite::params![corpus_id, source_id],
+        )?;
+        Ok(())
+    }
+
+    fn find_corpus_id_for_source(&self, source_id: &str) -> Result<Option<String>> {
+        let conn = self.conn()?;
+        match conn.query_row(
+            "SELECT corpus_id FROM corpus_sources WHERE source_id = ?1 ORDER BY corpus_id LIMIT 1",
+            rusqlite::params![source_id],
+            |row| row.get(0),
+        ) {
+            Ok(corpus_id) => Ok(Some(corpus_id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     fn upsert_document(&self, doc: &Document) -> Result<()> {
         let conn = self.conn()?;
         conn.execute(
@@ -655,6 +678,36 @@ impl StoragePort for SqliteStore {
         Ok(())
     }
 
+    fn insert_active_refresh_job(&self, job: &RefreshJob) -> Result<RefreshJob> {
+        let conn = self.conn()?;
+        let inserted = conn.execute(
+            "INSERT INTO refresh_jobs \
+             (job_id, source_id, trigger_kind, status, started_at, finished_at, error, \
+              stats_json, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+             ON CONFLICT(source_id) WHERE status IN ('queued', 'running') DO NOTHING",
+            rusqlite::params![
+                job.job_id,
+                job.source_id,
+                trigger_str(job.trigger_kind),
+                job_status_str(job.status),
+                job.started_at,
+                job.finished_at,
+                job.error,
+                job.stats_json,
+                job.created_at,
+                job.updated_at,
+            ],
+        )?;
+
+        if inserted == 1 {
+            Ok(job.clone())
+        } else {
+            self.find_active_job_for_source(&job.source_id)?
+                .ok_or_else(|| anyhow::anyhow!("active refresh job conflict without stored job"))
+        }
+    }
+
     fn get_refresh_job(&self, job_id: &str) -> Result<Option<RefreshJob>> {
         let conn = self.conn()?;
         match conn.query_row(
@@ -677,6 +730,119 @@ impl StoragePort for SqliteStore {
             out.push(r?);
         }
         Ok(out)
+    }
+
+    fn update_source_health(
+        &self,
+        source_id: &str,
+        health: SourceHealth,
+        error: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn()?;
+        let now = Utc::now().to_rfc3339();
+        match health {
+            SourceHealth::Healthy => {
+                conn.execute(
+                    "UPDATE sources SET last_refresh_success_at = ?1, last_refresh_error = NULL, updated_at = ?2 WHERE source_id = ?3",
+                    rusqlite::params![now, now, source_id],
+                )?;
+            }
+            SourceHealth::Degraded => {
+                conn.execute(
+                    "UPDATE sources SET last_refresh_error = ?1, updated_at = ?2 WHERE source_id = ?3",
+                    rusqlite::params![error.unwrap_or("unknown error"), now, source_id],
+                )?;
+            }
+            SourceHealth::Unknown => {}
+        }
+        Ok(())
+    }
+
+    fn list_stale_sources(&self) -> Result<Vec<Source>> {
+        let conn = self.conn()?;
+        // Sources where freshness_ttl_secs is set AND
+        // (last_refresh_success_at + freshness_ttl_secs) < now OR never refreshed
+        let mut stmt = conn.prepare(
+            "SELECT * FROM sources WHERE enabled = 1 AND freshness_ttl_secs IS NOT NULL AND (
+                last_refresh_success_at IS NULL
+                OR datetime(last_refresh_success_at, '+' || freshness_ttl_secs || ' seconds') < datetime('now')
+            )",
+        )?;
+        let rows = stmt.query_map([], row_to_source)?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    fn get_chunk_with_document(&self, chunk_id: &str) -> Result<Option<(Chunk, Document)>> {
+        let conn = self.conn()?;
+        let chunk = match conn.query_row(
+            "SELECT * FROM chunks WHERE chunk_id = ?1",
+            rusqlite::params![chunk_id],
+            row_to_chunk,
+        ) {
+            Ok(c) => c,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+        let doc = match conn.query_row(
+            "SELECT * FROM documents WHERE document_id = ?1",
+            rusqlite::params![chunk.document_id],
+            row_to_document,
+        ) {
+            Ok(d) => d,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+        Ok(Some((chunk, doc)))
+    }
+
+    fn find_active_job_for_source(&self, source_id: &str) -> Result<Option<RefreshJob>> {
+        let conn = self.conn()?;
+        match conn.query_row(
+            "SELECT * FROM refresh_jobs WHERE source_id = ?1 AND status IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1",
+            rusqlite::params![source_id],
+            row_to_refresh_job,
+        ) {
+            Ok(j) => Ok(Some(j)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn claim_next_refresh_job_for_source(&self, source_id: &str) -> Result<Option<RefreshJob>> {
+        let conn = self.conn()?;
+        let now = Utc::now().to_rfc3339();
+        match conn.query_row(
+            "UPDATE refresh_jobs
+             SET status = 'running', started_at = ?2, updated_at = ?2
+             WHERE job_id = (
+                 SELECT job_id FROM refresh_jobs
+                 WHERE source_id = ?1 AND status = 'queued'
+                 ORDER BY created_at ASC
+                 LIMIT 1
+             )
+             AND status = 'queued'
+             RETURNING *",
+            rusqlite::params![source_id, now],
+            row_to_refresh_job,
+        ) {
+            Ok(job) => Ok(Some(job)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn count_jobs_by_status(&self, status_str: &str) -> Result<u64> {
+        let conn = self.conn()?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM refresh_jobs WHERE status = ?1",
+            rusqlite::params![status_str],
+            |row| row.get(0),
+        )?;
+        Ok(count as u64)
     }
 }
 
@@ -972,6 +1138,9 @@ CREATE TABLE IF NOT EXISTS refresh_jobs (
 CREATE INDEX IF NOT EXISTS idx_refresh_jobs_source_id ON refresh_jobs(source_id);
 CREATE INDEX IF NOT EXISTS idx_refresh_jobs_status ON refresh_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_refresh_jobs_created_at ON refresh_jobs(created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_refresh_jobs_one_active_per_source
+  ON refresh_jobs(source_id)
+  WHERE status IN ('queued', 'running');
 
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
   chunk_id UNINDEXED,
@@ -1340,6 +1509,115 @@ mod tests {
 
         let listed = store.list_refresh_jobs_by_source("src-rj").unwrap();
         assert_eq!(listed.len(), 1);
+    }
+
+    #[test]
+    fn claim_next_refresh_job_for_source_is_single_use() {
+        let (store, _dir) = test_store();
+        let t = now();
+
+        store
+            .upsert_source(&Source {
+                source_id: "src-claim".into(),
+                kind: "local".into(),
+                display_name: "S".into(),
+                enabled: true,
+                adapter_config_json: "{}".into(),
+                auth_ref: None,
+                first_indexed_at: None,
+                last_refresh_attempt_at: None,
+                last_refresh_success_at: None,
+                last_refresh_error: None,
+                freshness_ttl_secs: None,
+                upstream_revision: None,
+                created_at: t.clone(),
+                updated_at: t.clone(),
+            })
+            .unwrap();
+
+        store
+            .upsert_refresh_job(&RefreshJob {
+                job_id: "job-claim".into(),
+                source_id: "src-claim".into(),
+                trigger_kind: JobTrigger::Manual,
+                status: JobStatus::Queued,
+                started_at: None,
+                finished_at: None,
+                error: None,
+                stats_json: "{}".into(),
+                created_at: t.clone(),
+                updated_at: t,
+            })
+            .unwrap();
+
+        let claimed = store
+            .claim_next_refresh_job_for_source("src-claim")
+            .unwrap()
+            .unwrap();
+        assert_eq!(claimed.job_id, "job-claim");
+        assert_eq!(claimed.status, JobStatus::Running);
+        assert!(claimed.started_at.is_some());
+        assert!(store
+            .claim_next_refresh_job_for_source("src-claim")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn insert_active_refresh_job_returns_existing_active_job() {
+        let (store, _dir) = test_store();
+        let t = now();
+
+        store
+            .upsert_source(&Source {
+                source_id: "src-active".into(),
+                kind: "local".into(),
+                display_name: "S".into(),
+                enabled: true,
+                adapter_config_json: "{}".into(),
+                auth_ref: None,
+                first_indexed_at: None,
+                last_refresh_attempt_at: None,
+                last_refresh_success_at: None,
+                last_refresh_error: None,
+                freshness_ttl_secs: None,
+                upstream_revision: None,
+                created_at: t.clone(),
+                updated_at: t.clone(),
+            })
+            .unwrap();
+
+        let first = RefreshJob {
+            job_id: "job-active-1".into(),
+            source_id: "src-active".into(),
+            trigger_kind: JobTrigger::Manual,
+            status: JobStatus::Queued,
+            started_at: None,
+            finished_at: None,
+            error: None,
+            stats_json: "{}".into(),
+            created_at: t.clone(),
+            updated_at: t.clone(),
+        };
+        let second = RefreshJob {
+            job_id: "job-active-2".into(),
+            created_at: now(),
+            updated_at: now(),
+            ..first.clone()
+        };
+
+        let inserted = store.insert_active_refresh_job(&first).unwrap();
+        let coalesced = store.insert_active_refresh_job(&second).unwrap();
+
+        assert_eq!(inserted.job_id, "job-active-1");
+        assert_eq!(coalesced.job_id, "job-active-1");
+        assert_eq!(
+            store
+                .list_refresh_jobs_by_source("src-active")
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]

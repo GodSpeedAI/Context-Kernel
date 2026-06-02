@@ -1,0 +1,15 @@
+[package]
+name = "ck-transport-sse"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+ck-core = { path = "../ck-core" }
+ck-mcp = { path = "../ck-mcp" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
