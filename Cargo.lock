@@ -416,12 +416,16 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64",
+ "chrono",
+ "ck-adapter-filesystem",
  "ck-app",
  "ck-core",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tracing",
+ "ulid",
 ]
 
 [[package]]

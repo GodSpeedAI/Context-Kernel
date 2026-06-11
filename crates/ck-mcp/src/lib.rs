@@ -10,6 +10,9 @@ use ck_core::{ports::AuthPort, KernelStatus};
 use serde_json::Value;
 use thiserror::Error;
 
+pub mod agentic_capability_loop;
+pub use agentic_capability_loop::AclContextAgent;
+
 #[derive(Debug, Error)]
 pub enum McpError {
     #[error("unknown tool: {0}")]
