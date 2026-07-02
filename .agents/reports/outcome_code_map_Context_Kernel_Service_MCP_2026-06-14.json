@@ -1,0 +1,664 @@
+{
+  "project_name": "Context Kernel Service MCP",
+  "audit_date": "2026-06-14",
+  "repo_root": "/home/sprime01/projects/Context_Kernel_Service_MCP",
+  "summary": {
+    "outcomes_total": 26,
+    "implemented": 23,
+    "partially_implemented": 2,
+    "declared_only": 0,
+    "test_only": 0,
+    "config_only": 1,
+    "contradicted": 0,
+    "unclear": 0
+  },
+  "_status_note": "Outcome-status counts above reflect the runtime status of each outcome. Separately, OUT-011 has a documentation-drift contradiction (docs/schema.md line 28 vs code) captured as a gap in section 6 (Contradictions and Overclaims) and under OUT-011, not as an outcome status. OUT-015/OUT-016 are marked implemented because the capability (SSRF protection / truncated-tree detection) is fully implemented within the adapter; their reachability depends on OUT-014/OUT-013 wiring.",
+  "outcomes": [
+    {
+      "id": "OUT-001",
+      "name": "Single-binary MCP service",
+      "statement": "Building ck-bin yields one context-kernal executable running the entire MCP service (serve/migrate/doctor/export-schema) with no external daemons beyond SQLite files and optional embedding HTTP.",
+      "actor_user": "Operator / CI",
+      "settlement_criterion": "cargo build --release -p ck-bin produces a binary responding to all four subcommands and serving MCP over stdio.",
+      "status": "implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "README.md", "symbol_or_section": "Quick Start", "note": "documents serve/migrate/doctor/export-schema"},
+        {"path": "Context_Kernel_Service_Specification.md", "symbol_or_section": "§26.1", "note": "'single Rust binary' REQUIRED"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-bin/src/main.rs", "symbol_or_section": "main (lines 50-68)", "note": "dispatches Serve|Migrate|Doctor|ExportSchema"},
+        {"path": "Cargo.toml", "symbol_or_section": "workspace members", "note": "includes ck-bin; binary name context-kernal"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-bin/tests/cli.rs", "symbol_or_section": "migrate_creates_sqlite_database / export_schema_prints_sqlite_schema / serve_stdio_answers_get_status_tool_call", "note": "binary-level subcommand tests"}
+      ],
+      "runtime_path": "main() -> init_observability -> Cli::parse -> serve(args) -> open_store -> store.migrate() -> wire_app -> stdin loop / SSE thread",
+      "gaps": [],
+      "reviewer_notes": "Confirm cargo build --release -p ck-bin in CI; naming: binary 'context-kernal' vs config name 'context-kernel' (cosmetic)."
+    },
+    {
+      "id": "OUT-002",
+      "name": "Versioned SQLite schema + migrations",
+      "statement": "The service creates all required metadata, document/chunk, session-event, artifact, refresh-job, and FTS5 tables on startup via a versioned migration and can emit the embedded schema SQL.",
+      "actor_user": "Operator",
+      "settlement_criterion": "context-kernal migrate produces a DB with schema_migrations, sources, corpora, ..., chunks_fts; export-schema prints the same SQL.",
+      "status": "implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "docs/schema.md", "symbol_or_section": "full", "note": "lists tables and FTS5 tables"},
+        {"path": "README.md", "symbol_or_section": "Status", "note": "'SQLite schema and migrations'"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-storage-sqlite/src/lib.rs", "symbol_or_section": "SCHEMA_V1 (lines 1053-1255)", "note": "12 CREATE TABLE + 3 CREATE VIRTUAL TABLE ... USING fts5"},
+        {"path": "crates/ck-storage-sqlite/src/lib.rs", "symbol_or_section": "SqliteStore::migrate (line 44)", "note": "execute_batch(SCHEMA_V1)"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-bin/tests/cli.rs", "symbol_or_section": "export_schema_prints_sqlite_schema / schema_export_can_initialize_database / migrate_then_doctor", "note": "binary-level schema tests"}
+      ],
+      "runtime_path": "serve()/migrate() -> SqliteStore::open -> store.migrate()",
+      "gaps": [],
+      "reviewer_notes": "Schema is version 1; no v2 migration path yet (none required)."
+    },
+    {
+      "id": "OUT-003",
+      "name": "stdio MCP serving (local trust)",
+      "statement": "A local agent/IDE can drive the service over JSON-RPC on stdin/stdout without authentication (process boundary = trust boundary).",
+      "actor_user": "Local agent / IDE",
+      "settlement_criterion": "A tools/call JSON-RPC line on stdin returns a well-formed result on stdout.",
+      "status": "implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "README.md", "symbol_or_section": "Quick Start", "note": "stdio serve command"},
+        {"path": "docs/mcp-contracts.md", "symbol_or_section": "full", "note": "stdio JSON-RPC tools/call contract"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-transport-stdio/src/lib.rs", "symbol_or_section": "handle_line", "note": "JSON-RPC line handler"},
+        {"path": "crates/ck-bin/src/main.rs", "symbol_or_section": "stdin loop (line 268)", "note": "println!(handle_line(...))"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-bin/tests/cli.rs", "symbol_or_section": "serve_stdio_answers_get_status_tool_call", "note": "asserts name + fts5_enabled"}
+      ],
+      "runtime_path": "stdin line -> handle_line -> McpService::call_tool -> stdout",
+      "gaps": [],
+      "reviewer_notes": "None."
+    },
+    {
+      "id": "OUT-004",
+      "name": "SSE MCP serving",
+      "statement": "A remote MCP client can reach the service over HTTP (POST /mcp) and observe liveness/readiness endpoints.",
+      "actor_user": "Remote client / operator",
+      "settlement_criterion": "With --sse 127.0.0.1:0 the binary starts an HTTP server exposing /healthz, /readyz and serves stdio concurrently.",
+      "status": "implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "README.md", "symbol_or_section": "Quick Start / Governed Access", "note": "SSE serve documented"},
+        {"path": "docs/operations.md", "symbol_or_section": "serve", "note": "--sse flag"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-transport-sse/src/lib.rs", "symbol_or_section": "serve_sse (lines 45-63)", "note": "axum router /mcp /healthz /readyz /api/v1/status"},
+        {"path": "crates/ck-bin/src/main.rs", "symbol_or_section": "SSE thread spawn (lines 135-156)", "note": "tokio runtime block_on serve_sse"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-bin/tests/cli.rs", "symbol_or_section": "sse_healthz_endpoint_works", "note": "binary starts with --sse and still answers stdio"}
+      ],
+      "runtime_path": "serve() -> spawn thread -> tokio::Runtime -> serve_sse(state, bind)",
+      "gaps": [
+        {"type": "missing recovery path", "description": "Config reload does not rebind the listener (documented limit); bind changes require restart."}
+      ],
+      "reviewer_notes": "Documented limitation; acceptable for v1."
+    },
+    {
+      "id": "OUT-005",
+      "name": "SSE bearer-token auth (fail-closed)",
+      "statement": "When SSE auth is required, requests without a valid constant-time-equal bearer token are rejected; if auth is required but no tokens are configured, the service refuses to start.",
+      "actor_user": "Operator / security",
+      "settlement_criterion": "Missing/empty token config with require_auth=true aborts startup; valid token passes; invalid token denied.",
+      "status": "implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "docs/security.md", "symbol_or_section": "Authentication", "note": "bearer token requirement + fail-to-start behavior"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-auth/src/lib.rs", "symbol_or_section": "BearerAuth", "note": "constant-time compare via subtle crate"},
+        {"path": "crates/ck-bin/src/main.rs", "symbol_or_section": "lines 115-118", "note": "anyhow::bail! on empty tokens when require_auth"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-auth/src/lib.rs", "symbol_or_section": "empty_tokens_fail_closed_without_local_trust_mode", "note": "per .agents/evidence.md"}
+      ],
+      "runtime_path": "serve() -> if require_auth && tokens empty -> bail; else BearerAuth::with_policy",
+      "gaps": [],
+      "reviewer_notes": "None."
+    },
+    {
+      "id": "OUT-006",
+      "name": "Tool + corpus authorization (SSE)",
+      "statement": "SSE tool calls are authorized against configured tool-name and corpus allowlists before dispatch.",
+      "actor_user": "Operator / security",
+      "settlement_criterion": "A tool/corpus not in the allowlist returns an authz error even with a valid bearer token.",
+      "status": "implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "docs/security.md", "symbol_or_section": "Authorization", "note": "allow_tools / allow_corpora"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-mcp/src/lib.rs", "symbol_or_section": "call_tool_authorized", "note": "authz-gated dispatch"},
+        {"path": "crates/ck-auth/src/lib.rs", "symbol_or_section": "BearerAuth::with_policy", "note": "allow_tools + allow_corpora"},
+        {"path": "crates/ck-transport-sse/src/lib.rs", "symbol_or_section": "mcp_handler (line 137)", "note": "calls call_tool_authorized"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-mcp/src/lib.rs", "symbol_or_section": "test at line 493", "note": "token=='allowed' && tool in {get_status, query_reference}"}
+      ],
+      "runtime_path": "SSE /mcp -> bearer header -> call_tool_authorized -> BearerAuth.authorize -> dispatch",
+      "gaps": [
+        {"type": "missing security boundary", "description": "Stdio path uses direct call_tool (local-trust bypass). By design per docs/security.md but authz is SSE-only."}
+      ],
+      "reviewer_notes": "Design choice, not a defect; documented."
+    },
+    {
+      "id": "OUT-007",
+      "name": "FTS5/BM25 lexical retrieval",
+      "statement": "Indexed chunks, session events, and library aliases are searchable with BM25-style ranking.",
+      "actor_user": "Agent / retrieval",
+      "settlement_criterion": "After ingest, query_reference/recall_context return BM25-ranked hits from the FTS5 tables.",
+      "status": "implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "Context_Kernel_Service_Specification.md", "symbol_or_section": "§9.6 / §14.2", "note": "FTS5 + BM25 REQUIRED"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-search-fts/src/lib.rs", "symbol_or_section": "FtsSearch", "note": "index_chunk / search_chunks / remove_chunks_by_document"},
+        {"path": "crates/ck-storage-sqlite/src/lib.rs", "symbol_or_section": "SCHEMA_V1 FTS tables", "note": "chunks_fts, session_events_fts, library_aliases_fts"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-search-fts/src/lib.rs", "symbol_or_section": "5 tests incl. bm25_score_positivity", "note": "per evidence log"},
+        {"path": "crates/ck-bin/tests/cli.rs", "symbol_or_section": "query_reference_returns_results_after_ingest", "note": "E2E"}
+      ],
+      "runtime_path": "ingest -> index_chunk -> FTS5; query -> FtsSearch.search -> ranker",
+      "gaps": [],
+      "reviewer_notes": "None."
+    },
+    {
+      "id": "OUT-008",
+      "name": "Hybrid ranking with transparency",
+      "statement": "Retrieved candidates are ranked by a weighted combination of lexical score, freshness, trust, intent-specific profiles, session affinity, document-level dedup, and (when configured) semantic score, with an optional score breakdown.",
+      "actor_user": "Agent / retrieval / evaluator",
+      "settlement_criterion": "Different intents reorder results; same-document chunks collapse; debug mode emits a breakdown.",
+      "status": "implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "Context_Kernel_Service_Specification.md", "symbol_or_section": "§14.4 / §14.5 / §14.6", "note": "hybrid ranking + transparency + intent REQUIRED"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-ranker/src/lib.rs", "symbol_or_section": "LexicalRanker", "note": "intent weight profiles, session affinity, dedup-by-document_id, debug breakdown, semantic integration"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-ranker/src/lib.rs", "symbol_or_section": "intent_weighting_changes_ranking_order / session_affinity_boosts_matching_session_items / deduplication_collapses_same_document_chunks / debug_mode_includes_detailed_breakdown / semantic_score_included_in_weighted_combination", "note": "15 tests per evidence log"}
+      ],
+      "runtime_path": "query -> FtsSearch + optional vector -> LexicalRanker.rank -> top_k",
+      "gaps": [],
+      "reviewer_notes": "Strongest-implemented outcome."
+    },
+    {
+      "id": "OUT-009",
+      "name": "Session memory persistence + recall",
+      "statement": "An agent can store decisions/notes/tool-results as session events and later recall the relevant ones by query, surviving across tool calls.",
+      "actor_user": "Agent / continuity",
+      "settlement_criterion": "store_context returns an event_id; a subsequent recall_context for related text returns that event ranked.",
+      "status": "implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "Context_Kernel_Service_Specification.md", "symbol_or_section": "§17", "note": "session continuity REQUIRED"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-core/src/ports/session_memory.rs", "symbol_or_section": "SessionMemoryPort", "note": "trait"},
+        {"path": "crates/ck-storage-sqlite/src/lib.rs", "symbol_or_section": "SqliteStore impl", "note": "CRUD"},
+        {"path": "crates/ck-mcp/src/lib.rs", "symbol_or_section": "handle_store_context / handle_recall_context", "note": "tool handlers"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-bin/tests/cli.rs", "symbol_or_section": "store_context_persists_event / recall_context_returns_stored_events", "note": "E2E"}
+      ],
+      "runtime_path": "store_context -> add_event -> FTS index; recall_context -> session_events_fts search -> rank",
+      "gaps": [],
+      "reviewer_notes": "Sync rusqlite accepted for v1."
+    },
+    {
+      "id": "OUT-010",
+      "name": "Out-of-prompt artifact storage",
+      "statement": "Large payloads are written to the filesystem artifact store and referenced from session events rather than inlined into the model context.",
+      "actor_user": "Agent / continuity / token-budget",
+      "settlement_criterion": "Storing a base64 artifact_ref yields a filesystem file + metadata row; the event references the artifact id.",
+      "status": "implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "Context_Kernel_Service_Specification.md", "symbol_or_section": "§11.2 / §9.11", "note": "artifact payload on filesystem, metadata in SQLite"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-artifacts/src/lib.rs", "symbol_or_section": "FileArtifactStore", "note": "data_dir/artifacts/, SHA-256 checksums"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-artifacts/src/lib.rs", "symbol_or_section": "3 tests", "note": "store+read, checksum verify, missing->None"}
+      ],
+      "runtime_path": "store_context with artifact_ref -> FileArtifactStore.store -> metadata row -> event.artifact_id",
+      "gaps": [],
+      "reviewer_notes": "None."
+    },
+    {
+      "id": "OUT-011",
+      "name": "Retention GC (incl. artifact payload files)",
+      "statement": "On startup (when [retention].enabled=true), the service deletes unpinned old session events, inactive sessions, finished refresh jobs, artifact metadata AND payload files, and long-disabled sources; pinned events always survive.",
+      "actor_user": "Operator",
+      "settlement_criterion": "After GC with artifact_days=0, the artifact payload file is removed and event metadata is gone; a pinned event remains.",
+      "status": "implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "docs/operations.md", "symbol_or_section": "Retention GC (line 51)", "note": "deletes metadata rows AND payload files"},
+        {"path": "README.md", "symbol_or_section": "Memory And Artifacts / Status", "note": "retention GC listed implemented"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-app/src/lib.rs", "symbol_or_section": "run_retention_gc (lines 50-95)", "note": "list_artifacts_older_than + delete_artifact_payload per id + metadata deletes"},
+        {"path": "crates/ck-artifacts/src/lib.rs", "symbol_or_section": "delete_artifact_payload (line 109)", "note": "removes payload file"},
+        {"path": "crates/ck-bin/src/main.rs", "symbol_or_section": "lines 88-104", "note": "invokes run_retention_gc on startup"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-bin/tests/cli.rs", "symbol_or_section": "retention_deletes_old_artifact_payload", "note": "E2E with artifact_days=0"}
+      ],
+      "runtime_path": "serve -> if retention.enabled -> app.run_retention_gc(policy) -> storage + artifact_store deletes -> tracing::info report",
+      "gaps": [
+        {"type": "duplicated/conflicting implementation", "description": "docs/schema.md line 28 states 'Retention GC does not delete artifact payload files yet; it removes SQLite metadata only.' This contradicts the code and docs/operations.md line 51. schema.md is stale."}
+      ],
+      "reviewer_notes": "Update docs/schema.md line 28 to match operations.md and the code."
+    },
+    {
+      "id": "OUT-012",
+      "name": "Filesystem source ingestion",
+      "statement": "An operator can point ingest_source at a local directory tree and have its markdown files normalized, heading-chunked, and indexed into FTS5.",
+      "actor_user": "Operator / agent",
+      "settlement_criterion": "ingest_source with kind:filesystem_tree and a path returns a completed job; subsequent queries hit indexed docs.",
+      "status": "implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "README.md", "symbol_or_section": "Source Adapters", "note": "'local filesystem trees'"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-bin/src/main.rs", "symbol_or_section": "wire_app (lines 308-356)", "note": "injects FilesystemSourceAdapter + MarkdownNormalizer + HeadingChunker"},
+        {"path": "crates/ck-app/src/lib.rs", "symbol_or_section": "ingest_source (lines 329-439)", "note": "discover/fetch/normalize/chunk/index"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-bin/tests/cli.rs", "symbol_or_section": "ingest_source_indexes_local_docs / query_reference_returns_results_after_ingest / refresh_source_tool_works", "note": "E2E all use kind:filesystem_tree"}
+      ],
+      "runtime_path": "ingest_source -> self.source_adapter (FilesystemSourceAdapter).discover_units/fetch_content -> normalize -> chunk -> upsert_document + replace_chunks + index_chunk",
+      "gaps": [],
+      "reviewer_notes": "Only filesystem is wired; see OUT-013/014."
+    },
+    {
+      "id": "OUT-013",
+      "name": "GitHub source ingestion (UNWIRED)",
+      "statement": "An operator can ingest documentation from a GitHub repository (via tree API or a static file list, with token auth) and have it indexed like any other source.",
+      "actor_user": "Operator / agent",
+      "settlement_criterion": "ingest_source with kind:github_repo discovers units via the GitHub adapter and indexes them through the running binary.",
+      "status": "partially_implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "README.md", "symbol_or_section": "Source Adapters", "note": "'GitHub repositories'"},
+        {"path": "README.md", "symbol_or_section": "Status", "note": "'local filesystem, GitHub, and web source adapters' under Implemented"},
+        {"path": ".agents/project_state.md", "symbol_or_section": "ck-adapter-github", "note": "'implemented'"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-adapter-github/src/lib.rs", "symbol_or_section": "GitHubSourceAdapter", "note": "crate implements SourceAdapter kind=github_repo; 18 unit tests; tree API + static file list; base64 decode; $ENV token; truncated-tree detection"},
+        {"path": "crates/ck-bin/src/main.rs", "symbol_or_section": "wire_app", "note": "ABSENT: injects ONLY FilesystemSourceAdapter; no github wiring"},
+        {"path": "crates/ck-app/src/lib.rs", "symbol_or_section": "ingest_source + AppServices struct (single source_adapter field)", "note": "no kind-based dispatch; source_kind stored but never selects adapter"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-adapter-github/src/lib.rs", "symbol_or_section": "18 tests", "note": "library-level only"},
+        {"path": "crates/ck-bin/tests/cli.rs", "symbol_or_section": "(none)", "note": "NO binary-level test uses kind:github_repo"}
+      ],
+      "runtime_path": "ingest_source({kind:github_repo}) -> self.source_adapter (FilesystemSourceAdapter) -> filesystem discovery on non-filesystem config -> failure/wrong behavior. GitHub adapter unreachable.",
+      "gaps": [
+        {"type": "missing integration wiring", "description": "No source-kind -> adapter dispatch in wire_app/AppServices. Single global source_adapter."},
+        {"type": "overclaimed maturity", "description": "README + project_state list GitHub as supported/implemented without disclosing wiring gap."},
+        {"type": "missing test coverage", "description": "No binary-level github ingest test."}
+      ],
+      "reviewer_notes": "HIGHEST-RISK finding. Confirm by reading wire_app + AppServices struct, then attempting ingest_source kind:github_repo against the built binary."
+    },
+    {
+      "id": "OUT-014",
+      "name": "Website source ingestion (UNWIRED)",
+      "statement": "An operator can ingest documentation from a list of website URLs and have the HTML normalized to text and indexed.",
+      "actor_user": "Operator / agent",
+      "settlement_criterion": "ingest_source with kind:website fetches, converts HTML->text, and indexes through the running binary.",
+      "status": "partially_implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "README.md", "symbol_or_section": "Source Adapters", "note": "'websites'"},
+        {"path": ".agents/project_state.md", "symbol_or_section": "ck-adapter-web", "note": "'implemented'"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-adapter-web/src/lib.rs", "symbol_or_section": "WebSourceAdapter", "note": "crate kind=website; 34 tests; HTML->text; conditional headers; SSRF"},
+        {"path": "crates/ck-bin/src/main.rs", "symbol_or_section": "wire_app", "note": "ABSENT: injects ONLY FilesystemSourceAdapter; no web wiring"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-adapter-web/src/lib.rs", "symbol_or_section": "34 tests incl. 12 SSRF", "note": "library-level only"},
+        {"path": "crates/ck-bin/tests/cli.rs", "symbol_or_section": "(none)", "note": "NO binary-level test uses kind:website"}
+      ],
+      "runtime_path": "Same unreachable path as OUT-013.",
+      "gaps": [
+        {"type": "missing integration wiring", "description": "Identical structural gap to OUT-013."},
+        {"type": "overclaimed maturity", "description": "README/project_state overstate runtime maturity."},
+        {"type": "missing test coverage", "description": "No binary-level web ingest test."}
+      ],
+      "reviewer_notes": "Same remediation as OUT-013. SSRF (OUT-015) only reachable once wired."
+    },
+    {
+      "id": "OUT-015",
+      "name": "SSRF protection on web fetches",
+      "statement": "Web ingestion blocks private IP ranges, non-HTTP schemes, localhost-style hosts, and DNS names resolving to private addresses, and honors allowed_domains.",
+      "actor_user": "Security",
+      "settlement_criterion": "A fetch to 127.0.0.1, 169.254.x.x, file://, or a public host resolving to a private IP is rejected.",
+      "status": "implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "README.md", "symbol_or_section": "Source Adapters / Security", "note": "SSRF protections described"},
+        {"path": "docs/security.md", "symbol_or_section": "SSRF Protection", "note": "blocks listed"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-adapter-web/src/lib.rs", "symbol_or_section": "validate_url_with_resolver / DnsResolver / SystemDnsResolver / StaticResolver", "note": "private IP/scheme/DNS checks"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-adapter-web/src/lib.rs", "symbol_or_section": "12 SSRF tests", "note": "private IPv4, IPv6, scheme, localhost, allowed_domains"}
+      ],
+      "runtime_path": "WebSourceAdapter.fetch_content -> validate_url_with_resolver -> reject or proceed",
+      "gaps": [
+        {"type": "missing integration wiring", "description": "Only reachable through the unwired web adapter (OUT-014); no production code path until wiring lands."}
+      ],
+      "reviewer_notes": "Protection is real but dormant until OUT-014 is wired."
+    },
+    {
+      "id": "OUT-016",
+      "name": "GitHub truncated-tree detection",
+      "statement": "When GitHub's tree API returns a truncated response, the adapter errors rather than silently indexing partial data.",
+      "actor_user": "Data-integrity",
+      "settlement_criterion": "A truncated:true tree response yields an ingest error, not a partial index.",
+      "status": "implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "README.md", "symbol_or_section": "Source Adapters", "note": "'detects truncated tree API responses instead of silently indexing partial data'"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-adapter-github/src/lib.rs", "symbol_or_section": "units_from_tree_response", "note": "returns Err on truncated:true"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-adapter-github/src/lib.rs", "symbol_or_section": "errors_on_truncated_tree", "note": "library test"}
+      ],
+      "runtime_path": "tree API response -> units_from_tree_response -> Err if truncated",
+      "gaps": [
+        {"type": "missing integration wiring", "description": "Reachable only through the unwired github adapter (OUT-013)."}
+      ],
+      "reviewer_notes": "Real but dormant until OUT-013 is wired."
+    },
+    {
+      "id": "OUT-017",
+      "name": "Optional OpenAI-compatible embeddings",
+      "statement": "When [embeddings] is configured with an OpenAI-compatible provider, the service generates embeddings and merges semantic results; otherwise it degrades cleanly to lexical/hybrid-without-semantic.",
+      "actor_user": "Operator / retrieval",
+      "settlement_criterion": "With embeddings off, get_status reports semantic_enabled:false and queries succeed; with embeddings on, vector results merge into ranking.",
+      "status": "implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "README.md", "symbol_or_section": "Retrieval", "note": "'optional OpenAI-compatible embeddings'"},
+        {"path": "docs/configuration.md", "symbol_or_section": "[embeddings]", "note": "config fields"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-embeddings/src/lib.rs", "symbol_or_section": "OpenAIEmbeddingProvider / NoopEmbeddingProvider", "note": "ureq sync HTTP + graceful fallback"},
+        {"path": "crates/ck-bin/src/main.rs", "symbol_or_section": "wire_app lines 327-353", "note": "conditional wiring of embedding + SqliteVectorStore"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-embeddings/src/lib.rs", "symbol_or_section": "5 tests", "note": "library-level"},
+        {"path": "crates/ck-bin/tests/cli.rs", "symbol_or_section": "(none)", "note": "NO binary-level test enables embeddings (needs network/credentials)"}
+      ],
+      "runtime_path": "wire_app -> if embeddings.enabled && provider!=none -> app.with_semantic(embedding, vector_store); query_reference merges FTS+vector",
+      "gaps": [
+        {"type": "missing test coverage", "description": "No integration test exercises real OpenAI HTTP path or hybrid merge through the binary."}
+      ],
+      "reviewer_notes": "Reasonable gap given network dependency; consider a stubbed-provider E2E."
+    },
+    {
+      "id": "OUT-018",
+      "name": "Vector search with scope metadata",
+      "statement": "Vector similarity search can be filtered by corpus/library/document so semantic retrieval respects retrieval scope.",
+      "actor_user": "Retrieval",
+      "settlement_criterion": "search_chunks with a corpus filter returns only vectors in that corpus.",
+      "status": "implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "README.md", "symbol_or_section": "Retrieval", "note": "'vector store records corpus, library, and document metadata'"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-vector/src/lib.rs", "symbol_or_section": "SqliteVectorStore", "note": "chunk_embeddings(corpus_id, library_id, document_id); search_chunks; remove_chunk_embeddings_by_document"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-vector/src/lib.rs", "symbol_or_section": "14 tests", "note": "upsert_and_search, model filtering, limit enforcement"}
+      ],
+      "runtime_path": "query (semantic/hybrid) -> embed query -> SqliteVectorStore.search_chunks(filters) -> merge",
+      "gaps": [
+        {"type": "overclaimed maturity", "description": "Brute-force cosine (documented small-corpus limit) - acceptable for v1 per README/open_questions."}
+      ],
+      "reviewer_notes": "Documented limitation."
+    },
+    {
+      "id": "OUT-019",
+      "name": "Refresh (one-time / manual / scheduled)",
+      "statement": "Sources can be indexed once, refreshed on demand, or refreshed periodically by a background thread that re-ingests stale sources.",
+      "actor_user": "Operator / agent",
+      "settlement_criterion": "refresh_source after ingest returns a completed/queued job; with enable_periodic_refresh=true the background thread enumerates stale sources.",
+      "status": "implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "Context_Kernel_Service_Specification.md", "symbol_or_section": "§13.1", "note": "one-time/manual/scheduled REQUIRED"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-app/src/lib.rs", "symbol_or_section": "ingest_source / refresh_source", "note": "use cases"},
+        {"path": "crates/ck-bin/src/main.rs", "symbol_or_section": "periodic thread (lines 160-215)", "note": "list_stale_sources -> refresh_app.refresh_source"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-bin/tests/cli.rs", "symbol_or_section": "refresh_source_tool_works", "note": "E2E manual refresh"},
+        {"path": "crates/ck-scheduler/src/lib.rs", "symbol_or_section": "9 tests", "note": "scheduler unit tests"}
+      ],
+      "runtime_path": "serve -> if scheduler.enable_periodic_refresh -> spawn thread -> sleep interval -> list_stale_sources -> refresh_source each",
+      "gaps": [
+        {"type": "missing test coverage", "description": "Periodic thread path compiles and is wired but no test runs a full periodic cycle (local-confidence per evidence log)."}
+      ],
+      "reviewer_notes": "Acceptable; static-wiring proof only."
+    },
+    {
+      "id": "OUT-020",
+      "name": "Library/reference identity resolution",
+      "statement": "A library/package/repo name resolves to one or more canonical IDs (and the resolve-library-id alias works for Context7-familiar clients).",
+      "actor_user": "Agent / retrieval",
+      "settlement_criterion": "resolve_reference({query}) / resolve-library-id returns ranked candidates with canonical IDs.",
+      "status": "implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "docs/mcp-contracts.md", "symbol_or_section": "Implemented compatibility aliases", "note": "resolve-library-id -> resolve_reference"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-mcp/src/lib.rs", "symbol_or_section": "handle_resolve_reference + alias map (line 117)", "note": "'resolve_reference'|'resolve-library-id'"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-bin/tests/cli.rs", "symbol_or_section": "resolve_library_id_alias_works", "note": "E2E"}
+      ],
+      "runtime_path": "tools/call resolve-library-id -> handle_resolve_reference -> library_aliases lookup -> rank",
+      "gaps": [],
+      "reviewer_notes": "None."
+    },
+    {
+      "id": "OUT-021",
+      "name": "Ranked documentation retrieval with citations",
+      "statement": "A query returns compact, ranked excerpts with citations (and get-library-docs/query-docs aliases work).",
+      "actor_user": "Agent / retrieval",
+      "settlement_criterion": "query_reference returns query_id + ranked results with citation metadata.",
+      "status": "implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "docs/mcp-contracts.md", "symbol_or_section": "aliases", "note": "get-library-docs/query-docs -> query_reference"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-mcp/src/lib.rs", "symbol_or_section": "handle_query_reference + alias map (line 114)", "note": "'query_reference'|'get-library-docs'|'query-docs'"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-bin/tests/cli.rs", "symbol_or_section": "query_reference_returns_results_after_ingest / query_reference_includes_citations_after_ingest / get_library_docs_alias_works", "note": "E2E"}
+      ],
+      "runtime_path": "tools/call query_reference -> handle_query_reference -> FtsSearch + optional vector -> rank -> excerpts+citations",
+      "gaps": [],
+      "reviewer_notes": "None."
+    },
+    {
+      "id": "OUT-022",
+      "name": "Service health/status surface",
+      "statement": "get_status reports service identity, storage kind/path/fts5, source/session/job counts, and retrieval mode/semantic availability.",
+      "actor_user": "Operator / client",
+      "settlement_criterion": "get_status returns the JSON shape in docs/mcp-contracts.md.",
+      "status": "implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "docs/mcp-contracts.md", "symbol_or_section": "get_status response result shape", "note": "service/storage/sources/sessions/jobs/retrieval"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-mcp/src/lib.rs", "symbol_or_section": "handle_get_status", "note": "returns KernelStatus"},
+        {"path": "crates/ck-bin/src/main.rs", "symbol_or_section": "lines 108-113", "note": "builds status with semantic_enabled"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-bin/tests/cli.rs", "symbol_or_section": "serve_stdio_answers_get_status_tool_call", "note": "E2E asserts name + fts5_enabled"}
+      ],
+      "runtime_path": "tools/call get_status -> KernelStatus serialize",
+      "gaps": [],
+      "reviewer_notes": "None."
+    },
+    {
+      "id": "OUT-023",
+      "name": "Config hot-reload",
+      "statement": "With [reload].enabled=true and --config, the stdio loop rebuilds storage/app/MCP/SSE-auth state when the file changes; SSE bind changes require restart.",
+      "actor_user": "Operator",
+      "settlement_criterion": "Editing the config file between stdio requests swaps in new auth/retention/retrieval settings without restarting the process.",
+      "status": "implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "docs/operations.md", "symbol_or_section": "Config Reload", "note": "rebuilds storage/app/MCP/SSE state"},
+        {"path": "README.md", "symbol_or_section": "Configuration", "note": "reload does not rebind socket"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-bin/src/main.rs", "symbol_or_section": "reload loop (lines 226-266)", "note": "re-load config, rebuild store/app/service, swap SSE state"},
+        {"path": "crates/ck-transport-sse/src/lib.rs", "symbol_or_section": "ReloadableSseState", "note": "RwLock<Arc<...>> for live swap"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-bin/tests/cli.rs", "symbol_or_section": "(static)", "note": "reload path covered by compilation + config parsing; no binary-level reload E2E"}
+      ],
+      "runtime_path": "stdin loop -> if reload.enabled && config_path -> load_config -> diff -> rebuild wire_app -> swap service + SSE state",
+      "gaps": [
+        {"type": "missing recovery path", "description": "Bind-socket reload intentionally unsupported (documented)."},
+        {"type": "missing test coverage", "description": "No binary-level reload E2E test."}
+      ],
+      "reviewer_notes": "Documented behavior; acceptable."
+    },
+    {
+      "id": "OUT-024",
+      "name": "OpenTelemetry-compatible observability export (SPEC-REQUIRED, NOT IMPLEMENTED)",
+      "statement": "The service exports traces/metrics/spans/events to an OpenTelemetry collector when otel_endpoint is configured.",
+      "actor_user": "Operator / SRE",
+      "settlement_criterion": "With otel_endpoint set, spans/metrics are emitted to the collector; OTEL exporter failure does not crash the service.",
+      "status": "config_only",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "Context_Kernel_Service_Specification.md", "symbol_or_section": "§20.2", "note": "'An OpenTelemetry-compatible export path is REQUIRED.'"},
+        {"path": "Context_Kernel_Service_Specification.md", "symbol_or_section": "§26.1", "note": "'OTEL-compatible observability export' under REQUIRED for conformance"},
+        {"path": "docs/configuration.md", "symbol_or_section": "[observability]", "note": "otel_endpoint field documented as '(reserved)'"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-config/src/lib.rs", "symbol_or_section": "ObservabilityConfig.otel_endpoint", "note": "config field accepted"},
+        {"path": "crates/ck-observability/src/lib.rs", "symbol_or_section": "init_observability (lines 23-26)", "note": "explicitly logs 'OTEL endpoint configured but not yet supported; ignoring'. NO exporter, NO metrics, NO spans."}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-observability/src/lib.rs", "symbol_or_section": "detects_otel_endpoint / builds_text_tracing_config_without_otel", "note": "only assert endpoint DETECTION, not export"}
+      ],
+      "runtime_path": "otel_endpoint set -> detected -> logged-and-ignored. No OTEL traffic leaves the process.",
+      "gaps": [
+        {"type": "missing runtime enforcement", "description": "Spec REQUIRED but unwired."},
+        {"type": "overclaimed maturity", "description": "Against spec conformance; mitigated by candid README disclosure."}
+      ],
+      "reviewer_notes": "Decide v1 conformance: implement exporter OR amend spec to RECOMMENDED."
+    },
+    {
+      "id": "OUT-025",
+      "name": "Ports-and-adapters isolation",
+      "statement": "Domain logic in ck-core depends on no SQL, HTTP, or transport detail; adapters are substitutable behind port traits.",
+      "actor_user": "Architect / maintainer",
+      "settlement_criterion": "ck-core has no rusqlite/axum/ureq deps; 12 port traits defined; adapter substitution tested.",
+      "status": "implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "Context_Kernel_Service_Specification.md", "symbol_or_section": "§3.1 / §9", "note": "ports-and-adapters REQUIRED; 14 conceptual ports listed"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-core/src/ports/*", "symbol_or_section": "12 pub traits", "note": "StoragePort, SessionMemoryPort, ArtifactPort, LexicalSearchPort, RankerPort, SourceAdapter, Normalizer, Chunker, EmbeddingPort, VectorSearchPort, AuthPort, SchedulerPort"},
+        {"path": "crates/ck-core/Cargo.toml", "symbol_or_section": "dependencies", "note": "no rusqlite/axum/hyper/ureq"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-app/src/lib.rs", "symbol_or_section": "TestSourceAdapter (line 1150)", "note": "mock adapter for domain-logic testing"}
+      ],
+      "runtime_path": "n/a (architectural invariant)",
+      "gaps": [
+        {"type": "architecture/code mismatch", "description": "Spec §9 also lists Config Port (§9.1), MCP Transport Port (§9.12), Observability Port (§9.14) as conceptual interfaces; these are NOT abstracted as ck-core traits. Spec says 'conceptual interfaces' so acceptable, but a strict reader flags it."}
+      ],
+      "reviewer_notes": "Minor; 3 of 14 spec ports are concrete, not traits."
+    },
+    {
+      "id": "OUT-026",
+      "name": "Secret handling + path-traversal safety",
+      "statement": "Secrets use $VAR/${VAR} indirection and are compared in constant time without being logged; artifact ids are validated to prevent path traversal.",
+      "actor_user": "Security",
+      "settlement_criterion": "${CONTEXT_KERNEL_AUTH_TOKEN} resolves from env; ../etc/passwd as artifact id rejected; tokens not printed.",
+      "status": "implemented",
+      "confidence": "high",
+      "declared_evidence": [
+        {"path": "docs/security.md", "symbol_or_section": "Token Storage / Artifact Storage", "note": "env indirection, constant-time, alphanum validation"}
+      ],
+      "implementation_evidence": [
+        {"path": "crates/ck-config/src/lib.rs", "symbol_or_section": "expand_env_vars (line 287)", "note": "${...} interpolation"},
+        {"path": "crates/ck-artifacts/src/lib.rs", "symbol_or_section": "validate_id (line 34)", "note": "rejects non-[A-Za-z0-9_-]"},
+        {"path": "crates/ck-auth/src/lib.rs", "symbol_or_section": "BearerAuth", "note": "subtle::ConstantTimeEq"}
+      ],
+      "test_evidence": [
+        {"path": "crates/ck-artifacts/src/lib.rs", "symbol_or_section": "validate_id_rejects_traversal", "note": "tests ../etc/passwd, foo/bar, foo\\bar, a..b"},
+        {"path": "crates/ck-config/src/lib.rs", "symbol_or_section": "env expansion test", "note": "tokens=[\"secret123\"] resolved"}
+      ],
+      "runtime_path": "config load -> expand_env_vars; auth -> constant-time compare; artifact store -> validate_id before any path op",
+      "gaps": [
+        {"type": "missing test coverage", "description": "No explicit test asserts a configured token never appears in any tracing output (secret redaction assumed by absence, not asserted)."}
+      ],
+      "reviewer_notes": "Add a secret-redaction-in-logs assertion for defense-in-depth."
+    }
+  ],
+  "top_risks": [
+    "OUT-013/OUT-014: GitHub + Web source adapters are implemented as crates with tests but NOT wired into runtime ingestion (no source-kind dispatch; wire_app injects only FilesystemSourceAdapter). README/project_state overclaim 'supports GitHub repositories and websites'.",
+    "OUT-024: OTEL export is spec-REQUIRED (§26.1/§20.2) but stubbed (config-only, logged-and-ignored). README candidly discloses; spec conformance tension.",
+    "OUT-011: docs/schema.md line 28 contradicts code (says artifact payload files NOT deleted; code deletes them + E2E test proves it). Stale doc.",
+    "No binary-level end-to-end test exercises github/web ingestion, real embeddings/vector hybrid merge, or periodic refresh - all library-tested only.",
+    "AppServices holds a single global source_adapter/normalizer/chunker; the multi-source architecture is unreachable at runtime."
+  ],
+  "first_files_to_inspect": [
+    "crates/ck-bin/src/main.rs::wire_app (lines 308-356) - single source of truth for what the binary can actually do",
+    "crates/ck-app/src/lib.rs - AppServices struct (lines 15-26) + ingest_source (lines 329-439); confirm no kind dispatch",
+    "crates/ck-mcp/src/lib.rs::call_tool (lines 109-117) - tool/alias surface + call_tool_authorized",
+    "crates/ck-observability/src/lib.rs (lines 13-26) - OTEL stub",
+    "crates/ck-bin/tests/cli.rs - entire binary-level proof surface (all filesystem_tree)",
+    "crates/ck-core/src/ports/* - port-trait inventory for architecture conformance"
+  ],
+  "open_architectural_questions": [
+    "Is a source registry / kind-dispatch layer intended for v1, or are multi-source claims meant to be deferred? (Determines whether OUT-013/014 are bugs or overclaims.)",
+    "Should AppServices hold a collection of adapters/normalizers/chunkers keyed by source_kind, or should each ingest job carry its own adapter instance?",
+    "Is OTEL REQUIRED (spec §26.1) or RECOMMENDED for v1 conformance? Spec and README disagree in severity.",
+    "Are the Config/MCP-Transport/Observability 'ports' (spec §9.1/§9.12/§9.14) meant to be ck-core traits, or is concrete implementation acceptable?",
+    "What is the ownership boundary of crates/ck-mcp/src/agentic_capability_loop.rs and integration/agentic_capability_loop/ relative to the core Context Kernel product?"
+  ],
+  "recommended_next_prompt": "Using the outcome-to-code map at .agents/reports/outcome_code_map_Context_Kernel_Service_MCP_2026-06-14.md, perform an adversarial audit of the Context Kernel binary's runtime reachability. For each outcome marked 'implemented', trace a concrete path from crates/ck-bin/src/main.rs::serve to the outcome's effect and either (a) confirm a binary-level test exercises it, or (b) downgrade it to 'partially_implemented' with the exact missing wiring. Pay special attention to OUT-013/014 (GitHub/Web adapters): read wire_app and AppServices::ingest_source, then attempt an ingest_source call with kind:github_repo against the release binary and report the exact failure. Separately, decide whether OUT-024 (OTEL) must be implemented for v1 conformance per spec §26.1, and propose either an exporter implementation or a spec amendment to RECOMMENDED."
+}

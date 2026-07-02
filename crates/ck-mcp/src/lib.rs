@@ -11,7 +11,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 pub mod agentic_capability_loop;
-pub use agentic_capability_loop::AclContextAgent;
+pub use agentic_capability_loop::{AclContextAgent, ContextAgent};
 
 #[derive(Debug, Error)]
 pub enum McpError {
@@ -58,6 +58,9 @@ pub struct McpService {
     status: KernelStatus,
     app: Option<AppServices>,
     auth: Option<Arc<dyn AuthPort>>,
+    /// WP-5 (F-05): the agentic-capability-loop context agent. When present,
+    /// the `context_required` MCP tool is served (cited ContextPacketCreated).
+    acl_context: Option<Arc<AclContextAgent>>,
 }
 
 impl McpService {
@@ -66,6 +69,7 @@ impl McpService {
             status,
             app: None,
             auth: None,
+            acl_context: None,
         }
     }
 
@@ -74,6 +78,7 @@ impl McpService {
             status,
             app: Some(app),
             auth: None,
+            acl_context: None,
         }
     }
 
@@ -86,7 +91,15 @@ impl McpService {
             status,
             app: Some(app),
             auth: Some(auth),
+            acl_context: None,
         }
+    }
+
+    /// WP-5 (F-05): attach the ACL context agent so the `context_required`
+    /// tool is served through the real binary (stdio/SSE).
+    pub fn with_context_agent(mut self, agent: AclContextAgent) -> Self {
+        self.acl_context = Some(Arc::new(agent));
+        self
     }
 
     pub fn call_tool(&self, name: &str, arguments: Value) -> Result<Value, McpError> {
@@ -115,6 +128,8 @@ impl McpService {
                 self.handle_query_reference(arguments)
             }
             "resolve_reference" | "resolve-library-id" => self.handle_resolve_reference(arguments),
+            // WP-5 (F-05): the loop-facing context agent, served over MCP.
+            "context_required" => self.handle_context_required(arguments),
             other => Err(McpError::UnknownTool(other.to_string())),
         };
         let elapsed = start.elapsed().as_millis() as u64;
@@ -417,6 +432,51 @@ impl McpService {
         }))
     }
 
+    /// WP-5 (F-05): serve the loop-facing `context_required` tool by delegating
+    /// to the (previously unwired) `AclContextAgent`. Returns the
+    /// `ContextPacketCreated` payload with citations + the POL-ACL-002
+    /// authorization result, so SWE_SEED's context stage can satisfy
+    /// POL-ACL-001/003 with a CK-sourced packet.
+    fn handle_context_required(&self, arguments: Value) -> Result<Value, McpError> {
+        let agent = self.acl_context.as_ref().ok_or_else(|| {
+            McpError::Internal(
+                "context_required tool not configured (no ACL context agent)".to_string(),
+            )
+        })?;
+
+        // Build the ContextRequired envelope the agent consumes.
+        let payload = serde_json::json!({
+            "domain_model_hash": arguments["domain_model_hash"].as_str().unwrap_or(""),
+            "work_request_id": arguments["work_request_id"].as_str().unwrap_or(""),
+            "context_requirement_id": arguments["context_requirement_id"]
+                .as_str()
+                .unwrap_or(""),
+            "corpus_id": arguments["corpus_id"].as_str().unwrap_or(""),
+            "query": arguments["query"].as_str(),
+            "max_results": arguments["max_results"].as_u64().unwrap_or(10) as u32,
+            "is_private": arguments["is_private"].as_bool().unwrap_or(false),
+            "scope_claim": arguments["scope_claim"].as_str(),
+        });
+        let envelope = serde_json::json!({
+            "event_id": format!("evt_{}", chrono::Utc::now().timestamp_micros()),
+            "event_type": "ContextRequired",
+            "namespace": "agentic_capability_loop",
+            "occurred_at": chrono::Utc::now().to_rfc3339(),
+            "payload": payload,
+        });
+        let event: agentic_capability_loop::EventEnvelope =
+            serde_json::from_value(envelope).map_err(|e| McpError::InvalidArguments(e.to_string()))?;
+
+        let (packet, auth) = agent
+            .handle_context_required(&event)
+            .map_err(|e| McpError::Internal(format!("{e:#}")))?;
+
+        Ok(serde_json::json!({
+            "context_packet": packet.payload,
+            "authorization": auth.payload,
+        }))
+    }
+
     fn handle_refresh_source(&self, arguments: Value) -> Result<Value, McpError> {
         let app = self.require_app()?;
 
@@ -578,12 +638,97 @@ mod tests {
     }
 
     #[test]
+    fn context_required_unconfigured_reports_error() {
+        // WP-5 (F-05): with no agent attached, the tool is reachable but reports
+        // itself unconfigured (NOT unknown — the dispatch arm exists).
+        let status = KernelStatus::placeholder();
+        let service = McpService::new(status);
+        let result = service.call_tool("context_required", json!({"corpus_id": "docs"}));
+        match result {
+            Err(McpError::Internal(msg)) => assert!(msg.contains("not configured")),
+            Err(McpError::UnknownTool(_)) => panic!("context_required must be a known tool"),
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn context_required_returns_cited_packet_through_dispatch() {
+        // F-05 teeth: the previously-dead AclContextAgent is reachable through
+        // the served dispatch path and returns a cited ContextPacketCreated.
+        use std::fs;
+        let corpus_root = std::env::temp_dir().join(format!(
+            "ck-ctx-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let docs = corpus_root.join("docs");
+        fs::create_dir_all(&docs).unwrap();
+        fs::write(docs.join("a.md"), "# Plan A\nDeploy via blue-green").unwrap();
+
+        let status = KernelStatus::placeholder();
+        let cleanup = corpus_root.clone();
+        let agent = AclContextAgent {
+            corpus_root,
+            learning_proposals_ledger: None,
+        };
+        let service = McpService::new(status).with_context_agent(agent);
+
+        let result = service.call_tool(
+            "context_required",
+            json!({
+                "work_request_id": "wr-1",
+                "context_requirement_id": "cr-1",
+                "corpus_id": "docs",
+                "query": "blue-green",
+                "max_results": 5,
+                "is_private": false,
+            }),
+        );
+        let resp = result.expect("context_required should succeed with a corpus");
+        let packet = &resp["context_packet"];
+        assert_eq!(packet["work_request_id"], "wr-1");
+        let citations = packet["citations"].as_array().expect("citations array");
+        assert!(!citations.is_empty(), "packet must carry >=1 citation");
+        assert_eq!(packet["authorized"], true);
+        assert_eq!(resp["authorization"]["result"], "allow");
+        fs::remove_dir_all(&cleanup).ok();
+    }
+
+    #[test]
+    fn context_required_enforces_private_corpus_scope() {
+        // POL-ACL-002: a private corpus without a scope_claim is denied and
+        // returns ZERO citations (the packet is authorized:false).
+        let status = KernelStatus::placeholder();
+        let agent = AclContextAgent {
+            corpus_root: std::env::temp_dir().join("nonexistent-ck-ctx"),
+            learning_proposals_ledger: None,
+        };
+        let service = McpService::new(status).with_context_agent(agent);
+        let result = service.call_tool(
+            "context_required",
+            json!({
+                "corpus_id": "private_docs",
+                "is_private": true,
+                // no scope_claim
+            }),
+        );
+        let resp = result.expect("private corpus without scope still responds");
+        assert_eq!(resp["context_packet"]["authorized"], false);
+        assert_eq!(resp["context_packet"]["citations"].as_array().unwrap().len(), 0);
+        assert_eq!(resp["authorization"]["result"], "deny");
+    }
+
+    #[test]
     fn authorized_call_rejects_disallowed_tool() {
         let status = KernelStatus::placeholder();
         let service = McpService {
             status,
             app: None,
             auth: Some(Arc::new(TestAuth)),
+            acl_context: None,
         };
 
         let result = service.call_tool_authorized(Some("allowed"), "ingest_source", json!({}));
@@ -603,6 +748,7 @@ mod tests {
             status,
             app: None,
             auth: Some(Arc::new(TestAuth)),
+            acl_context: None,
         };
 
         let result = service.call_tool_authorized(

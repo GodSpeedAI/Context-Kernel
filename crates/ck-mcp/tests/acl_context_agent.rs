@@ -19,7 +19,11 @@ fn make_envelope(payload: ContextRequiredPayload) -> EventEnvelope {
     }
 }
 
-fn make_payload(corpus_id: &str, is_private: bool, scope_claim: Option<&str>) -> ContextRequiredPayload {
+fn make_payload(
+    corpus_id: &str,
+    is_private: bool,
+    scope_claim: Option<&str>,
+) -> ContextRequiredPayload {
     ContextRequiredPayload {
         domain_model_hash: "deadbeef".to_string(),
         work_request_id: "wr_test".to_string(),
@@ -59,10 +63,7 @@ fn acl_agent_resolves_citations_from_filesystem_corpus() {
         .contains("Hello world"));
 
     // ContextAuthorized: Allow
-    assert_eq!(
-        auth.payload["result"].as_str().unwrap(),
-        "allow"
-    );
+    assert_eq!(auth.payload["result"].as_str().unwrap(), "allow");
     assert!(auth.payload["reason"].as_str().unwrap().contains("public"));
 }
 
@@ -84,10 +85,7 @@ fn acl_agent_denies_private_corpus_without_scope_claim() {
     assert!(packet.payload["citations"].as_array().unwrap().is_empty());
 
     // ContextAuthorized: Deny
-    assert_eq!(
-        auth.payload["result"].as_str().unwrap(),
-        "deny"
-    );
+    assert_eq!(auth.payload["result"].as_str().unwrap(), "deny");
     assert!(auth.payload["reason"]
         .as_str()
         .unwrap()
@@ -120,10 +118,7 @@ fn acl_agent_allows_private_corpus_with_scope_claim() {
         .contains("classified info"));
 
     // ContextAuthorized: Allow
-    assert_eq!(
-        auth.payload["result"].as_str().unwrap(),
-        "allow"
-    );
+    assert_eq!(auth.payload["result"].as_str().unwrap(), "allow");
     assert!(auth.payload["reason"]
         .as_str()
         .unwrap()

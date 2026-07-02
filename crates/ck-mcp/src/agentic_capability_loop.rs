@@ -195,15 +195,15 @@ impl ContextAgent for AclContextAgent {
         &self,
         event: &EventEnvelope,
     ) -> Result<(EventEnvelope, EventEnvelope), Self::Error> {
-        let payload: ContextRequiredPayload =
-            serde_json::from_value(event.payload.clone())?;
+        let payload: ContextRequiredPayload = serde_json::from_value(event.payload.clone())?;
 
         // POL-ACL-002: private corpus requires explicit scope_claim
         let (authorized, auth_reason) = if payload.is_private {
             match &payload.scope_claim {
-                Some(claim) if !claim.is_empty() => {
-                    (AuthorizationResult::Allow, format!("scope claim present: {}", claim))
-                }
+                Some(claim) if !claim.is_empty() => (
+                    AuthorizationResult::Allow,
+                    format!("scope claim present: {}", claim),
+                ),
                 _ => (
                     AuthorizationResult::Deny,
                     "POL-ACL-002: private corpus requires explicit scope_claim".to_string(),
@@ -278,8 +278,7 @@ impl AclContextAgent {
         if !corpus_dir.is_dir() {
             return Ok(vec![]);
         }
-        let config =
-            serde_json::json!({ "path": corpus_dir.to_str().unwrap_or("") }).to_string();
+        let config = serde_json::json!({ "path": corpus_dir.to_str().unwrap_or("") }).to_string();
         let adapter = ck_adapter_filesystem::FilesystemSourceAdapter;
         let units = adapter.discover_units(&payload.corpus_id, &config)?;
 

@@ -9,6 +9,9 @@ use ulid::Ulid;
 use ck_core::entities::{Chunk, Document, RawContent, SourceUnit};
 use ck_core::ports::{Chunker, Normalizer, SourceAdapter};
 
+pub mod learning_proposals;
+pub use learning_proposals::LearningProposalsAdapter;
+
 const SUPPORTED_EXTENSIONS: &[&str] = &["md", "txt", "toml", "rs", "json"];
 const MAX_TOKENS_PER_CHUNK: usize = 800;
 

@@ -528,3 +528,54 @@ enabled = false
         .success()
         .stdout(predicate::str::contains(r#""name":"context-kernel""#));
 }
+
+// WP-5 (F-05): the previously-dead AclContextAgent is reachable through the
+// SERVED binary. Drives `context-kernal serve` over stdio with
+// CK_CONTEXT_CORPUS_ROOT set, and asserts a cited ContextPacketCreated.
+#[test]
+fn context_required_served_over_stdio_returns_cited_packet() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = temp_db(&dir);
+    let data_dir = temp_data_dir(&dir);
+
+    // Filesystem corpus the agent reads citations from.
+    let corpus_root = dir.path().join("corpus");
+    let docs = corpus_root.join("loop-docs");
+    fs::create_dir_all(&docs).unwrap();
+    fs::write(
+        docs.join("policy.md"),
+        "# POL-ACL-001\nHigh-risk work needs a cited context packet before authority.",
+    )
+    .unwrap();
+
+    let input = tool_call(
+        1,
+        "context_required",
+        serde_json::json!({
+            "work_request_id": "wr-stdio",
+            "context_requirement_id": "cr-stdio",
+            "corpus_id": "loop-docs",
+            "query": "context packet",
+            "max_results": 5,
+            "is_private": false,
+        }),
+    );
+
+    let mut cmd = Command::cargo_bin("context-kernal").unwrap();
+    cmd.env("CK_CONTEXT_CORPUS_ROOT", corpus_root.to_str().unwrap())
+        .args([
+            "serve",
+            "--database",
+            db_path.to_str().unwrap(),
+            "--data-dir",
+            data_dir.to_str().unwrap(),
+        ])
+        .write_stdin(input);
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("context_packet"))
+        .stdout(predicate::str::contains("citations"))
+        .stdout(predicate::str::contains("POL-ACL-001"))
+        .stdout(predicate::str::contains(r#""authorized":true"#));
+}

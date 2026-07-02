@@ -12,7 +12,7 @@ use ck_auth::BearerAuth;
 use ck_config::{default_config, load_config};
 use ck_core::ports::{AuthPort, EmbeddingPort, StoragePort, VectorSearchPort};
 use ck_embeddings::{NoopEmbeddingProvider, OpenAIEmbeddingProvider};
-use ck_mcp::McpService;
+use ck_mcp::{AclContextAgent, McpService};
 use ck_ranker::LexicalRanker;
 use ck_search_fts::FtsSearch;
 use ck_storage_sqlite::SqliteStore;
@@ -126,7 +126,16 @@ fn serve(args: RuntimeArgs) -> Result<()> {
         Arc::new(BearerAuth::no_auth())
     };
 
-    let mut service = Arc::new(McpService::with_app_and_auth(status, app, mcp_auth.clone()));
+    // WP-5 (F-05): attach the ACL context agent so the loop-facing
+    // `context_required` tool is served. The corpus root + learning-proposals
+    // ledger paths are config/env-driven (absent → the tool reports itself as
+    // unconfigured, rather than disabling the whole server).
+    let context_agent = build_context_agent();
+    let mut service = Arc::new(match context_agent {
+        Some(agent) => McpService::with_app_and_auth(status, app, mcp_auth.clone())
+            .with_context_agent(agent),
+        None => McpService::with_app_and_auth(status, app, mcp_auth.clone()),
+    });
 
     // Determine if SSE should be enabled
     let enable_sse = args.sse.is_some() || config.mcp.enable_sse;
@@ -353,4 +362,25 @@ fn wire_app(
     }
 
     Ok(app)
+}
+
+/// WP-5 (F-05): build the ACL context agent from env-configured paths.
+/// `CK_CONTEXT_CORPUS_ROOT` enables filesystem-corpus citation; the optional
+/// `CK_LEARNING_PROPOSALS_LEDGER` adds the GodSpeed-Agent learning-proposals
+/// corpus. Returns None when neither is set (the `context_required` tool then
+/// reports itself as unconfigured).
+fn build_context_agent() -> Option<AclContextAgent> {
+    let corpus_root = std::env::var("CK_CONTEXT_CORPUS_ROOT").ok().filter(|s| !s.is_empty());
+    let learning_ledger = std::env::var("CK_LEARNING_PROPOSALS_LEDGER")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from);
+    let root = corpus_root.map(PathBuf::from);
+    if root.is_none() && learning_ledger.is_none() {
+        return None;
+    }
+    Some(AclContextAgent {
+        corpus_root: root.unwrap_or_default(),
+        learning_proposals_ledger: learning_ledger,
+    })
 }

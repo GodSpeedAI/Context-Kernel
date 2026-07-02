@@ -1,5 +1,11 @@
 # AGENTS.md
 
+## Normative Language
+
+The key words MUST, MUST NOT, REQUIRED, SHOULD, SHOULD NOT, RECOMMENDED, MAY, and OPTIONAL in this document are to be interpreted as described in RFC 2119.
+
+Implementation-defined means the behavior is part of the implementation contract, but this specification does not prescribe one universal policy. Implementations MUST document the selected behavior.
+
 ## Purpose
 
 This file defines how coding agents MUST operate in this repository.
@@ -380,25 +386,25 @@ If the environment prevents running tests:
 - ck-bin:
 
 ### Implemented Features
-- 
+-
 
 ### Partially Implemented Features
-- 
+-
 
 ### Not Yet Implemented
-- 
+-
 
 ### Database / Migrations
-- 
+-
 
 ### MCP Tools
-- 
+-
 
 ### Source Adapters
-- 
+-
 
 ### Verification Summary
-- 
+-
 ```
 
 ### `.agent/current_plan.md`
@@ -407,24 +413,24 @@ If the environment prevents running tests:
 # Current Plan
 
 ## Objective
-- 
+-
 
 ## Scope
-- 
+-
 
 ## Constraints
-- 
+-
 
 ## Files / Crates Expected To Change
-- 
+-
 
 ## Steps
-1. 
-2. 
-3. 
+1.
+2.
+3.
 
 ## Validation Plan
-- 
+-
 ```
 
 ### `.agent/work_log.md`
@@ -460,13 +466,13 @@ If the environment prevents running tests:
 # Open Questions
 
 ## Blocking
-- 
+-
 
 ## Non-Blocking
-- 
+-
 
 ## Active Assumptions
-- 
+-
 ```
 
 ### `.agent/evidence.md`
