@@ -1,6 +1,7 @@
 # Work Log
 
 ## 2026-06-02 18:00 EDT
+
 - Task: Updated README value proposition after reading upstream Context7, Ref MCP, and Context Mode READMEs.
 - Files changed: `README.md`, `.agent/work_log.md`, `.agent/evidence.md`
 - Tests run: Not run; documentation-only change.
@@ -8,6 +9,7 @@
 - Notes: Upstream projects are reflected as product patterns, not named as dependencies or direct implementations.
 
 ## 2026-06-02 18:00 EDT
+
 - Task: Fixed license discrepancy so repository metadata matches the Apache-2.0 root `LICENSE`.
 - Files changed: `Cargo.toml`, `README.md`, `.agent/work_log.md`, `.agent/evidence.md`
 - Tests run: `cargo metadata --no-deps --format-version 1`; `rg -n "MIT|license =|Apache-2.0|Apache License|MPL" Cargo.toml crates README.md docs .github .agent`
@@ -15,6 +17,7 @@
 - Notes: All crate manifests inherit `license.workspace = true`, so changing workspace package license aligns all crates.
 
 ## 2026-06-02 18:00 EDT
+
 - Task: Created root `README.md` using `voice-guide.md` and the SEA README structure as references.
 - Files changed: `README.md`, `.agent/work_log.md`, `.agent/evidence.md`
 - Tests run: Not run; documentation-only change.
@@ -22,6 +25,7 @@
 - Notes: README avoids claiming OTEL exporter support because code only implements text/JSON tracing and OTEL endpoint detection.
 
 ## 2026-06-02 18:00 EDT
+
 - Task: Updated all `.agent/` memory files to reflect completed deployment readiness state.
 - Files changed: `.agent/project_state.md`, `.agent/current_plan.md`, `.agent/evidence.md`, `.agent/decisions.md`, `.agent/open_questions.md`, `.agent/work_log.md`
 - Tests run: None (documentation-only update)
@@ -29,6 +33,7 @@
 - Notes: This was the final step — updating memory files to match actual repository state after all deployment readiness work was completed.
 
 ## 2026-06-02 17:00 EDT
+
 - Task: Deployment readiness tasks 14-18 — config templates, smoke tests, operations docs, release workflow, final release gate.
 - Files changed: `config/context-kernal.example.toml`, `config/context-kernal.local.example.toml`, `config/context-kernal.sse.example.toml`, `crates/ck-bin/tests/cli.rs` (4 new tests), `docs/operations.md`, `docs/configuration.md`, `docs/security.md`, `docs/release.md`, `.github/workflows/release.yml`
 - Tests run: `cargo test --workspace` (186 tests pass), `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo build --release -p ck-bin`
@@ -36,6 +41,7 @@
 - Notes: Final release gate verified. All 18 deployment readiness tasks complete.
 
 ## 2026-06-02 16:00 EDT
+
 - Task: Deployment readiness tasks 11-13 — ck-memory crate, Context7/PDF adapter scope decisions.
 - Files changed: `crates/ck-memory/Cargo.toml`, `crates/ck-memory/src/lib.rs`, `Cargo.toml` (added workspace member), `crates/ck-app/Cargo.toml` (added ck-memory dep), `crates/ck-app/src/lib.rs` (re-exports)
 - Tests run: `cargo test -p ck-memory`, `cargo test --workspace`
@@ -43,6 +49,7 @@
 - Notes: ck-memory provides EventRetentionClass, classify_event_kind, SessionRetentionPolicy.
 
 ## 2026-06-02 15:00 EDT
+
 - Task: Deployment readiness tasks 5-10 — artifact payload GC, source scope filtering, vector filtering, SSRF DNS resolution, GitHub truncated tree, web incremental refresh.
 - Files changed: `crates/ck-core/src/ports/artifact.rs`, `crates/ck-core/src/ports/storage.rs`, `crates/ck-core/src/ports/vector_search.rs`, `crates/ck-artifacts/src/lib.rs`, `crates/ck-storage-sqlite/src/lib.rs`, `crates/ck-vector/src/lib.rs`, `crates/ck-adapter-web/src/lib.rs`, `crates/ck-adapter-github/src/lib.rs`, `crates/ck-app/src/lib.rs`, `crates/ck-scheduler/src/lib.rs`
 - Tests run: `cargo test --workspace`
@@ -50,6 +57,7 @@
 - Notes: StoragePort and ArtifactPort trait changes required updating all implementors (SqliteStore, MockStorage, TestStorage, NoopArtifactStore).
 
 ## 2026-06-02 14:30 EDT
+
 - Task: Deployment readiness tasks 1-4 — copilot-instructions, ck-observability, ToolTelemetry, ReloadableSseState.
 - Files changed: `.github/copilot-instructions.md`, `crates/ck-observability/Cargo.toml`, `crates/ck-observability/src/lib.rs`, `Cargo.toml` (added workspace member), `crates/ck-mcp/src/lib.rs`, `crates/ck-transport-sse/src/lib.rs`, `crates/ck-bin/Cargo.toml`, `crates/ck-bin/src/main.rs`
 - Tests run: `cargo test --workspace`
@@ -57,6 +65,7 @@
 - Notes: ck-bin now uses ck_observability::init_observability instead of direct tracing init.
 
 ## 2026-06-02 14:00 EDT
+
 - Task: Task 10 — Add web incremental refresh hints (conditional request headers).
 - Files changed: `crates/ck-adapter-web/src/lib.rs`
 - Tests run: `cargo test -p ck-adapter-web` (41 tests pass)
@@ -64,6 +73,7 @@
 - Notes: ureq `Request::set` consumes self and returns `Self`; used reassignment pattern for conditional header injection.
 
 ## 2026-06-02 10:05 EDT
+
 - Task: Created deployment readiness plan for remaining partials and release blockers.
 - Files changed: `docs/plans/2026-06-02-deployment-readiness.md`, `.agent/current_plan.md`.
 - Tests run: Not run; planning-only change.
@@ -71,6 +81,7 @@
 - Notes: Plan covers OTEL, SSE reload, artifact payload GC, source-scope authz, vector cleanup/filtering, adapter hardening, `ck-memory`, adapter scope decisions, config templates, smoke tests, docs, and release workflow.
 
 ## 2026-06-02 10:05 EDT
+
 - Task: Implemented Milestone 10 hardening and packaging.
 - Files changed: `.agent/current_plan.md`, `.agent/project_state.md`, `.agent/work_log.md`, `.agent/decisions.md`, `.agent/open_questions.md`, `.agent/evidence.md`, `.github/workflows/ci.yml`, `crates/ck-core/src/ports/auth.rs`, `crates/ck-core/src/ports/storage.rs`, `crates/ck-config/src/lib.rs`, `crates/ck-auth/src/lib.rs`, `crates/ck-storage-sqlite/src/lib.rs`, `crates/ck-app/src/lib.rs`, `crates/ck-mcp/src/lib.rs`, `crates/ck-transport-sse/src/lib.rs`, `crates/ck-bin/src/main.rs`, `crates/ck-bin/tests/cli.rs`, `crates/ck-scheduler/src/lib.rs`, `docs/schema.md`, `docs/mcp-contracts.md`, `docs/install.md`, `docs/ci.md`.
 - Tests run: `cargo test -p ck-config -p ck-auth -p ck-storage-sqlite -p ck-app -p ck-mcp -p ck-bin`; `cargo fmt --check && cargo clippy --workspace --all-targets && cargo test --workspace`.
@@ -78,6 +89,7 @@
 - Notes: Implemented typed M10 config, retention GC, authz policy, schema export, startup retention application, stdio-loop file config reload, SSE policy enforcement, install docs, CI example. OTEL endpoint is represented in config and docs, but no OTEL exporter crate is wired.
 
 ## 2026-06-02 10:30 EDT
+
 - Task: Implement Milestones 7-9 from Context_Kernel_Service_Plan.md
 - Files changed:
   - `Cargo.toml` — added 4 new workspace members (ck-embeddings, ck-vector, ck-adapter-github, ck-adapter-web) and new dependencies (ureq, url)
@@ -96,6 +108,7 @@
 - Notes: Used parallel subagent delegation for 5 independent crate implementations (ck-ranker, ck-embeddings, ck-vector, ck-adapter-github, ck-adapter-web).
 
 ## 2026-06-02 12:30 EDT
+
 - Task: Milestone 9 — Create ck-adapter-github crate (GitHub repo source adapter)
 - Files changed: `Cargo.toml` (added workspace member), `crates/ck-adapter-github/Cargo.toml`, `crates/ck-adapter-github/src/lib.rs`
 - Tests run: `cargo check -p ck-adapter-github` (clean, zero warnings), `cargo test -p ck-adapter-github` (18 tests pass)
@@ -103,6 +116,7 @@
 - Notes: Uses ureq for HTTP requests (already in workspace deps). Supports both static `files` array in config and dynamic tree API discovery. Token supports `$ENV_VAR` syntax.
 
 ## 2026-06-02 08:06 EDT
+
 - Task: Addressed 11 review findings from `tmp/cr.md` and struck completed review text.
 - Files changed: `tmp/cr.md`, `Cargo.toml`, `Cargo.lock`, `.agent/current_plan.md`, `.agent/project_state.md`, `.agent/work_log.md`, `.agent/decisions.md`, `.agent/open_questions.md`, `.agent/evidence.md`, `crates/ck-core/src/ports/storage.rs`, `crates/ck-core/src/ports/scheduler.rs`, `crates/ck-storage-sqlite/src/lib.rs`, `crates/ck-scheduler/src/lib.rs`, `crates/ck-ranker/src/lib.rs`, `crates/ck-config/src/lib.rs`, `crates/ck-app/src/lib.rs`, `crates/ck-auth/Cargo.toml`, `crates/ck-auth/src/lib.rs`, `crates/ck-bin/src/main.rs`.
 - Tests run: initial red runs for `ck-config`, `ck-auth`, `ck-ranker`, `ck-app`, `ck-storage-sqlite`; focused green runs for `ck-config`, `ck-auth`, `ck-ranker`, `ck-app`, `ck-storage-sqlite`, `ck-scheduler`; final `cargo test --workspace`, `cargo fmt --check`, `cargo clippy --workspace`.
@@ -110,6 +124,7 @@
 - Notes: `.github/copilot-instructions.md` is required by AGENTS.md but missing in this checkout. Review references to `source.corpus_id` and `SourceHealth::Failing` were not valid against current code; implementation used `corpus_sources` and `SourceHealth::Degraded`.
 
 ## 2026-06-01 15:00 EDT
+
 - Task: Started Milestone 0 implementation from plan.
 - Files changed: `.gitignore` in parent worktree committed before feature work; initialized `.agent/` memory in feature worktree.
 - Tests run: None yet.
@@ -117,6 +132,7 @@
 - Notes: `.github/copilot-instructions.md` is missing.
 
 ## 2026-06-01 15:06 EDT
+
 - Task: Implemented Milestone 0 Rust skeleton.
 - Files changed: `.gitignore`, `Cargo.toml`, `Cargo.lock`, `crates/ck-core`, `crates/ck-config`, `crates/ck-storage-sqlite`, `crates/ck-mcp`, `crates/ck-transport-stdio`, `crates/ck-bin`, `context-kernal.toml.example`, `docs/schema.md`, `docs/mcp-contracts.md`, `.agent/*`.
 - Tests run: `cargo test --workspace`; `cargo fmt --check`; manual stdio smoke command through `cargo run`.
@@ -124,12 +140,14 @@
 - Notes: Work is in `.worktrees/implement-spec` on branch `implement-spec`.
 
 ## 2026-06-01 15:09 EDT
+
 - Task: Expanded `.gitignore` for project runtime and development artifacts.
 - Files changed: `.gitignore`, `.agent/work_log.md`.
 - Tests run: `git check-ignore -v` against ignored runtime/build paths and non-ignored source/docs/memory paths.
 - Results: `target/`, local SQLite files, local config, `.env.*`, runtime data directories, and logs are ignored; `Cargo.lock`, `.agent/`, examples, docs, and source files are not ignored.
 
 ## 2026-06-01 (Session 2) — Milestones 1-3 Implementation
+
 - Task: Implement Milestones 1-3 from Context_Kernel_Service_Plan.md.
 - Files changed:
   - `Cargo.toml` — added 5 new workspace members (ck-app, ck-search-fts, ck-artifacts, ck-ranker, ck-adapter-filesystem) and new dependencies (ulid, sha2, hex)
@@ -148,6 +166,7 @@
 - Notes: Used parallel subagent delegation for independent crate implementations.
 
 ## 2026-06-01 (Session 3) — Milestones 4-6 Implementation
+
 - Task: Implement Milestones 4-6 from Context_Kernel_Service_Plan.md.
 - Files changed:
   - `Cargo.toml` — added 3 new workspace members (ck-transport-sse, ck-auth, ck-scheduler) and new dependencies (axum, tokio, tower, hyper, http-body-util)

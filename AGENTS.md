@@ -67,6 +67,7 @@ Required files:
 - `.agent/decisions.md`
 - `.agent/open_questions.md`
 - `.agent/evidence.md`
+- `.agent/OBSERVED_DEBT.md`
 
 If the directory or files do not exist, the agent MUST create them.
 
