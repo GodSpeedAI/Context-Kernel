@@ -532,6 +532,27 @@ enabled = false
 // WP-5 (F-05): the previously-dead AclContextAgent is reachable through the
 // SERVED binary. Drives `context-kernal serve` over stdio with
 // CK_CONTEXT_CORPUS_ROOT set, and asserts a cited ContextPacketCreated.
+
+/// Canonical E2 request envelope (convergence T02 wire shape).
+fn e2_context_required(wr: &str, cr: &str, corpus_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": "v1",
+        "event_id": "11111111-2222-3333-4444-555555555555",
+        "source_agent": "swe-seed",
+        "event_type": "ContextRequired",
+        "occurred_at": "2026-08-25T00:00:00Z",
+        "payload": {
+            "domain_model_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "namespace": "agentic_capability_loop",
+            "work_request_id": wr,
+            "context_requirement_id": cr,
+            "corpus_id": corpus_id,
+            "query": "context packet",
+            "max_results": 5,
+        },
+    })
+}
+
 #[test]
 fn context_required_served_over_stdio_returns_cited_packet() {
     let dir = tempfile::tempdir().unwrap();
@@ -548,18 +569,7 @@ fn context_required_served_over_stdio_returns_cited_packet() {
     )
     .unwrap();
 
-    let input = tool_call(
-        1,
-        "context_required",
-        serde_json::json!({
-            "work_request_id": "wr-stdio",
-            "context_requirement_id": "cr-stdio",
-            "corpus_id": "loop-docs",
-            "query": "context packet",
-            "max_results": 5,
-            "is_private": false,
-        }),
-    );
+    let input = tool_call(1, "context_required", e2_context_required("wr-stdio", "cr-stdio", "loop-docs"));
 
     let mut cmd = Command::cargo_bin("context-kernal").unwrap();
     cmd.env("CK_CONTEXT_CORPUS_ROOT", corpus_root.to_str().unwrap())
@@ -920,8 +930,13 @@ enabled = true
         3,
         "tools/call",
         serde_json::json!({"name":"context_required","arguments":{
-            "work_request_id":"wr-deny","context_requirement_id":"cr-deny",
-            "corpus_id":"other-corpus","query":"x","max_results":1,"is_private":false
+            "schema_version":"v1","event_id":"22222222-2222-3333-4444-555555555555",
+            "source_agent":"swe-seed","event_type":"ContextRequired",
+            "occurred_at":"2026-08-25T00:00:00Z",
+            "payload":{"domain_model_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                       "namespace":"agentic_capability_loop","work_request_id":"wr-deny",
+                       "context_requirement_id":"cr-deny","corpus_id":"other-corpus",
+                       "query":"x","max_results":1}
         }}),
     );
     assert!(
@@ -968,8 +983,13 @@ enabled = true
         30,
         "tools/call",
         serde_json::json!({"name":"context_required","arguments":{
-            "work_request_id":"wr-cite","context_requirement_id":"cr-cite",
-            "corpus_id":"loop-docs","query":"context packet","max_results":5,"is_private":false
+            "schema_version":"v1","event_id":"33333333-3333-3333-4444-555555555555",
+            "source_agent":"swe-seed","event_type":"ContextRequired",
+            "occurred_at":"2026-08-25T00:00:00Z",
+            "payload":{"domain_model_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                       "namespace":"agentic_capability_loop","work_request_id":"wr-cite",
+                       "context_requirement_id":"cr-cite","corpus_id":"loop-docs",
+                       "query":"context packet","max_results":5}
         }}),
     );
     let cited_resp = http_post(&addr, "/mcp", Some("tok"), &cited);

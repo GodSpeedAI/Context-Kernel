@@ -6,11 +6,11 @@ worktree_state: dirty (staged migration + AGENTS.md revision awaiting review)
 changed_files:
   - .agents/work_log.md
   - .agents/project_state.md
-  - .agents/decisions.md
-  - .agents/evidence.md
+  - .agents/decisions.md - removed
+  - .agents/evidence.md - removed
   - .agents/open_questions.md
   - .agents/OBSERVED_DEBT.md
-  - .agents/current_plan.md
+  - .agents/current_plan.md - removed
   - .agents/LESSONS.md
   - .agents/current_status.yml
   - .agents/plans/2026-06-02_deployment_readiness_completed.md

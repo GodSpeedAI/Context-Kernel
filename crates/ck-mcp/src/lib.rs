@@ -432,11 +432,20 @@ impl McpService {
         }))
     }
 
-    /// WP-5 (F-05): serve the loop-facing `context_required` tool by delegating
-    /// to the (previously unwired) `AclContextAgent`. Returns the
-    /// `ContextPacketCreated` payload with citations + the POL-ACL-002
-    /// authorization result, so SWE_SEED's context stage can satisfy
-    /// POL-ACL-001/003 with a CK-sourced packet.
+    /// Serve the frozen E2/E3 boundary (convergence T02).
+    ///
+    /// Ingress: the arguments ARE the canonical E2 envelope produced by the
+    /// exclusive authoritative producer (`swe_seed` for `ContextRequired`).
+    /// CK rejects wrong-producer, non-v1, placeholder-identity, or
+    /// correlation-less requests fail-closed.
+    ///
+    /// Egress: the `ContextPacketCreated` payload inside a canonical v1
+    /// envelope stamped by `context-kernel`, recording the E2 request event id
+    /// as causal parent (`caused_by:`), with an EXPLICIT acquisition outcome.
+    /// Zero-citation results are never silent: when `required=true` the
+    /// response carries `outcome="no_context_governed"` plus a machine-readable
+    /// reason; only `outcome="cited"` is successful acquisition. Authority
+    /// fields are pass-through references — CK never decides authority.
     fn handle_context_required(&self, arguments: Value) -> Result<Value, McpError> {
         let agent = self.acl_context.as_ref().ok_or_else(|| {
             McpError::Internal(
@@ -444,33 +453,117 @@ impl McpService {
             )
         })?;
 
+        // --- E2 envelope ingress gates ------------------------------------
+        let schema_version = arguments["schema_version"].as_str().unwrap_or("");
+        if schema_version != agentic_capability_loop::SCHEMA_VERSION_V1 {
+            return Err(McpError::InvalidArguments(
+                "request must be a v1 canonical envelope".to_string(),
+            ));
+        }
+        match arguments["event_type"].as_str() {
+            Some("ContextRequired") => {}
+            other => {
+                return Err(McpError::InvalidArguments(format!(
+                    "expected ContextRequired request, got {other:?}"
+                )))
+            }
+        }
+        let source_agent = arguments["source_agent"].as_str().unwrap_or("");
+        if source_agent != "swe-seed" && source_agent != "swe_seed" {
+            return Err(McpError::InvalidArguments(format!(
+                "ContextRequired may only be produced by swe_seed (got {source_agent:?})"
+            )));
+        }
+        let request_event_id = arguments["event_id"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                McpError::InvalidArguments("request envelope missing event_id".to_string())
+            })?
+            .to_string();
+
+        let payload_obj = arguments["payload"].as_object().ok_or_else(|| {
+            McpError::InvalidArguments("request envelope missing payload".to_string())
+        })?;
+
+        let domain_model_hash = payload_obj
+            .get("domain_model_hash")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        agentic_capability_loop::verify_domain_identity(&domain_model_hash)
+            .map_err(|e| McpError::InvalidArguments(format!("domain identity rejected: {e}")))?;
+
+        let work_request_id = payload_obj
+            .get("work_request_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let context_requirement_id = payload_obj
+            .get("context_requirement_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if work_request_id.is_empty() || context_requirement_id.is_empty() {
+            return Err(McpError::InvalidArguments(
+                "work_request_id and context_requirement_id are required correlation".to_string(),
+            ));
+        }
+
         let payload = agentic_capability_loop::ContextRequiredPayload {
-            domain_model_hash: arguments["domain_model_hash"]
-                .as_str()
+            domain_model_hash,
+            work_request_id,
+            context_requirement_id,
+            corpus_id: payload_obj
+                .get("corpus_id")
+                .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string(),
-            work_request_id: arguments["work_request_id"]
-                .as_str()
-                .unwrap_or("")
-                .to_string(),
-            context_requirement_id: arguments["context_requirement_id"]
-                .as_str()
-                .unwrap_or("")
-                .to_string(),
-            corpus_id: arguments["corpus_id"].as_str().unwrap_or("").to_string(),
-            query: arguments["query"].as_str().map(|s| s.to_string()),
-            max_results: arguments["max_results"].as_u64().unwrap_or(10) as u32,
+            query: payload_obj
+                .get("query")
+                .and_then(Value::as_str)
+                .map(String::from),
+            max_results: payload_obj
+                .get("max_results")
+                .and_then(Value::as_u64)
+                .unwrap_or(10) as u32,
         };
 
-        let authority_decision_id = arguments["authority_decision_id"].as_str();
-        let authority_reference = arguments["authority_reference"].as_str();
+        let authority_decision_id = payload_obj
+            .get("authority_decision_id")
+            .and_then(Value::as_str);
+        let authority_reference = payload_obj
+            .get("authority_reference")
+            .and_then(Value::as_str);
+        // Frozen E3 semantics key off REQUIRED context; the tool name already
+        // declares the caller's intent, but an explicit flag lets optional
+        // acquisitions stay legitimate.
+        let required = arguments["required"].as_bool().unwrap_or(true);
 
-        let packet = agent
-            .handle_context_required(&payload, authority_decision_id, authority_reference)
+        let acquisition = agent
+            .acquire_context(&payload, authority_decision_id, authority_reference)
             .map_err(|e| McpError::Internal(format!("{e:#}")))?;
 
+        let (packet, outcome, reason): (_, &str, Option<&str>) = match acquisition {
+            agentic_capability_loop::ContextAcquisition::Cited(p) => (p, "cited", None),
+            agentic_capability_loop::ContextAcquisition::NoContext(p, r) => {
+                let outcome = if required {
+                    "no_context_governed"
+                } else {
+                    "empty_optional"
+                };
+                (p, outcome, Some(r.as_str()))
+            }
+        };
+
+        let envelope =
+            agentic_capability_loop::context_packet_envelope(Some(&request_event_id), &packet);
+
         Ok(serde_json::json!({
+            "context_envelope": envelope,
             "context_packet": serde_json::to_value(&packet).unwrap_or_default(),
+            "outcome": outcome,
+            "reason": reason,
         }))
     }
 
@@ -525,8 +618,12 @@ fn corpus_ids_from_arguments(name: &str, arguments: &Value) -> Vec<String> {
                     .collect()
             })
             .unwrap_or_default(),
+        // Canonical E2 requests nest corpus_id inside the envelope payload;
+        // legacy flat requests carry it top-level. Both must surface so the
+        // corpus allowlist is enforced on every wire shape.
         "context_required" => arguments
             .get("corpus_id")
+            .or_else(|| arguments.get("payload").and_then(|p| p.get("corpus_id")))
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty())
             .map(|s| vec![s.to_string()])
@@ -677,21 +774,37 @@ mod tests {
         };
         let service = McpService::new(status).with_context_agent(agent);
 
-        let result = service.call_tool(
-            "context_required",
-            json!({
-                "work_request_id": "wr-1",
-                "context_requirement_id": "cr-1",
-                "corpus_id": "docs",
-                "query": "blue-green",
-                "max_results": 5,
-            }),
-        );
+        let mut req = e2_request("docs", "wr-1", "cr-1", GOOD_DIGEST);
+        req["payload"]["query"] = json!("blue-green");
+        req["required"] = json!(true);
+        let result = service.call_tool("context_required", req);
         let resp = result.expect("context_required should succeed with a corpus");
+        assert_eq!(
+            resp["outcome"], "cited",
+            "cited acquisition must be explicit"
+        );
         let packet = &resp["context_packet"];
         assert_eq!(packet["work_request_id"], "wr-1");
         let citations = packet["citations"].as_array().expect("citations array");
         assert!(!citations.is_empty(), "packet must carry >=1 citation");
+
+        // Canonical E3 envelope shape (convergence T02): authoritative producer
+        // stamp, identity echo, and the E2 request recorded as causal parent.
+        let env = &resp["context_envelope"];
+        assert_eq!(env["schema_version"], "v1");
+        assert_eq!(env["event_type"], "ContextPacketCreated");
+        assert_eq!(env["source_agent"], "context-kernel");
+        assert_eq!(env["payload"]["work_request_id"], "wr-1");
+        assert_eq!(env["payload"]["domain_model_hash"], GOOD_DIGEST);
+        let chain = env["provenance"]["chain"].as_array().expect("chain");
+        assert!(
+            chain
+                .iter()
+                .any(|e| e == &json!("caused_by:11111111-2222-3333-4444-555555555555")),
+            "E2 request event id must be recorded as causal parent, chain={chain:?}"
+        );
+        let key = env["idempotency_key"].as_str().expect("idempotency key");
+        assert_eq!(key.len(), 64, "idempotency key is sha256-hex");
         fs::remove_dir_all(&cleanup).ok();
     }
 
@@ -703,12 +816,9 @@ mod tests {
             learning_proposals_ledger: None,
         };
         let service = McpService::new(status).with_context_agent(agent);
-        let result = service.call_tool(
-            "context_required",
-            json!({
-                "corpus_id": "docs",
-            }),
-        );
+        let mut req = e2_request("docs", "wr-x", "cr-x", GOOD_DIGEST);
+        req["required"] = json!(false);
+        let result = service.call_tool("context_required", req);
         let resp = result.expect("context_required responds");
         assert!(
             resp.get("authorization").is_none(),
@@ -718,6 +828,136 @@ mod tests {
             resp["context_packet"]["authorized"].as_bool().is_none(),
             "packet must not carry an authorized bool"
         );
+    }
+
+    // --- convergence T02 boundary teeth ------------------------------------
+
+    const GOOD_DIGEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    /// Build a canonical E2 request envelope (producer: swe_seed).
+    fn e2_request(corpus_id: &str, wr: &str, cr: &str, digest: &str) -> Value {
+        json!({
+            "schema_version": "v1",
+            "event_id": "11111111-2222-3333-4444-555555555555",
+            "source_agent": "swe-seed",
+            "event_type": "ContextRequired",
+            "occurred_at": "2026-08-25T00:00:00Z",
+            "payload": {
+                "domain_model_hash": digest,
+                "namespace": "agentic_capability_loop",
+                "work_request_id": wr,
+                "context_requirement_id": cr,
+                "corpus_id": corpus_id,
+                "query": null,
+                "max_results": 5,
+            },
+        })
+    }
+
+    fn ctx_service_with(corpus_root: std::path::PathBuf) -> McpService {
+        let agent = AclContextAgent {
+            corpus_root,
+            learning_proposals_ledger: None,
+        };
+        McpService::new(KernelStatus::placeholder()).with_context_agent(agent)
+    }
+
+    #[test]
+    fn t02_placeholder_identities_fail_closed_at_dispatch() {
+        let service = ctx_service_with(std::env::temp_dir().join("t02-placeholder"));
+        for bad in [
+            "0".repeat(64),
+            agentic_capability_loop::FALLBACK_PSEUDO_HASH.to_string(),
+        ] {
+            let mut req = e2_request("docs", "wr-1", "cr-1", &bad);
+            req["payload"]["domain_model_hash"] = json!(bad);
+            let result = service.call_tool("context_required", req);
+            match result {
+                Err(McpError::InvalidArguments(msg)) => {
+                    assert!(msg.contains("identity rejected"), "{msg}");
+                }
+                other => panic!("placeholder identity {bad} must fail closed: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn t02_malformed_identity_fails_closed_at_dispatch() {
+        let service = ctx_service_with(std::env::temp_dir().join("t02-malformed"));
+        let result = service.call_tool(
+            "context_required",
+            e2_request("docs", "wr-1", "cr-1", "deadbeef"),
+        );
+        assert!(matches!(result, Err(McpError::InvalidArguments(_))));
+    }
+
+    #[test]
+    fn t02_missing_correlation_fails_closed() {
+        let service = ctx_service_with(std::env::temp_dir().join("t02-correlation"));
+        let mut req = e2_request("docs", "", "", GOOD_DIGEST);
+        req["payload"]["work_request_id"] = json!("");
+        req["payload"]["context_requirement_id"] = json!("");
+        let result = service.call_tool("context_required", req);
+        match result {
+            Err(McpError::InvalidArguments(msg)) => {
+                assert!(msg.contains("correlation"), "{msg}");
+            }
+            other => panic!("missing correlation must fail closed: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn t02_non_authoritative_producer_fails_closed() {
+        // Only swe_seed may emit ContextRequired into CK.
+        let service = ctx_service_with(std::env::temp_dir().join("t02-producer"));
+        let mut req = e2_request("docs", "wr-p", "cr-p", GOOD_DIGEST);
+        req["source_agent"] = json!("realitytrace");
+        let result = service.call_tool("context_required", req);
+        match result {
+            Err(McpError::InvalidArguments(msg)) => {
+                assert!(msg.contains("swe_seed"), "{msg}");
+            }
+            other => panic!("forged producer must fail closed: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn t02_required_zero_citation_is_governed_outcome_never_silent_success() {
+        // Missing corpus configuration + required context: frozen E3 forbids
+        // this settling as successful acquisition. Root exists, corpus absent.
+        let root = std::env::temp_dir().join("t02-no-such-corpus");
+        std::fs::create_dir_all(&root).ok();
+        let service = ctx_service_with(root);
+        let mut req = e2_request("absent-corpus", "wr-9", "cr-9", GOOD_DIGEST);
+        req["required"] = json!(true);
+        let resp = service
+            .call_tool("context_required", req)
+            .expect("response must exist");
+        assert_eq!(
+            resp["outcome"], "no_context_governed",
+            "required zero-citation must be an explicit governed outcome"
+        );
+        assert_eq!(
+            resp["reason"], "corpus_not_found",
+            "machine-readable reason required"
+        );
+        assert!(resp["context_packet"]["citations"]
+            .as_array()
+            .expect("citations")
+            .is_empty());
+    }
+
+    #[test]
+    fn t02_optional_zero_citation_is_explicit_optional_not_governed_failure() {
+        // Root itself unconfigured: still explicit, still not silent success.
+        let service = ctx_service_with(std::env::temp_dir().join("t02-optional"));
+        let mut req = e2_request("absent-corpus", "wr-8", "cr-8", GOOD_DIGEST);
+        req["required"] = json!(false);
+        let resp = service
+            .call_tool("context_required", req)
+            .expect("response must exist");
+        assert_eq!(resp["outcome"], "empty_optional");
+        assert_eq!(resp["reason"], "corpus_root_unconfigured");
     }
 
     #[test]
