@@ -12,3 +12,7 @@ chrono.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 ulid.workspace = true
+
+[dev-dependencies]
+ck-artifacts = { path = "../ck-artifacts" }
+tempfile.workspace = true

@@ -317,9 +317,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "ck-artifacts",
  "ck-core",
  "ck-memory",
  "serde_json",
+ "tempfile",
  "tracing",
  "ulid",
 ]

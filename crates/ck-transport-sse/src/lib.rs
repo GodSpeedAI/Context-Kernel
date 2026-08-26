@@ -42,7 +42,10 @@ impl ReloadableSseState {
     }
 }
 
-pub async fn serve_sse(state: Arc<ReloadableSseState>, bind_addr: &str) -> anyhow::Result<()> {
+pub async fn serve_sse(
+    state: Arc<ReloadableSseState>,
+    listener: tokio::net::TcpListener,
+) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
@@ -50,8 +53,8 @@ pub async fn serve_sse(state: Arc<ReloadableSseState>, bind_addr: &str) -> anyho
         .route("/mcp", post(mcp_handler_reloadable))
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind(bind_addr).await?;
-    info!(bind_addr, "SSE MCP server starting");
+    let local = listener.local_addr().ok();
+    info!(local = ?local, "SSE MCP server starting");
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -60,8 +63,12 @@ async fn healthz() -> Json<Value> {
     Json(json!({"status": "ok"}))
 }
 
-async fn readyz() -> Json<Value> {
-    Json(json!({"ready": true}))
+async fn readyz(State(state): State<Arc<ReloadableSseState>>) -> Json<Value> {
+    // Probe the live service rather than a hardcoded constant: readiness now
+    // reflects that the MCP service is constructed and dispatches get_status.
+    let mcp = state.mcp();
+    let ready = mcp.call_tool("get_status", json!({})).is_ok();
+    Json(json!({"ready": ready}))
 }
 
 async fn api_status_reloadable(State(state): State<Arc<ReloadableSseState>>) -> Json<Value> {

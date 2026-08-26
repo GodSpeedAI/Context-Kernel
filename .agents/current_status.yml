@@ -1,0 +1,35 @@
+# Resumable handoff state. Keep current enough for any agent to resume cold.
+objective: >
+  Consolidate agent-memory conventions under `.agents/`; incorporate the
+  Workflow-and-Permissions / Handoff / build-lock governance into AGENTS.md.
+worktree_state: dirty (staged migration + AGENTS.md revision awaiting review)
+changed_files:
+  - .agents/work_log.md
+  - .agents/project_state.md
+  - .agents/decisions.md
+  - .agents/evidence.md
+  - .agents/open_questions.md
+  - .agents/OBSERVED_DEBT.md
+  - .agents/current_plan.md
+  - .agents/LESSONS.md
+  - .agents/current_status.yml
+  - .agents/plans/2026-06-02_deployment_readiness_completed.md
+  - AGENTS.md
+  - README.md
+  - .github/copilot-instructions.md
+  - docs/plans/2026-06-02-deployment-readiness.md
+  - .agents/CURRENT_STATUS.md (deleted)
+completed_work:
+  - Migrated legacy `.agent` directory into `.agents/` (merged diverged histories)
+  - Archived completed 2026-06-02 deployment-readiness plan to plans/
+  - Removed empty product_marketing.md duplicate in favor of product-marketing.md
+  - Deleted legacy `.agent` directory; rewrote all references repo-wide
+  - Replaced Agent Workflow section with Workflow and Permissions + Handoff + build-lock discipline
+verification:
+  - Repo-wide grep confirms no live legacy-path references remain
+  - No tests run (documentation/memory-only changes)
+remaining_steps:
+  - Operator review of staged changes
+blockers: []
+decisions:
+  - Kept lowercase open_questions.md (existing file) while adopting uppercase LESSONS.md to match OBSERVED_DEBT.md styling

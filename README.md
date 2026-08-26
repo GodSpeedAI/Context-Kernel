@@ -363,15 +363,15 @@ Read these first:
 
 - [AGENTS.md](AGENTS.md)
 - [.github/copilot-instructions.md](.github/copilot-instructions.md)
-- [.agent/project_state.md](.agent/project_state.md)
-- [.agent/evidence.md](.agent/evidence.md)
+- [.agents/project_state.md](.agents/project_state.md)
+- [.agents/evidence.md](.agents/evidence.md)
 
 Development rules:
 
 - trust code and tests over documentation intent
 - preserve ports-and-adapters boundaries
 - use focused tests for behavior changes
-- update `.agent/` memory files after meaningful work
+- update `.agents/` memory files after meaningful work
 - do not report implementation status without repository evidence
 
 Run the full gate before release:

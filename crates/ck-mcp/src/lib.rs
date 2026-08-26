@@ -11,7 +11,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 pub mod agentic_capability_loop;
-pub use agentic_capability_loop::{AclContextAgent, ContextAgent};
+pub use agentic_capability_loop::AclContextAgent;
 
 #[derive(Debug, Error)]
 pub enum McpError {
@@ -444,36 +444,33 @@ impl McpService {
             )
         })?;
 
-        // Build the ContextRequired envelope the agent consumes.
-        let payload = serde_json::json!({
-            "domain_model_hash": arguments["domain_model_hash"].as_str().unwrap_or(""),
-            "work_request_id": arguments["work_request_id"].as_str().unwrap_or(""),
-            "context_requirement_id": arguments["context_requirement_id"]
+        let payload = agentic_capability_loop::ContextRequiredPayload {
+            domain_model_hash: arguments["domain_model_hash"]
                 .as_str()
-                .unwrap_or(""),
-            "corpus_id": arguments["corpus_id"].as_str().unwrap_or(""),
-            "query": arguments["query"].as_str(),
-            "max_results": arguments["max_results"].as_u64().unwrap_or(10) as u32,
-            "is_private": arguments["is_private"].as_bool().unwrap_or(false),
-            "scope_claim": arguments["scope_claim"].as_str(),
-        });
-        let envelope = serde_json::json!({
-            "event_id": format!("evt_{}", chrono::Utc::now().timestamp_micros()),
-            "event_type": "ContextRequired",
-            "namespace": "agentic_capability_loop",
-            "occurred_at": chrono::Utc::now().to_rfc3339(),
-            "payload": payload,
-        });
-        let event: agentic_capability_loop::EventEnvelope =
-            serde_json::from_value(envelope).map_err(|e| McpError::InvalidArguments(e.to_string()))?;
+                .unwrap_or("")
+                .to_string(),
+            work_request_id: arguments["work_request_id"]
+                .as_str()
+                .unwrap_or("")
+                .to_string(),
+            context_requirement_id: arguments["context_requirement_id"]
+                .as_str()
+                .unwrap_or("")
+                .to_string(),
+            corpus_id: arguments["corpus_id"].as_str().unwrap_or("").to_string(),
+            query: arguments["query"].as_str().map(|s| s.to_string()),
+            max_results: arguments["max_results"].as_u64().unwrap_or(10) as u32,
+        };
 
-        let (packet, auth) = agent
-            .handle_context_required(&event)
+        let authority_decision_id = arguments["authority_decision_id"].as_str();
+        let authority_reference = arguments["authority_reference"].as_str();
+
+        let packet = agent
+            .handle_context_required(&payload, authority_decision_id, authority_reference)
             .map_err(|e| McpError::Internal(format!("{e:#}")))?;
 
         Ok(serde_json::json!({
-            "context_packet": packet.payload,
-            "authorization": auth.payload,
+            "context_packet": serde_json::to_value(&packet).unwrap_or_default(),
         }))
     }
 
@@ -527,6 +524,12 @@ fn corpus_ids_from_arguments(name: &str, arguments: &Value) -> Vec<String> {
                     .map(str::to_string)
                     .collect()
             })
+            .unwrap_or_default(),
+        "context_required" => arguments
+            .get("corpus_id")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(|s| vec![s.to_string()])
             .unwrap_or_default(),
         _ => Vec::new(),
     }
@@ -653,8 +656,6 @@ mod tests {
 
     #[test]
     fn context_required_returns_cited_packet_through_dispatch() {
-        // F-05 teeth: the previously-dead AclContextAgent is reachable through
-        // the served dispatch path and returns a cited ContextPacketCreated.
         use std::fs;
         let corpus_root = std::env::temp_dir().join(format!(
             "ck-ctx-{}-{}",
@@ -684,7 +685,6 @@ mod tests {
                 "corpus_id": "docs",
                 "query": "blue-green",
                 "max_results": 5,
-                "is_private": false,
             }),
         );
         let resp = result.expect("context_required should succeed with a corpus");
@@ -692,15 +692,11 @@ mod tests {
         assert_eq!(packet["work_request_id"], "wr-1");
         let citations = packet["citations"].as_array().expect("citations array");
         assert!(!citations.is_empty(), "packet must carry >=1 citation");
-        assert_eq!(packet["authorized"], true);
-        assert_eq!(resp["authorization"]["result"], "allow");
         fs::remove_dir_all(&cleanup).ok();
     }
 
     #[test]
-    fn context_required_enforces_private_corpus_scope() {
-        // POL-ACL-002: a private corpus without a scope_claim is denied and
-        // returns ZERO citations (the packet is authorized:false).
+    fn context_required_no_longer_emits_authorization() {
         let status = KernelStatus::placeholder();
         let agent = AclContextAgent {
             corpus_root: std::env::temp_dir().join("nonexistent-ck-ctx"),
@@ -710,15 +706,82 @@ mod tests {
         let result = service.call_tool(
             "context_required",
             json!({
-                "corpus_id": "private_docs",
-                "is_private": true,
-                // no scope_claim
+                "corpus_id": "docs",
             }),
         );
-        let resp = result.expect("private corpus without scope still responds");
-        assert_eq!(resp["context_packet"]["authorized"], false);
-        assert_eq!(resp["context_packet"]["citations"].as_array().unwrap().len(), 0);
-        assert_eq!(resp["authorization"]["result"], "deny");
+        let resp = result.expect("context_required responds");
+        assert!(
+            resp.get("authorization").is_none(),
+            "CK must not emit authorization decisions"
+        );
+        assert!(
+            resp["context_packet"]["authorized"].as_bool().is_none(),
+            "packet must not carry an authorized bool"
+        );
+    }
+
+    #[test]
+    fn context_required_corpus_id_uses_authorization_arm() {
+        // Fix 1 (unit-level): corpus_ids_from_arguments must surface the
+        // context_required corpus_id so the authorize() allowlist check runs.
+        // Without the dedicated arm this falls through to `_ => Vec::new()` and
+        // the corpus is never checked.
+        let ids = corpus_ids_from_arguments("context_required", &json!({"corpus_id": "x"}));
+        assert_eq!(ids, vec!["x".to_string()]);
+
+        // Empty/missing corpus_id yields no ids (no false positives).
+        assert!(corpus_ids_from_arguments("context_required", &json!({})).is_empty());
+        assert!(
+            corpus_ids_from_arguments("context_required", &json!({"corpus_id": ""})).is_empty()
+        );
+    }
+
+    #[test]
+    fn context_required_rejects_path_traversal_outside_corpus_root() {
+        // Fix 2 teeth: a corpus_id that escapes corpus_root via traversal must
+        // be rejected, NOT return citations read from outside the root.
+        use std::fs;
+        let nonce = format!(
+            "{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let corpus_root = std::env::temp_dir().join(format!("ck-ctx-trav-{nonce}"));
+        // Sibling dir OUTSIDE corpus_root containing a secret .md file.
+        let sibling = std::env::temp_dir().join(format!("ck-ctx-outside-{nonce}"));
+        fs::create_dir_all(&corpus_root).unwrap();
+        fs::create_dir_all(&sibling).unwrap();
+        fs::write(sibling.join("secret.md"), "TOP SECRET CONTENT").unwrap();
+
+        let status = KernelStatus::placeholder();
+        let cleanup_root = corpus_root.clone();
+        let cleanup_sibling = sibling.clone();
+        let agent = AclContextAgent {
+            corpus_root,
+            learning_proposals_ledger: None,
+        };
+        let service = McpService::new(status).with_context_agent(agent);
+
+        // corpus_id "../<sibling>" resolves outside corpus_root via traversal.
+        let sibling_name = sibling.file_name().unwrap().to_str().unwrap().to_string();
+        let escape = format!("../{sibling_name}");
+        let result = service.call_tool(
+            "context_required",
+            json!({
+                "corpus_id": escape,
+                "query": "SECRET",
+            }),
+        );
+        fs::remove_dir_all(&cleanup_root).ok();
+        fs::remove_dir_all(&cleanup_sibling).ok();
+
+        assert!(
+            result.is_err(),
+            "path-traversal corpus_id must be rejected, got: {result:?}"
+        );
     }
 
     #[test]

@@ -1,52 +1,22 @@
 # Current Plan
 
 ## Objective
-
-- Complete deployment readiness partials so Context Kernel is fully deployable by other users.
+- Implement every correction in `.agents/reports/neatcode-audit-2026-07-29.md`, constrained by the SWE_SEED/SEA-Forge/GodSpeed-Agent ownership boundaries. Plan: `.agents/plans/2026-07-29_audit_corrections.md`.
 
 ## Status
+- Task 0 (baseline evidence) COMPLETE.
+- Task 1 (SEA/SWE context authority contract) COMPLETE: cross-repo contract corrected, regenerated, all consumers updated.
+- Task 4 (data integrity) PARTIAL: fetch-before-delete + stable IDs + FTS rebuild done; full transactional atomicity pending.
+- Tasks 2, 3, 5-11 not started.
 
-- **COMPLETE** — All 18 tasks from `docs/plans/2026-06-02-deployment-readiness.md` are implemented and verified.
-- Plan completed on 2026-06-02 18:00 EDT.
+## Completed this session
+- Task 0: `scripts/run-exact-test.sh`; +7 evidence tests (persisted enums, artifact compensation, freshness table, reload corpus+context+no-tokens, /readyz HTTP, JSON log success/failure, JSON log SSE+refresh threads). RED→GREEN proven for enum decoder + artifact compensation.
 
-## Scope
+## Next (when resumed)
+- Task 1 (SEA/SWE context-authority contract) — cross-repo: SEA spec + codegen, SWE client, CK fixtures. Requires `SEA_ROOT`/`SWE_SEED_ROOT`/`GODSPEED_ROOT`.
+- Task 4 (atomic writes + stable IDs + FTS rebuild) — CK-only, no cross-repo dep; can proceed independently of Task 1.
+- Task 6 (DNS address pinning) — CK-only.
+- Then Tasks 2, 3, 5, 7, 8, 9, 10, 11 per the dependency graph in the plan.
 
-- ~~Implement full OTEL traces/metrics.~~ → ck-observability crate with text/JSON tracing init (OTEL exporter deferred)
-- ~~Make config reload update SSE runtime.~~ → ReloadableSseState with RwLock<Arc<...>>
-- ~~Delete artifact payload files during retention GC.~~ → delete_artifact_payload + list_artifacts_older_than + run_retention_gc
-- ~~Enforce source scope and corpus visibility.~~ → private corpus rejection in query_reference, source_scope filter in resolve_reference
-- ~~Complete vector filtering and embedding cleanup.~~ → corpus_id/library_id/document_id columns, search_chunks filtering, remove_chunk_embeddings_by_document
-- ~~Harden web and GitHub adapters for production.~~ → SSRF DNS resolution, truncated tree detection, conditional request headers
-- ~~Add `ck-memory` or remove it as a release blocker with evidence.~~ → ck-memory crate implemented
-- ~~Decide PDF and Context7 dataset adapter scope.~~ → Both removed from v1 scope
-- ~~Add config templates, release workflow, operations docs, and deployment smoke tests.~~ → All created
-
-## Constraints
-
-- Prioritize repository code over documentation claims.
-- Preserve ports-and-adapters boundaries.
-- Keep `ck-core` free of SQL, HTTP, and transport-specific details.
-- Use TDD for behavior changes.
-- `.github/copilot-instructions.md` created.
-
-## Files / Crates Expected To Change
-
-- All changes completed per `docs/plans/2026-06-02-deployment-readiness.md`.
-
-## Steps
-
-1. ~~Follow `docs/plans/2026-06-02-deployment-readiness.md` task-by-task.~~ → Done
-2. ~~Keep each behavior change test-first.~~ → Done
-3. ~~Update `.agent` memory files after each completed release-readiness slice.~~ → Done (this update)
-
-## Validation Plan
-
-- `cargo fmt --check` → passes
-- `cargo clippy --workspace --all-targets -- -D warnings` → zero warnings
-- `cargo test --workspace` → 186 tests pass
-- `cargo build --release -p ck-bin` → produces `context-kernal` binary
-- Manual smoke: `migrate`, `doctor`, `export-schema` → all work
-
-## Validation Results
-
-- All 18 tasks complete. Release gate passed: 186 tests, zero warnings, release binary builds and runs.
+## Authority boundaries (unchanged)
+- SEA owns action authority, SWE_SEED owns execution/proof evidence, GodSpeed-Agent owns developmental truth, and Context Kernel owns retrieval only.

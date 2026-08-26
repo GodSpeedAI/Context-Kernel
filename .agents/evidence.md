@@ -1,5 +1,128 @@
 # Evidence Log
 
+## Architecture
+- Claim: Primary crate dependency direction mostly conforms to ports and adapters.
+- Status: partial (unchanged this pass)
+- Evidence type: code, config
+- Files: `crates/ck-core/Cargo.toml`, `crates/ck-app/Cargo.toml`, `crates/ck-bin/src/main.rs`, `crates/ck-mcp/Cargo.toml`
+- Notes: ACL context path still depends directly on `ck-adapter-filesystem` (deferred).
+- Confidence: high
+
+## SQLite enum round-trips (RESOLVED)
+- Claim: All domain enum variants now round-trip through SQLite.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-storage-sqlite/src/lib.rs`
+- Test: `enum_roundtrips_all_writable_variants` (added)
+- Confidence: high
+
+## Reload auth + context agent (RESOLVED)
+- Claim: Config reload now preserves tool/corpus authorization policy and the ACL context agent.
+- Status: implemented
+- Evidence type: code, integration test
+- Files: `crates/ck-bin/src/main.rs`
+- Test: `sse_reload_preserves_tool_authorization` — disallowed tool rejected after reload; allowed tool still succeeds.
+- Confidence: high
+
+## context_required auth + containment (RESOLVED)
+- Claim: `context_required` corpus id is checked against the allowlist; corpus paths are contained under corpus_root.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-mcp/src/lib.rs`, `crates/ck-mcp/src/agentic_capability_loop.rs`
+- Tests: `context_required_corpus_id_uses_authorization_arm`, `context_required_rejects_path_traversal_outside_corpus_root`
+- Residual: `is_private`/`scope_claim` still client-trusted (mitigated by allowlist + containment).
+- Confidence: high
+
+## Write consistency (MITIGATED)
+- Claim: Refresh no longer accumulates duplicates; payload compensated on metadata-write failure.
+- Status: partial
+- Evidence type: code, test
+- Files: `crates/ck-app/src/lib.rs`
+- Tests: `refresh_does_not_accumulate_duplicate_documents`; payload-compensation path in `store_context`.
+- Residual: FTS↔DB still non-transactional (separate connections).
+- Confidence: high
+
+## SSRF fail-closed (RESOLVED)
+- Claim: `validate_url_with_resolver` bails on resolver Err and empty resolution.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-adapter-web/src/lib.rs`
+- Tests: `validate_url_with_resolver_fails_closed_on_resolver_error`, `…rejects_unresolvable_host`; 4 bug-ratifying tests corrected.
+- Confidence: high
+
+## Observability (RESOLVED)
+- Claim: Subscriber installed process-wide; config-driven.
+- Status: implemented
+- Evidence type: code
+- Files: `crates/ck-observability/src/lib.rs`, `crates/ck-bin/src/main.rs` (`init_logging`)
+- Confidence: high
+
+## SSE lifecycle (MITIGATED)
+- Claim: SSE bind failure fails startup; readiness probes the live service.
+- Status: partial
+- Evidence type: code, test
+- Files: `crates/ck-bin/src/main.rs`, `crates/ck-transport-sse/src/lib.rs`
+- Tests: `sse_bind_failure_fails_startup`, `sse_healthz_endpoint_works`
+- Residual: graceful worker shutdown/join not implemented.
+- Confidence: high
+
+## Freshness (RESOLVED)
+- Claim: `compute_freshness` is age-vs-TTL.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-app/src/lib.rs`
+- Test: `compute_freshness_reflects_age_and_ttl`
+- Confidence: high
+
+## Verification gate
+- Claim: Full gate green.
+- Status: implemented
+- Evidence type: test, config
+- Commands: `cargo test --workspace` (213 passed, 0 failed); `cargo clippy --workspace --all-targets -- -D warnings` (clean); `cargo fmt --check` (clean).
+- Notes: baseline was 198 tests; +8 harden, +7 Task 0 evidence = 213. `cargo fmt` touched only edited files. No new runtime dependencies (ck-artifacts/tempfile are dev-only for ck-app).
+- Confidence: high
+
+## Task 0 baseline evidence (audit-corrections plan)
+- Claim: Every retained harden fix has a direct runtime/persistence regression test whose failure exposes the corrected branch.
+- Status: implemented
+- Evidence type: code, test
+- Files: `scripts/run-exact-test.sh`; `crates/ck-storage-sqlite/src/lib.rs`; `crates/ck-app/src/lib.rs`; `crates/ck-app/Cargo.toml`; `crates/ck-bin/tests/cli.rs`
+- Tests (12 gate exact-tests, all green):
+  - `tests::persisted_enums_roundtrip_every_domain_variant` (ck-storage-sqlite) — persists Sse/Pinned/Compacted/DependencyChange/Cancelled through real tables; RED proven by removing `pinned` decoder arm.
+  - `sse_reload_preserves_tool_and_corpus_authorization` (ck-bin cli) — tool deny + corpus deny + context-agent preservation + auth/service atomic swap + reject `require_auth=true` w/ no tokens at startup.
+  - `tests::artifact_payload_is_compensated_on_metadata_failure` (ck-app) — real FileArtifactStore + injectable upsert failure; asserts payload+sidecar deleted; RED proven by commenting out `delete_artifact_payload`.
+  - `json_logging_records_success_and_failure` (ck-bin cli) — JSON stderr for success+error tool telemetry.
+  - `json_logging_covers_sse_and_refresh_threads` (ck-bin cli) — JSON stderr from spawned SSE + refresh threads (proves `set_global_default`).
+  - `sse_readyz_reflects_live_service` (ck-bin cli) — real HTTP GET /readyz returns `{"ready":true}`; /healthz ok.
+  - `tests::compute_freshness_table` (ck-app) — half/exact/past/future/zero/negative TTL.
+  - `tests::context_required_corpus_id_uses_authorization_arm` (ck-mcp) — pre-existing, retained.
+  - `tests::context_required_rejects_path_traversal_outside_corpus_root` (ck-mcp) — pre-existing, retained.
+  - `tests::refresh_does_not_accumulate_duplicate_documents` (ck-app) — pre-existing, retained.
+  - `tests::validate_url_with_resolver_fails_closed_on_resolver_error` (ck-adapter-web) — pre-existing, retained.
+  - `sse_bind_failure_fails_startup` (ck-bin cli) — pre-existing, retained.
+- Notes: RED→GREEN mutation-verified for the two locally-mutable corrections (enum decoder, artifact compensation). Reload-preservation RED is covered by the pre-existing `sse_reload_preserves_tool_authorization` test (same invariant).
+- Confidence: high
+
+## Deferred-debt execution status
+- Claim: All eight items in the harden report's open/deferred section have an implementation stage with a failing-first gate, but none has been implemented by the planning change.
+- Status: not implemented
+- Evidence type: config
+- Files: `.agents/plans/DEV_PLAN_NEATCODE_DEFERRED_DEBT_2026-07-29.md`, `.agents/reports/neatcode-harden-2026-07-29.md:34-42`
+- Notes: Dependency order is ACL resolver port → server policy; atomic writes → storage-port split → adapter wiring → scheduler ownership → graceful shutdown → config semantics.
+- Confidence: high
+
+## Full audit-correction plan
+- Claim: Every correction in the NeatCode audit has a dependency-ordered implementation task constrained by SWE_SEED execution/proof ownership, SEA-Forge action authority, GodSpeed developmental authority, and Context Kernel retrieval ownership.
+- Status: not implemented
+- Evidence type: config
+- Files: `.agents/plans/DEV_PLAN_NEATCODE_AUDIT_CORRECTIONS_2026-07-29.md`, `.agents/reports/neatcode-audit-2026-07-29.md:28-196`, `/home/sprime01/projects/godspeed_agent/docs/explanations/SWE_SEED_to_godspeed_agent.md`, `/home/sprime01/projects/godspeed_agent/docs/explanations/SEA_Forge_to_godspeed_agent.md`
+- Notes: Plan includes RED/GREEN gates, generated-contract correction, signed SEA evidence verification, cross-repository CI, atomic writes, runtime wiring, lifecycle, config, and final conformance.
+- Confidence: high
+
+---
+
+## Historical Evidence (2026-06 deployment-readiness era)
+
 ## Claim
 - Claim: README expresses the combined value propositions of current docs, token-efficient reference retrieval, and durable session continuity.
 - Status: implemented
