@@ -1,5 +1,15 @@
 # Decisions
 
+## Decision: Technical Knowledge System Information Architecture
+- Date: 2026-09-02
+- Context: The repository required comprehensive documentation serving both newcomers (high-level mental models) and experienced engineers (subsystem depth, invariants, code traceability) without compromising either audience.
+- Decision: Adopt a unified information architecture combining Diátaxis (Tutorials, How-To, Reference, Explanation), DeepWiki (architecture-first, subsystem guides, execution traces, Mermaid diagrams), and Google Code Wiki (symbol-level source traceability in `docs/source-map.md`). Structure documentation across 9 progressive disclosure layers (Layers 0 to 8).
+- Alternatives considered:
+  - Single monolithic README or wiki page (rejected: overwhelms newcomers and lacks searchable precision for experts).
+  - Pure Diátaxis 4-folder dump (rejected: fails to capture architectural decomposition, subsystem boundaries, and execution traces).
+- Evidence in codebase: `docs/README.md`, `docs/documentation-map.md`, `docs/architecture.md`, `docs/source-map.md`, `docs/subsystems/*`, `docs/workflows/*`, `docs/explanation/*`, `docs/tutorials/*`, `docs/how-to/*`, `docs/reference/*`.
+- Consequences: All architectural claims are grounded in repository code; verified behavior is explicitly separated from unwired library crates (GitHub/Web adapters) and tracked debt; documentation is navigable by intent.
+
 ## Decision: Adopt Workflow-and-Permissions governance in AGENTS.md
 - Date: 2026-08-24
 - Context: The prior six-step Agent Workflow prescribed generic inspect-plan-implement-verify-update steps without permission gates, handoff discipline, or build-resource rules.

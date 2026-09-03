@@ -1,35 +1,70 @@
 # Resumable handoff state. Keep current enough for any agent to resume cold.
 objective: >
-  Consolidate agent-memory conventions under `.agents/`; incorporate the
-  Workflow-and-Permissions / Handoff / build-lock governance into AGENTS.md.
-worktree_state: dirty (staged migration + AGENTS.md revision awaiting review)
+  Construct a self-contained, Diátaxis-structured, progressive-disclosure technical
+  knowledge system for Context Kernel with DeepWiki architecture guides and Google Code
+  Wiki source traceability across all 20 crates.
+worktree_state: modified (documentation knowledge system files created and verified)
 changed_files:
+  - docs/README.md
+  - docs/documentation-map.md
+  - docs/architecture.md
+  - docs/source-map.md
+  - docs/mental-model.md
+  - docs/concepts.md
+  - docs/troubleshooting.md
+  - docs/subsystems/core-and-domain.md
+  - docs/subsystems/storage-and-persistence.md
+  - docs/subsystems/retrieval-and-ranking.md
+  - docs/subsystems/source-adapters.md
+  - docs/subsystems/application-orchestration.md
+  - docs/subsystems/mcp-and-protocols.md
+  - docs/subsystems/runtime-and-cli.md
+  - docs/workflows/service-lifecycle-and-startup.md
+  - docs/workflows/documentation-ingestion-and-refresh.md
+  - docs/workflows/reference-query-and-resolution.md
+  - docs/workflows/session-context-continuity.md
+  - docs/workflows/agentic-capability-loop.md
+  - docs/explanation/architectural-decisions.md
+  - docs/explanation/retrieval-and-ranking-design.md
+  - docs/explanation/retention-and-memory-model.md
+  - docs/explanation/known-limits-and-debt.md
+  - docs/tutorials/01-first-steps.md
+  - docs/tutorials/02-local-documentation-indexing.md
+  - docs/how-to/configure-sse-with-auth.md
+  - docs/how-to/manage-database-and-migrations.md
+  - docs/how-to/configure-semantic-retrieval.md
+  - docs/how-to/implement-a-source-adapter.md
+  - docs/reference/cli.md
+  - docs/reference/configuration.md
+  - docs/reference/mcp-tools.md
+  - docs/reference/database-schema.md
+  - .agents/current_plan.md
   - .agents/work_log.md
+  - .agents/decisions.md
+  - .agents/evidence.md
   - .agents/project_state.md
-  - .agents/decisions.md - removed
-  - .agents/evidence.md - removed
-  - .agents/open_questions.md
-  - .agents/OBSERVED_DEBT.md
-  - .agents/current_plan.md - removed
-  - .agents/LESSONS.md
   - .agents/current_status.yml
-  - .agents/plans/2026-06-02_deployment_readiness_completed.md
-  - AGENTS.md
-  - README.md
-  - .github/copilot-instructions.md
-  - docs/plans/2026-06-02-deployment-readiness.md
-  - .agents/CURRENT_STATUS.md (deleted)
 completed_work:
-  - Migrated legacy `.agent` directory into `.agents/` (merged diverged histories)
-  - Archived completed 2026-06-02 deployment-readiness plan to plans/
-  - Removed empty product_marketing.md duplicate in favor of product-marketing.md
-  - Deleted legacy `.agent` directory; rewrote all references repo-wide
-  - Replaced Agent Workflow section with Workflow and Permissions + Handoff + build-lock discipline
+  - Researched and reconstructed system model across all 20 crates, schemas, CLI entry points, and tests
+  - Authored documentation homepage and navigation-by-intent hub (`docs/README.md`)
+  - Created documentation catalog (`docs/documentation-map.md`) classifying every page by Diátaxis and audience need
+  - Authored canonical architecture overview (`docs/architecture.md`) with 6 distinct views and Mermaid diagrams
+  - Authored symbol-level traceability index (`docs/source-map.md`) mapping concepts, ports, and tools to source files
+  - Authored foundational mental model (`docs/mental-model.md`) and domain vocabulary (`docs/concepts.md`)
+  - Authored 7 comprehensive subsystem guides (`docs/subsystems/*`)
+  - Authored 5 detailed execution workflows with sequence traces (`docs/workflows/*`)
+  - Authored 4 design rationale and architectural explanation documents (`docs/explanation/*`)
+  - Authored 2 hands-on tutorials (`docs/tutorials/*`)
+  - Authored 4 operational how-to guides (`docs/how-to/*`)
+  - Authored 4 technical reference manuals and operational failure diagnostics (`docs/reference/*`, `docs/troubleshooting.md`)
+  - Updated all required `.agents/` memory files (`current_plan.md`, `work_log.md`, `decisions.md`, `evidence.md`, `project_state.md`, `current_status.yml`)
 verification:
-  - Repo-wide grep confirms no live legacy-path references remain
-  - No tests run (documentation/memory-only changes)
+  - Static cross-referencing of all symbol, trait, struct, table, CLI flag, and error code citations against repository source code
+  - Verified that unwired crates (`ck-adapter-github`, `ck-adapter-web`, `ck-scheduler`) are clearly identified as tracked debt rather than claimed as shipped CLI features
+  - Verified that internal links between documentation pages resolve accurately
 remaining_steps:
-  - Operator review of staged changes
+  - User review of the comprehensive documentation system
 blockers: []
 decisions:
-  - Kept lowercase open_questions.md (existing file) while adopting uppercase LESSONS.md to match OBSERVED_DEBT.md styling
+  - Combined Diátaxis, DeepWiki architecture models, and Google Code Wiki traceability into 9 progressive disclosure layers
+  - Explicitly separated verified runtime behaviors from unwired library adapters and known debts in documentation

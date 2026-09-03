@@ -1,8 +1,8 @@
 # Project State
 
 ## Last Updated
-- Date: 2026-07-30
-- By: OpenCode (Tasks 0, 1, 4 of audit-corrections plan)
+- Date: 2026-09-02
+- By: Antigravity (Repository Documentation Architecture Knowledge System)
 
 ## Current Repository Status
 
@@ -33,6 +33,7 @@
 - SQLite schema, FTS5 retrieval, filesystem artifacts, session memory, retention, ranking, embeddings/vector search, stdio MCP, and SSE MCP.
 - Bearer-token validation and tool/corpus allowlist authorization (preserved across config reload).
 - Filesystem source ingestion in the shipped runtime; refresh replaces rather than accumulates.
+- Complete 9-layer technical knowledge system in `docs/` combining Diátaxis, DeepWiki architecture guides, and Google Code Wiki source traceability.
 
 ### Partially Implemented Features
 - Ports-and-adapters architecture: primary path conforms; ACL context retrieval bypasses application ports (debt).

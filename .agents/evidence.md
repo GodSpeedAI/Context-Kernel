@@ -1,5 +1,21 @@
 # Evidence Log
 
+## Technical Knowledge System (IMPLEMENTED)
+- Claim: The repository contains a self-contained, Diátaxis-structured, progressive-disclosure technical knowledge system with DeepWiki architecture guides and Google Code Wiki source traceability.
+- Status: implemented
+- Evidence type: documentation, code, config, schema, test
+- Files:
+  - Navigation & Index: `docs/README.md`, `docs/documentation-map.md`, `docs/architecture.md`, `docs/source-map.md`
+  - Foundations: `docs/mental-model.md`, `docs/concepts.md`
+  - Subsystems: `docs/subsystems/core-and-domain.md`, `docs/subsystems/storage-and-persistence.md`, `docs/subsystems/retrieval-and-ranking.md`, `docs/subsystems/source-adapters.md`, `docs/subsystems/application-orchestration.md`, `docs/subsystems/mcp-and-protocols.md`, `docs/subsystems/runtime-and-cli.md`
+  - Workflows: `docs/workflows/service-lifecycle-and-startup.md`, `docs/workflows/documentation-ingestion-and-refresh.md`, `docs/workflows/reference-query-and-resolution.md`, `docs/workflows/session-context-continuity.md`, `docs/workflows/agentic-capability-loop.md`
+  - Explanation: `docs/explanation/architectural-decisions.md`, `docs/explanation/retrieval-and-ranking-design.md`, `docs/explanation/retention-and-memory-model.md`, `docs/explanation/known-limits-and-debt.md`
+  - Tutorials: `docs/tutorials/01-first-steps.md`, `docs/tutorials/02-local-documentation-indexing.md`
+  - How-To Guides: `docs/how-to/configure-sse-with-auth.md`, `docs/how-to/manage-database-and-migrations.md`, `docs/how-to/configure-semantic-retrieval.md`, `docs/how-to/implement-a-source-adapter.md`
+  - Reference: `docs/reference/cli.md`, `docs/reference/configuration.md`, `docs/reference/mcp-tools.md`, `docs/reference/database-schema.md`, `docs/troubleshooting.md`
+- Notes: All documented traits, structs, tables, tools, and error codes are verified against crate implementations and tests; unwired adapters and residual debts are explicitly acknowledged rather than asserted as implemented.
+- Confidence: high
+
 ## Architecture
 - Claim: Primary crate dependency direction mostly conforms to ports and adapters.
 - Status: partial (unchanged this pass)

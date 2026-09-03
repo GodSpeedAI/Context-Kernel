@@ -1,5 +1,20 @@
 # Work Log
 
+## 2026-09-02 — Repository Documentation Architecture Knowledge System
+- Task: Designed and implemented a self-contained technical knowledge system for Context Kernel fulfilling both newcomer and experienced engineer needs through progressive disclosure (Layers 0 to 8: Orientation, Mental Model, Architecture, Subsystems, Workflows, Explanation, Tutorials, How-To, Reference).
+- Information Architecture:
+  - Landing & Navigation: `docs/README.md` (Orientation, system in one picture, 8 concepts, representative journey, intent-based navigation), `docs/documentation-map.md` (Full page catalog with Diátaxis classes and prerequisites).
+  - Foundations: `docs/mental-model.md` (Conceptual boundaries, state ownership, invariants), `docs/concepts.md` (Domain vocabulary).
+  - Canonical Architecture: `docs/architecture.md` (Logical, runtime, dependency, data, control flow, security), `docs/source-map.md` (Symbol-level traceability to codebase).
+  - Subsystems: 7 guides (`core-and-domain.md`, `storage-and-persistence.md`, `retrieval-and-ranking.md`, `source-adapters.md`, `application-orchestration.md`, `mcp-and-protocols.md`, `runtime-and-cli.md`).
+  - Workflows: 5 execution traces (`service-lifecycle-and-startup.md`, `documentation-ingestion-and-refresh.md`, `reference-query-and-resolution.md`, `session-context-continuity.md`, `agentic-capability-loop.md`).
+  - Explanation: 4 design rationale pages (`architectural-decisions.md`, `retrieval-and-ranking-design.md`, `retention-and-memory-model.md`, `known-limits-and-debt.md`).
+  - Tutorials: 2 step-by-step guides (`01-first-steps.md`, `02-local-documentation-indexing.md`).
+  - How-To Guides: 4 operational guides (`configure-sse-with-auth.md`, `manage-database-and-migrations.md`, `configure-semantic-retrieval.md`, `implement-a-source-adapter.md`).
+  - Technical Reference: 4 reference manuals (`cli.md`, `configuration.md`, `mcp-tools.md`, `database-schema.md`), plus `docs/troubleshooting.md`.
+- Verification: Static audit of all links, symbols, schemas, CLI commands, and error codes against repository source code and existing tests. Explicitly highlighted verified vs unwired adapters and tracked debt.
+- Memory files updated: `work_log.md`, `decisions.md`, `evidence.md`, `project_state.md`, `current_status.yml`, `current_plan.md`.
+
 ## 2026-08-24 — AGENTS.md governance revision
 
 - Task: Superseded the six-step Agent Workflow section with the Workflow-and-Permissions approach (investigate-first tooling order, ask-before gates for deps/schema/public interfaces/CI/deletions/milestone growth, spec-or-ADR duty on contract changes, diff review criteria, secrets hygiene, authority/sandbox rules, small-focused-commit discipline). Added the Handoff section (`current_status.yml` resumable state, OBSERVED_DEBT/LESSONS/open_questions upkeep, `just context-check`) including build-lock and artifact discipline. Preserved evidence-priority ordering as a subsection of Implementation Verification Rules. Extended required memory files with `.agents/LESSONS.md` and `.agents/current_status.yml`, added their templates, and extended the completion checklist.
