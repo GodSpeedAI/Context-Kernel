@@ -1,157 +1,652 @@
 # Context Kernel
 
-### A single-binary MCP service for durable context, documentation retrieval, and governed reference search
+### Give the agent the context this task needs, not everything it can reach.
 
 [![CI](https://github.com/GodSpeedAI/Context-Kernel/actions/workflows/ci.yml/badge.svg)](https://github.com/GodSpeedAI/Context-Kernel/actions/workflows/ci.yml)
 [![Release](https://github.com/GodSpeedAI/Context-Kernel/actions/workflows/release.yml/badge.svg)](https://github.com/GodSpeedAI/Context-Kernel/actions/workflows/release.yml)
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
 [![MCP](https://img.shields.io/badge/MCP-stdio%20%2B%20SSE-blue.svg)](docs/mcp-contracts.md)
 
-Context Kernel gives AI agents a memory and reference layer that can survive past the current chat window, fetch the right documentation, and keep private context inside your own deployment.
+A coding agent can search your whole repository.
 
-It stores session context, indexes documentation, resolves library identities, reads public and private references, and serves the result through MCP tools. It does this as one Rust binary backed by SQLite, FTS5, filesystem artifacts, optional embeddings, and explicit authorization boundaries.
+It can fetch documentation from the web.
 
-AI work fails when context is folklore. The agent remembers half a decision, guesses at an API, cites stale docs, and then writes code with tremendous confidence. Context Kernel is the infrastructure layer that makes context inspectable before the agent acts.
+It can hold a very large context window.
 
----
+It can still confidently use the wrong API because the relevant version was buried under newer results, forget a decision made yesterday, or spend half its context window reading files that have nothing to do with the task.
 
-## The Problem
+More accessible information does not automatically create better context.
 
-Most AI coding setups treat context as a prompt stuffing exercise.
+**Context Kernel is an evidence-bearing context assembly service for agents. It turns task-relevant context needs into bounded, cited, provenance-preserving material so an agent can work from a smaller local world instead of repeatedly reconstructing the domain from everything it can access.**
 
-That breaks down quickly:
+Plainly, Context Kernel answers:
 
-- documentation gets fetched repeatedly and inconsistently
-- session decisions disappear between runs
-- private and public references blur together
-- large artifacts do not fit cleanly in conversation
-- agents cite what they remember, not what the repository proves
+> **What does this agent actually need to know right now, and where did that information come from?**
 
-The answer is not a bigger prompt. It is a local service with storage, retrieval, source adapters, and policy.
-
-Context Kernel turns context into an operational system: current enough to trust, small enough to fit, durable enough to resume, and scoped enough to govern.
-
----
-
-## What Context Kernel Does
-
-Context Kernel unifies three jobs that agents need every day:
-
-### Documentation Retrieval
-
-- ingest local docs, GitHub repositories, and websites
-- index chunks with SQLite FTS5
-- resolve a library name into a stable library or corpus identity
-- retrieve library/API documentation by version, corpus, or free text
-- return compact excerpts with citations
-- support common documentation MCP aliases: `resolve-library-id`, `get-library-docs`, and `query-docs`
-
-This handles the boring but expensive failure mode: an agent writing against APIs that moved since its training data.
-
-### Context Continuity
-
-- store session events across tool runs
-- recall decisions, requirements, constraints, and notes
-- keep large payloads in artifact storage instead of stuffing them inline
-- classify session memory through the `ck-memory` crate
-- preserve pinned events during retention cleanup
-
-This handles the other half of the context problem: after compaction or a new run, the agent needs the relevant memory, not a transcript landfill.
-
-### Token-Efficient Reference Reading
-
-- search first, then read the few resources that matter
-- return short excerpts instead of whole pages
-- use query intent and session context in ranking
-- collapse duplicate document results
-- store artifacts and raw context outside the prompt
-
-This keeps documentation useful without turning the context window into a junk drawer with syntax highlighting.
-
-### Governed Access
-
-- serve MCP over stdio for local workflows
-- serve MCP over SSE for remote access
-- validate bearer tokens for SSE
-- authorize by MCP tool and corpus
-- restrict web ingestion with SSRF protection and DNS resolution checks
-
-The point is simple: agents should not have to improvise their memory or their sources.
-
----
-
-## Capabilities
-
-### MCP Tools
-
-Canonical tools:
-
-- `get_status`
-- `store_context`
-- `recall_context`
-- `ingest_source`
-- `refresh_source`
-- `query_reference`
-- `resolve_reference`
-
-Compatibility aliases:
-
-- `resolve-library-id` → `resolve_reference`
-- `get-library-docs` → `query_reference`
-- `query-docs` → `query_reference`
-
-See [MCP contracts](docs/mcp-contracts.md).
-
-### Source Adapters
-
-Context Kernel currently supports:
-
-- local filesystem trees
-- GitHub repositories
-- websites
-
-The GitHub adapter detects truncated tree API responses instead of silently indexing partial data. The web adapter blocks private IP ranges, non-HTTP schemes, localhost-style hosts, and DNS names that resolve to private addresses.
-
-PDF ingestion and a bundled external documentation dataset adapter are not part of v1. Compatibility with common documentation MCP clients is provided through tool aliases and response contracts.
-
-### Retrieval
-
-Retrieval uses:
-
-- SQLite FTS5 and BM25 for lexical search
-- intent-aware ranking
-- trust and freshness score signals
-- document-level result de-duplication
-- optional OpenAI-compatible embeddings
-- brute-force cosine vector search for small corpora
-
-The vector store records corpus, library, and document metadata so semantic search can respect retrieval scope.
-
-The retrieval shape is deliberate:
+Its basic shape is:
 
 ```text
-resolve identity → search focused chunks → read compact excerpts → cite source
+context need
+     ↓
+resolve the relevant source
+     ↓
+search the bounded corpus
+     ↓
+retrieve compact evidence
+     ↓
+citations + provenance
+     ↓
+agent context
 ```
 
-That beats dumping a full documentation page into the model and hoping attention survives the trip.
+Context Kernel runs as a single Rust binary with SQLite, FTS5, filesystem artifacts, optional embeddings, source adapters, and MCP interfaces.
 
-### Memory And Artifacts
+It can run entirely inside your own deployment.
 
-Session events are stored in SQLite. Large payloads are stored in the filesystem artifact store and referenced from session events.
+---
 
-Retention GC can remove:
+## The problem is not access
 
-- unpinned old session events
-- inactive sessions
-- finished refresh jobs
-- artifact metadata and payload files
-- disabled old sources
+Give an agent access to:
+
+```text
+repository
+documentation
+tickets
+session history
+GitHub
+internal notes
+web pages
+API references
+```
+
+and you have increased what it can search.
+
+You have not answered:
+
+```text
+Which source applies?
+
+Which version applies?
+
+Which three files matter?
+
+Which decision is still current?
+
+Which memory is durable?
+
+Which result is stale?
+
+Which source can be cited?
+
+Which private corpus may this agent read?
+
+How much of this belongs in the model's context at once?
+```
+
+Without that structure, agent context becomes a repeated reconstruction exercise.
+
+A new session starts.
+
+The model searches again.
+
+It reads a different subset.
+
+It makes slightly different assumptions.
+
+Eventually the repository contains several technically plausible interpretations of the same thing.
+
+Context Kernel makes retrieval and memory explicit infrastructure instead of leaving them as incidental prompt behavior.
+
+---
+
+## Bigger context windows do not remove context selection
+
+Suppose an agent is fixing code that uses a third-party library.
+
+It can read:
+
+```text
+100 documentation pages
+20 source files
+the entire conversation history
+```
+
+The useful answer may live in:
+
+```text
+one API page for the installed version
+two repository files
+one prior architectural decision
+```
+
+Loading more material increases what the model can attend to.
+
+It does not guarantee that attention lands on the consequential distinction.
+
+Context Kernel's default retrieval shape is deliberately narrower:
+
+```text
+resolve identity
+      ↓
+search focused chunks
+      ↓
+read compact excerpts
+      ↓
+cite the source
+```
+
+Search before reading.
+
+Resolve before guessing.
+
+Return the few useful excerpts instead of making the model carry the entire library manual.
+
+---
+
+## Start with the mistake you are tired of seeing twice
+
+Good first uses are ordinary:
+
+* an agent repeatedly uses an outdated library API
+* architectural decisions disappear between sessions
+* the same documentation gets fetched differently every run
+* a large repository overwhelms agent attention
+* private and public references need different access
+* important context lives in large artifacts that should not sit inline in every prompt
+
+Context Kernel exposes MCP tools for these jobs.
+
+Canonical tools include:
+
+```text
+get_status
+store_context
+recall_context
+ingest_source
+refresh_source
+query_reference
+resolve_reference
+```
+
+For compatibility with documentation-oriented MCP clients:
+
+```text
+resolve-library-id → resolve_reference
+get-library-docs   → query_reference
+query-docs         → query_reference
+```
+
+The useful first experiment is small:
+
+> Put one documentation corpus or recurring decision behind Context Kernel and see whether the next agent can retrieve the right evidence without rediscovering it from scratch.
+
+---
+
+## Three kinds of context fail differently
+
+Context Kernel currently brings together three related jobs.
+
+### Reference context
+
+This is information that already exists somewhere else:
+
+```text
+library documentation
+repository documentation
+GitHub source
+web references
+local files
+```
+
+The problem is retrieval.
+
+Which source?
+
+Which version?
+
+Which chunk?
+
+Which citation?
+
+---
+
+### Session context
+
+This is information produced during the work:
+
+```text
+decisions
+constraints
+requirements
+notes
+important observations
+continuation state
+```
+
+The problem is continuity.
+
+Does it survive the conversation?
+
+Can it be recalled later?
+
+Is the useful decision distinguishable from thousands of transcript tokens?
+
+---
+
+### Large context artifacts
+
+Some useful material should not be repeatedly inserted into prompts:
+
+```text
+large payloads
+generated reports
+reference files
+structured outputs
+```
+
+The problem is storage and addressability.
+
+Context Kernel stores the artifact and lets session records refer to it instead of copying the whole payload into every context.
+
+These jobs share infrastructure, but they remain distinguishable.
+
+---
+
+## Context should arrive with receipts
+
+An agent saying:
+
+> According to the documentation...
+
+is stronger when you can ask:
+
+```text
+Which documentation?
+
+From which source?
+
+Which version?
+
+Which chunk?
+
+When was it indexed?
+
+Which corpus did it come from?
+```
+
+Context Kernel returns compact reference material with source citations and metadata.
+
+The goal is not citation formatting for its own sake.
+
+The citation allows a downstream agent or person to distinguish:
+
+```text
+retrieved evidence
+```
+
+from:
+
+```text
+model recollection
+```
+
+Those can agree.
+
+They should not be treated as the same source.
+
+---
+
+## Resolve identity before retrieving text
+
+Library names are often ambiguous.
+
+Consider:
+
+```text
+react
+requests
+tokio
+openai
+langchain
+```
+
+A free-text query should not have to rediscover which corpus or library identity you meant on every request.
+
+Context Kernel supports a resolution step:
+
+```text
+human/library name
+      ↓
+stable reference identity
+      ↓
+scoped retrieval
+```
+
+This is why the retrieval flow begins with:
+
+```text
+resolve_reference
+```
+
+and compatibility clients can use:
+
+```text
+resolve-library-id
+```
+
+Once identity is resolved, later retrieval can stay inside the intended corpus rather than searching every indexed source as one undifferentiated pile.
+
+---
+
+## Search first, read second
+
+A common agent retrieval pattern is:
+
+```text
+find promising URL
+      ↓
+load entire page
+      ↓
+put page in context
+```
+
+Repeat that several times and the model now has a large amount of technically related material competing for attention.
+
+Context Kernel instead favors:
+
+```text
+query
+  ↓
+rank chunks
+  ↓
+deduplicate documents
+  ↓
+return compact excerpts
+  ↓
+follow the relevant source when needed
+```
+
+Retrieval currently uses:
+
+* SQLite FTS5
+* BM25 lexical search
+* intent-aware ranking
+* trust signals
+* freshness signals
+* document-level result deduplication
+* optional embeddings
+* scoped vector metadata
+
+For small corpora, optional semantic retrieval uses brute-force cosine search.
+
+That is an implementation choice, not a claim that vector search should replace lexical retrieval.
+
+---
+
+## Lexical and semantic retrieval have different strengths
+
+Exact terms matter in software work.
+
+If the agent needs:
+
+```text
+ProviderManager
+HTTP_429
+tokio::select!
+v1.4.2
+```
+
+lexical search is valuable.
+
+If the task asks:
+
+> Where do we handle retryable provider failures?
+
+the useful source may not contain those exact words.
+
+Optional embeddings can help produce candidates for that kind of query.
+
+Context Kernel can use both.
+
+The important rule is scope first.
+
+Semantic similarity does not grant a result permission to cross corpus boundaries or become relevant simply because the vectors are close.
+
+---
+
+## Durable memory should not become transcript landfill
+
+A conversation transcript contains many things:
+
+```text
+questions
+false starts
+temporary guesses
+tool output
+decisions
+corrections
+casual discussion
+durable constraints
+```
+
+Saving everything forever does not solve memory.
+
+It creates a larger search problem.
+
+Context Kernel stores session events in SQLite and applies explicit memory and retention behavior through the `ck-memory` layer.
+
+Important events can be pinned.
+
+Retention cleanup can remove:
+
+```text
+old unpinned session events
+inactive sessions
+finished refresh jobs
+old artifact payloads
+disabled sources
+```
 
 Pinned events survive cleanup.
 
-### Security
+The goal is not infinite recollection.
 
-SSE mode can require bearer tokens:
+It is durable access to context worth carrying forward.
+
+---
+
+## Large artifacts belong outside the prompt
+
+Suppose a tool produces a large report.
+
+One approach is to paste the entire report into the conversation every time it may matter.
+
+That spends model context repeatedly.
+
+Context Kernel can store the payload in its filesystem artifact store and place a reference in session state.
+
+Conceptually:
+
+```text
+large payload
+     ↓
+artifact store
+     ↓
+stable reference
+     ↓
+session event
+     ↓
+retrieve when needed
+```
+
+The model carries the reference until the contents actually become relevant.
+
+Storage becomes cheaper than attention.
+
+---
+
+## Context is task-relative
+
+There is no universally correct context packet.
+
+The same repository can require very different context for:
+
+```text
+fix checkout bug
+
+review authentication architecture
+
+update API documentation
+
+investigate deployment failure
+```
+
+The most useful context is the smallest set that preserves the distinctions required by the current work.
+
+Context Kernel provides the primitives for that assembly through:
+
+```text
+session state
+reference identity
+scoped corpora
+search
+ranking
+citations
+artifacts
+```
+
+Today these capabilities are exposed through MCP tools such as `recall_context`, `resolve_reference`, and `query_reference`.
+
+A richer task-specific packet may be assembled by an upstream harness using those tools.
+
+That keeps the implementation claim narrow: Context Kernel owns retrieval and context evidence. It does not need to pretend that every task has one magical automatic context window.
+
+---
+
+## Context Kernel supplies context; it does not decide the task
+
+A retrieved source can say:
+
+```text
+production deployments require approval
+```
+
+Context Kernel can return that statement with its source.
+
+It does not therefore decide:
+
+```text
+deny deployment
+```
+
+That is an authority decision.
+
+Likewise, Context Kernel can retrieve a testing requirement.
+
+It does not decide whether the resulting task has settled.
+
+It supplies representation and evidence to systems that make those decisions.
+
+The distinction is important:
+
+```text
+retrieval
+≠
+authority
+
+context
+≠
+execution
+
+memory
+≠
+capability
+```
+
+Knowing the rule and obeying the rule are different system responsibilities.
+
+---
+
+## Local-first means private context can stay local
+
+Some of the context most valuable to an agent is exactly the material you do not want sent to another SaaS memory layer:
+
+```text
+internal documentation
+private repositories
+architecture decisions
+session history
+operational notes
+```
+
+Context Kernel is designed to run inside your own environment.
+
+Its ordinary storage uses:
+
+```text
+SQLite
+filesystem artifacts
+local indexes
+```
+
+The service does not require an external model provider for its core retrieval path.
+
+Optional embeddings can use an OpenAI-compatible endpoint when configured.
+
+If you do not need semantic embeddings, FTS5 works without them.
+
+---
+
+## Sources are explicit
+
+Context Kernel currently supports ingestion from:
+
+### Local filesystem trees
+
+Useful for:
+
+```text
+repository documentation
+internal references
+generated docs
+local knowledge bases
+```
+
+### GitHub repositories
+
+Useful when the reference source lives in GitHub.
+
+The adapter detects truncated GitHub tree API responses rather than silently treating an incomplete tree as the complete repository.
+
+### Websites
+
+Useful for public documentation and reference material.
+
+The web adapter includes protections against:
+
+```text
+private IP targets
+localhost-style hosts
+non-HTTP schemes
+DNS names resolving to private addresses
+```
+
+That reduces SSRF exposure when agents can ask the service to ingest remote material.
+
+PDF ingestion is not part of the current release.
+
+Neither is a bundled external documentation dataset.
+
+Those are future capabilities, not hidden assumptions in the README.
+
+---
+
+## Public and private context should not quietly mix
+
+Context Kernel supports corpus-scoped authorization.
+
+For SSE deployments, bearer authentication can be required:
 
 ```toml
 [mcp.sse]
@@ -161,7 +656,7 @@ require_auth = true
 tokens = ["${CONTEXT_KERNEL_AUTH_TOKEN}"]
 ```
 
-Tool and corpus allowlists are configured separately:
+Tool access and corpus access can be configured separately:
 
 ```toml
 [authorization]
@@ -169,13 +664,53 @@ allow_tools = ["get_status", "query_reference", "resolve_reference"]
 allow_corpora = ["public_docs"]
 ```
 
-Stdio mode is local trust mode. Use it for local editor and agent integrations where the process boundary is the trust boundary.
+This lets an operator distinguish:
 
-See [security](docs/security.md).
+```text
+may call query_reference
+```
+
+from:
+
+```text
+may query private_architecture
+```
+
+Those are different permissions.
+
+Stdio mode is intended for local-trust workflows where the process boundary is the trust boundary.
 
 ---
 
-## Quick Start
+## Stdio and SSE serve different deployment shapes
+
+For a local editor or agent:
+
+```text
+agent process
+     ↓ stdio
+Context Kernel
+     ↓
+local storage
+```
+
+For remote clients:
+
+```text
+agent / service
+     ↓ authenticated SSE
+Context Kernel
+     ↓
+shared deployment storage
+```
+
+Both surfaces expose the same core application rather than creating separate retrieval implementations.
+
+The transport should not determine the context semantics.
+
+---
+
+## Quick start
 
 Build the binary:
 
@@ -186,16 +721,18 @@ cargo build --release -p ck-bin
 Initialize storage:
 
 ```bash
-target/release/context-kernal migrate --database ./data/kernel.db
+target/release/context-kernal migrate \
+  --database ./data/kernel.db
 ```
 
 Check health:
 
 ```bash
-target/release/context-kernal doctor --database ./data/kernel.db
+target/release/context-kernal doctor \
+  --database ./data/kernel.db
 ```
 
-Run in local stdio mode:
+Run locally over MCP stdio:
 
 ```bash
 target/release/context-kernal serve \
@@ -203,15 +740,33 @@ target/release/context-kernal serve \
   --data-dir ./data
 ```
 
-Run with SSE:
+Context Kernel is now available as a local MCP service.
+
+---
+
+## Run over SSE
+
+Generate a bearer token:
 
 ```bash
 export CONTEXT_KERNEL_AUTH_TOKEN="$(openssl rand -hex 32)"
+```
 
+Start the service:
+
+```bash
 target/release/context-kernal serve \
   --config config/context-kernal.sse.example.toml \
   --sse 127.0.0.1:8765
 ```
+
+Use SSE when the context service needs to serve processes outside the local stdio relationship.
+
+Configure corpus and tool authorization before exposing private sources.
+
+---
+
+## Inspect the storage schema
 
 Print the embedded SQLite schema:
 
@@ -219,62 +774,303 @@ Print the embedded SQLite schema:
 target/release/context-kernal export-schema
 ```
 
-See [install](docs/install.md), [configuration](docs/configuration.md), and [operations](docs/operations.md).
+For setup details, see:
+
+* [Install](docs/install.md)
+* [Configuration](docs/configuration.md)
+* [Operations](docs/operations.md)
 
 ---
 
-## Core Workflows
+## Core MCP tools
 
-```bash
-# Format, lint, and test
-cargo fmt --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+### `get_status`
 
-# Build release binary
-cargo build --release -p ck-bin
+Inspect service status.
 
-# Initialize a database
-context-kernal migrate --database ./data/kernel.db
+### `store_context`
 
-# Check database health
-context-kernal doctor --database ./data/kernel.db
+Persist session context that should survive the immediate tool call.
 
-# Serve MCP locally over stdio
-context-kernal serve --database ./data/kernel.db --data-dir ./data
+### `recall_context`
 
-# Serve MCP remotely over SSE
-context-kernal serve --config config/context-kernal.sse.example.toml
+Retrieve relevant session context.
 
-# Export schema SQL
-context-kernal export-schema
+### `ingest_source`
+
+Add a source corpus.
+
+### `refresh_source`
+
+Refresh previously ingested material.
+
+### `query_reference`
+
+Search reference material and return relevant excerpts.
+
+### `resolve_reference`
+
+Resolve a user-facing library or source name into the stable identity used for retrieval.
+
+The compatibility aliases exist so clients designed around common documentation MCP conventions can use Context Kernel without changing its canonical internal vocabulary.
+
+See:
+
+* [MCP contracts](docs/mcp-contracts.md)
+
+---
+
+## Freshness matters because documentation moves
+
+Training data has a cutoff.
+
+Documentation changes after that cutoff.
+
+Local repository code may change after the documentation was indexed.
+
+A cached reference can become stale.
+
+Context Kernel therefore treats source refresh and freshness as part of retrieval rather than assuming that once-ingested information remains correct forever.
+
+Sources can be refreshed explicitly:
+
+```text
+refresh_source
 ```
+
+and freshness can participate in ranking.
+
+This still does not guarantee the source itself is correct.
+
+It makes the age and origin of the retrieved material more inspectable.
+
+---
+
+## Trust is a ranking signal, not truth
+
+Some sources deserve more confidence than others.
+
+For example:
+
+```text
+official library documentation
+
+repository source code
+
+third-party tutorial
+
+old forum post
+```
+
+may not deserve equal rank for an API question.
+
+Context Kernel can incorporate trust signals into ranking.
+
+That does not make a high-trust source infallible.
+
+It means source quality can influence candidate ordering without being erased into one undifferentiated relevance score.
+
+---
+
+## One canonical context service, several consumers
+
+Context Kernel is exposed through MCP so different agents and harnesses can consume the same underlying context infrastructure.
+
+Conceptually:
+
+```text
+Claude Code ──┐
+Codex ────────┤
+Gauntlet ─────┤
+SWE_SEED ─────┼──> Context Kernel
+other agents ─┤       ↓
+              │    shared retrieval
+              │    shared memory
+              │    shared provenance
+              └──  shared corpus boundaries
+```
+
+That is more useful than teaching every agent host to independently maintain:
+
+```text
+its own session memory
+its own docs crawler
+its own vector store
+its own library resolver
+its own source trust rules
+```
+
+The consumer can change.
+
+The context layer remains stable.
+
+---
+
+## SWE_SEED integration
+
+SWE_SEED defines the context required by a software-work route.
+
+For example:
+
+```text
+bugfix route
+      ↓
+requires:
+  AGENTS.md
+  active specification
+  relevant implementation
+  nearby tests
+```
+
+Context Kernel can supply stronger retrieval behind that requirement.
+
+The division becomes:
+
+```text
+SWE_SEED
+asks:
+"What context does this work contract require?"
+        ↓
+Context Kernel
+answers:
+"Here is the bounded source material
+and where it came from."
+```
+
+SWE_SEED should not need to become a second retrieval engine.
+
+Context Kernel should not need to decide the software route.
+
+---
+
+## Gauntlet integration
+
+Long-horizon execution repeatedly creates new context needs.
+
+An executor may discover:
+
+```text
+a new dependency
+an unfamiliar subsystem
+a prior decision
+a missing API reference
+```
+
+Gauntlet can request additional context as those distinctions become relevant.
+
+The useful pattern is:
+
+```text
+bounded execution
+      ↓
+new uncertainty
+      ↓
+context request
+      ↓
+Context Kernel
+      ↓
+cited context
+      ↓
+execution continues
+```
+
+That lets context expand because the work earned the expansion instead of preloading every potentially related artifact.
+
+---
+
+## DomainForge integration
+
+DomainForge gives a system an explicit semantic model.
+
+Context Kernel gives agents the contextual evidence needed to work with that system.
+
+Those are related but different.
+
+```text
+DomainForge
+answers:
+"What does this domain mean?"
+
+Context Kernel
+answers:
+"What relevant source material
+does this agent need right now?"
+```
+
+A `.sea` model can itself become a high-value reference source for context assembly.
+
+But retrieval does not replace semantic compilation.
+
+---
+
+## RealityTrace integration
+
+RealityTrace binds expectations to observations with evidence and provenance.
+
+Context Kernel can help retrieve the sources needed to form or interpret those expectations.
+
+RealityTrace should preserve the observation chain.
+
+Context Kernel should preserve the retrieval chain.
+
+Those are complementary provenance problems.
+
+---
+
+## Architecture
+
+Context Kernel follows a ports-and-adapters architecture.
+
+| Layer       | Crates                                                               | Purpose                                             |
+| ----------- | -------------------------------------------------------------------- | --------------------------------------------------- |
+| Domain      | `ck-core`                                                            | entities, enums, port traits                        |
+| Application | `ck-app`, `ck-memory`                                                | use cases, memory policy, orchestration             |
+| Storage     | `ck-storage-sqlite`, `ck-artifacts`, `ck-vector`                     | SQLite persistence, artifacts, vector metadata      |
+| Retrieval   | `ck-search-fts`, `ck-ranker`, `ck-embeddings`                        | lexical search, ranking, optional embeddings        |
+| Adapters    | `ck-adapter-filesystem`, `ck-adapter-github`, `ck-adapter-web`       | source discovery and normalization                  |
+| MCP         | `ck-mcp`                                                             | tool contracts, aliases, errors                     |
+| Transports  | `ck-transport-stdio`, `ck-transport-sse`                             | local and remote serving                            |
+| Runtime     | `ck-bin`, `ck-config`, `ck-auth`, `ck-observability`, `ck-scheduler` | CLI, configuration, authorization, tracing, refresh |
+
+The architectural boundary is strict:
+
+> SQL, HTTP, and transport-specific behavior do not belong in `ck-core`.
+
+That keeps the context semantics independent from the storage or transport implementation.
 
 ---
 
 ## Configuration
 
-Production-oriented templates live in [config](config/):
+Production-oriented examples live under:
 
-- [context-kernal.example.toml](config/context-kernal.example.toml)
-- [context-kernal.local.example.toml](config/context-kernal.local.example.toml)
-- [context-kernal.sse.example.toml](config/context-kernal.sse.example.toml)
+```text
+config/
+```
+
+including:
+
+* [`context-kernal.example.toml`](config/context-kernal.example.toml)
+* [`context-kernal.local.example.toml`](config/context-kernal.local.example.toml)
+* [`context-kernal.sse.example.toml`](config/context-kernal.sse.example.toml)
 
 Important sections:
 
-| Section | Purpose |
-| --- | --- |
-| `[storage]` | SQLite database path |
-| `[mcp]` | stdio and SSE transport settings |
-| `[auth]` | bearer token configuration |
-| `[authorization]` | tool and corpus allowlists |
-| `[scheduler]` | periodic source refresh |
-| `[embeddings]` | optional semantic retrieval |
-| `[reload]` | config reload behavior |
-| `[retention]` | GC windows |
-| `[observability]` | text or JSON tracing |
+| Section           | Purpose                     |
+| ----------------- | --------------------------- |
+| `[storage]`       | SQLite database             |
+| `[mcp]`           | stdio and SSE               |
+| `[auth]`          | bearer authentication       |
+| `[authorization]` | tool and corpus allowlists  |
+| `[scheduler]`     | source refresh              |
+| `[embeddings]`    | optional semantic retrieval |
+| `[reload]`        | configuration reload        |
+| `[retention]`     | memory and artifact cleanup |
+| `[observability]` | text or JSON tracing        |
 
-Config reload updates the application service and SSE auth/service state. It does not restart the listening socket; bind address changes require a restart.
+Config reload updates application state and SSE authorization state.
+
+Changing the listening bind address still requires a restart.
 
 ---
 
@@ -282,99 +1078,119 @@ Config reload updates the application service and SSE auth/service state. It doe
 
 Context Kernel emits structured tracing to stderr.
 
-Use JSON logs for machines:
+For machine-readable logs:
 
 ```toml
 [observability]
 log_format = "json"
 ```
 
-The config accepts `otel_endpoint`, and the `ck-observability` crate detects it, but OpenTelemetry exporter and metrics backend wiring are not implemented yet. That is the remaining observability gap.
+The configuration accepts:
 
-Evidence matters. The README says this plainly because a fake telemetry claim is worse than no telemetry claim.
+```text
+otel_endpoint
+```
 
----
+and the `ck-observability` crate detects it.
 
-## Architecture
+OpenTelemetry exporter and metrics backend wiring are **not implemented yet**.
 
-Context Kernel follows ports and adapters.
-
-| Layer | Crates | Purpose |
-| --- | --- | --- |
-| Domain | `ck-core` | entities, enums, and port traits |
-| Application | `ck-app`, `ck-memory` | use cases, memory policy, orchestration |
-| Storage | `ck-storage-sqlite`, `ck-artifacts`, `ck-vector` | SQLite persistence, artifact files, vector storage |
-| Retrieval | `ck-search-fts`, `ck-ranker`, `ck-embeddings` | FTS search, ranking, optional embeddings |
-| Adapters | `ck-adapter-filesystem`, `ck-adapter-github`, `ck-adapter-web` | source discovery, fetching, normalization |
-| MCP | `ck-mcp` | tool contracts, aliases, error mapping |
-| Transports | `ck-transport-stdio`, `ck-transport-sse` | local and remote serving |
-| Runtime | `ck-bin`, `ck-config`, `ck-auth`, `ck-observability`, `ck-scheduler` | CLI, config, auth, tracing, refresh jobs |
-
-The rule is strict: no SQL, HTTP, or transport behavior belongs in `ck-core`.
+That distinction stays explicit because configuration support is not the same thing as an operating exporter.
 
 ---
 
-## Status
+## Retention is part of context quality
 
-Implemented:
+Keeping everything forever is easy.
 
-- single Rust binary
-- SQLite schema and migrations
-- stdio MCP serving
-- SSE MCP serving
-- bearer auth and tool/corpus authorization
-- local filesystem, GitHub, and web source adapters
-- FTS5 retrieval
-- optional OpenAI-compatible embeddings
-- vector search with scope metadata
-- session memory and artifact storage
-- retention GC
-- config templates
-- release workflow
-- deployment smoke tests
+Knowing what should still influence future work is harder.
 
-Known limits:
+Context Kernel retention can remove:
 
-- OpenTelemetry exporter and metrics backend wiring are not implemented
-- PDF adapter is future work
-- bundled external documentation dataset adapter is future work
-- vector search is brute-force and intended for small corpora
-- SSE config reload does not rebind the HTTP listener
+* old unpinned session events
+* inactive sessions
+* completed refresh jobs
+* artifact metadata and payloads
+* disabled old sources
 
-This is infrastructure, not theater. If a feature is not wired and tested, it is listed as a limit.
+Pinned context survives.
+
+Retention is therefore not only a storage concern.
+
+It prevents stale incidental history from accumulating indefinitely beside durable context.
 
 ---
 
-## Lineage
+## Current status
 
-Context Kernel is built around three proven MCP patterns:
+### Implemented
 
-- current, version-aware documentation for coding agents
-- token-efficient reference search and URL reading
-- persistent session memory with indexed recall
+* single Rust binary
+* SQLite schema and migrations
+* MCP over stdio
+* MCP over SSE
+* bearer authentication
+* tool authorization
+* corpus authorization
+* filesystem source adapter
+* GitHub source adapter
+* web source adapter
+* FTS5 retrieval
+* BM25 ranking
+* intent-aware ranking
+* trust and freshness signals
+* document deduplication
+* optional OpenAI-compatible embeddings
+* scoped vector metadata
+* brute-force vector search
+* session memory
+* filesystem artifact storage
+* retention GC
+* source refresh
+* configuration templates
+* release workflow
+* deployment smoke tests
 
-The implementation is its own Rust service. It keeps the useful parts in one local-first binary and adds deployment concerns the separate tools do not all share: SQLite migrations, source adapters, retention, artifact storage, corpus/tool authorization, SSE serving, release packaging, and repository-grounded status evidence.
+### Known limits
+
+* OpenTelemetry exporter wiring is not implemented
+* metrics backend wiring is not implemented
+* PDF ingestion is not implemented
+* bundled external documentation datasets are not implemented
+* vector search is intended for small corpora
+* SSE configuration reload does not rebind the HTTP listener
+
+The distinction between implemented and planned behavior should remain visible.
+
+A context system that invents its own implementation status would be missing the point.
 
 ---
 
 ## Development
 
-Read these first:
+Read first:
 
-- [AGENTS.md](AGENTS.md)
-- [.github/copilot-instructions.md](.github/copilot-instructions.md)
-- [.agents/project_state.md](.agents/project_state.md)
-- [.agents/evidence.md](.agents/evidence.md)
+* [AGENTS.md](AGENTS.md)
+* [.github/copilot-instructions.md](.github/copilot-instructions.md)
+* [.agents/project_state.md](.agents/project_state.md)
+* [.agents/evidence.md](.agents/evidence.md)
 
-Development rules:
+Development rules include:
 
-- trust code and tests over documentation intent
-- preserve ports-and-adapters boundaries
-- use focused tests for behavior changes
-- update `.agents/` memory files after meaningful work
-- do not report implementation status without repository evidence
+```text
+trust code and tests over documentation intent
 
-Run the full gate before release:
+preserve ports-and-adapters boundaries
+
+use focused tests for behavioral changes
+
+update durable project memory after meaningful work
+
+do not report implementation status
+without repository evidence
+```
+
+Run the release gate:
 
 ```bash
 cargo fmt --check
@@ -387,29 +1203,170 @@ cargo build --release -p ck-bin
 
 ## Release
 
-The release workflow builds the Linux binary and publishes a SHA-256 checksum on version tags.
+Version tags trigger the release workflow.
 
 ```bash
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-See [release process](docs/release.md).
+The workflow builds the Linux binary and publishes a SHA-256 checksum.
+
+See:
+
+* [Release process](docs/release.md)
 
 ---
 
-## What Context Kernel Is Not
+## What Context Kernel is not
 
-- It is not a hosted SaaS memory product.
-- It is not a prompt template library.
-- It is not a PDF ingestion suite.
-- It is not a vector database.
-- It is not an excuse for agents to skip evidence.
+### Not a vector database
 
-Context Kernel is a local-first context and retrieval service. It gives agents a place to look before they guess.
+It may use vectors.
+
+Vector search is one retrieval mechanism inside the service.
+
+### Not a hosted memory product
+
+Context Kernel is designed to run in your own environment.
+
+### Not a transcript archive
+
+Persistent memory exists to preserve useful context, not to make every conversation immortal.
+
+### Not a prompt stuffing engine
+
+The objective is bounded relevant context, not maximum tokens.
+
+### Not a coding agent
+
+Context Kernel supplies context to an executor.
+
+It does not perform the software task.
+
+### Not an authority layer
+
+A retrieved policy can inform an authority decision.
+
+Retrieving the policy does not authorize the action.
+
+### Not a source of capability
+
+An agent recalling the correct documentation does not establish that it can reliably use that documentation under variation.
+
+### Not DomainForge
+
+DomainForge compiles canonical domain meaning.
+
+Context Kernel retrieves relevant source material.
+
+### Not RealityTrace
+
+RealityTrace preserves expected-versus-observed evidence.
+
+Context Kernel preserves retrieval and memory provenance.
+
+---
+
+## Where it fits
+
+Context Kernel works standalone as a local MCP context and reference service.
+
+A minimal deployment is:
+
+```text
+coding agent
+     ↓
+Context Kernel
+     ↓
+local docs + memory + references
+```
+
+Within the broader GodSpeed architecture:
+
+```text
+.sea
+represents consequential domain meaning
+        ↓
+DomainForge
+compiles and validates that meaning
+        ↓
+Context Kernel
+supplies bounded relevant context
+        ↓
+SWE_SEED
+defines the software-work contract
+        ↓
+SEA-Forge
+authorizes consequential action
+        ↓
+Gauntlet
+executes long-horizon work when needed
+        ↓
+RealityTrace
+binds expectation to observation
+        ↓
+GodSpeed-Agent
+updates developmental memory and capability
+```
+
+These components remain independently useful.
+
+Context Kernel's boundary is intentionally narrow:
+
+> **Supply the smallest useful body of context, with enough provenance that another system can inspect where it came from.**
+
+---
+
+## When Context Kernel is probably worth trying
+
+Context Kernel starts to earn its cost when:
+
+* agents repeatedly rediscover the same documentation
+* API mistakes come from stale model knowledge
+* important decisions disappear between sessions
+* context windows are filling with large amounts of weakly relevant material
+* several agent hosts need access to the same reference layer
+* private and public corpora need different access rules
+* large artifacts need durable storage outside the conversation
+* retrieval results need citations and provenance
+* documentation freshness matters
+* you want local-first context infrastructure rather than another hosted memory dependency
+
+If a small repository and one short-lived agent session can keep all relevant context directly in view, Context Kernel may be unnecessary.
+
+Use the smallest context system that makes the work reliable.
+
+---
+
+## The short version
+
+Do not give the agent everything and call that context.
+
+Resolve the source.
+
+Search the bounded corpus.
+
+Retrieve the few useful excerpts.
+
+Keep the citation.
+
+Store durable decisions separately from conversation noise.
+
+Keep large artifacts outside the prompt until they matter.
+
+Respect private corpus boundaries.
+
+Refresh changing sources.
+
+Let the task determine how much context it earns.
+
+Context Kernel gives agents a place to look before they guess.
 
 ---
 
 ## License
 
-Context Kernel is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
+Context Kernel is licensed under the Apache License 2.0.
+
+See [LICENSE](LICENSE).
