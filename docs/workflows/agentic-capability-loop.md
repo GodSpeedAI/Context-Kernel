@@ -27,7 +27,7 @@ sequenceDiagram
 
     SWE->>MCP: tools/call {"name": "context_required", "arguments": <ContextRequired Envelope>}
     MCP->>MCP: E2 Ingress Gate Verification
-    Note over MCP: Checks schema_version=="1.0.0",<br/>source_agent=="swe_seed",<br/>domain_model_hash validity
+    Note over MCP: Checks schema_version=="v1",<br/>source_agent=="swe_seed",<br/>domain_model_hash validity
 
     MCP->>ACL: acquire_context(arguments)
     ACL->>ACL: Check corpus configuration
@@ -55,7 +55,7 @@ sequenceDiagram
 
 When `context_required` is invoked over stdio or SSE, `ck-mcp::McpService::handle_context_required` enforces strict fail-closed ingress validation:
 
-1. **Schema Version Check**: `schema_version` must equal `"1.0.0"`.
+1. **Schema Version Check**: `schema_version` must equal `"v1"`.
 2. **Event Type Assertion**: `event_type` must equal `"ContextRequired"`.
 3. **Authoritative Producer**: `source_agent` must equal `"swe-seed"` or `"swe_seed"`. Context Kernel rejects requests from any other producer.
 4. **Causal Lineage**: `event_id` must be non-empty; it becomes the parent `caused_by` ID on the emitted packet.

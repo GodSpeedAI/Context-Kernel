@@ -569,7 +569,11 @@ fn context_required_served_over_stdio_returns_cited_packet() {
     )
     .unwrap();
 
-    let input = tool_call(1, "context_required", e2_context_required("wr-stdio", "cr-stdio", "loop-docs"));
+    let input = tool_call(
+        1,
+        "context_required",
+        e2_context_required("wr-stdio", "cr-stdio", "loop-docs"),
+    );
 
     let mut cmd = Command::cargo_bin("context-kernal").unwrap();
     cmd.env("CK_CONTEXT_CORPUS_ROOT", corpus_root.to_str().unwrap())
