@@ -27,7 +27,7 @@ sequenceDiagram
 
     SWE->>MCP: tools/call {"name": "context_required", "arguments": <ContextRequired Envelope>}
     MCP->>MCP: E2 Ingress Gate Verification
-    Note over MCP: Checks schema_version=="1.0.0",<br/>source_agent=="swe_seed",<br/>domain_model_hash validity
+    Note over MCP: Checks schema_version=="v1",<br/>source_agent=="swe_seed",<br/>domain_model_hash validity
 
     MCP->>ACL: acquire_context(arguments)
     ACL->>ACL: Check corpus configuration
@@ -55,7 +55,7 @@ sequenceDiagram
 
 When `context_required` is invoked over stdio or SSE, `ck-mcp::McpService::handle_context_required` enforces strict fail-closed ingress validation:
 
-1. **Schema Version Check**: `schema_version` must equal `"1.0.0"`.
+1. **Schema Version Check**: `schema_version` must equal `"v1"`.
 2. **Event Type Assertion**: `event_type` must equal `"ContextRequired"`.
 3. **Authoritative Producer**: `source_agent` must equal `"swe-seed"` or `"swe_seed"`. Context Kernel rejects requests from any other producer.
 4. **Causal Lineage**: `event_id` must be non-empty; it becomes the parent `caused_by` ID on the emitted packet.
@@ -63,6 +63,14 @@ When `context_required` is invoked over stdio or SSE, `ck-mcp::McpService::handl
    - `domain_model_hash` must be a 64-character lowercase SHA-256 hexadecimal string.
    - Rejects the fallback pseudo-hash (`FALLBACK_PSEUDO_HASH = "dc144cbd71a483431301ca1bf32e95c014af4edba8dbcc525f505310e30a107e"`).
    - Rejects all-zero placeholder digests. Context Kernel never manufactures domain identities.
+6. **World Identity Gate (`verify_world_ref`)**:
+   - `payload.world_ref` must be `world:<name>@sha256:<64 lowercase hex>`. A missing value, a mutable alias (`world:<name>`) or a label is rejected before any retrieval.
+   - Context Kernel checks syntax only. It does not recompute the digest; SEA-Forge and DomainForge own that.
+   - The packet echoes `world_ref` unchanged. `domain_model_hash` stays as legacy identity and is never turned into a `world_ref`.
+
+### Retrieval completeness
+
+Every packet carries `retrieval_completeness` (`complete`, `partial`, `none`) and `omissions[]`. `complete` means every unit matching the query in the corpus was returned in full. Reaching `max_results` with a further match (`max_results_reached`) or cutting a citation to its first 500 characters (`citation_content_truncated`, also flagged per citation as `truncated`) makes the packet `partial`. Zero citations is `none`. Completeness is relative to the query and corpus, never a claim about reality, and a consumer must not read `partial` as sufficient.
 
 ---
 

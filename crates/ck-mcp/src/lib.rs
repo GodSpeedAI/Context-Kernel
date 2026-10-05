@@ -494,6 +494,14 @@ impl McpService {
         agentic_capability_loop::verify_domain_identity(&domain_model_hash)
             .map_err(|e| McpError::InvalidArguments(format!("domain identity rejected: {e}")))?;
 
+        let world_ref = payload_obj
+            .get("world_ref")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        agentic_capability_loop::verify_world_ref(&world_ref)
+            .map_err(|e| McpError::InvalidArguments(format!("world identity rejected: {e}")))?;
+
         let work_request_id = payload_obj
             .get("work_request_id")
             .and_then(Value::as_str)
@@ -512,6 +520,7 @@ impl McpService {
 
         let payload = agentic_capability_loop::ContextRequiredPayload {
             domain_model_hash,
+            world_ref,
             work_request_id,
             context_requirement_id,
             corpus_id: payload_obj
@@ -833,6 +842,8 @@ mod tests {
     // --- convergence T02 boundary teeth ------------------------------------
 
     const GOOD_DIGEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const GOOD_WORLD: &str =
+        "world:test@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
     /// Build a canonical E2 request envelope (producer: swe_seed).
     fn e2_request(corpus_id: &str, wr: &str, cr: &str, digest: &str) -> Value {
@@ -844,6 +855,7 @@ mod tests {
             "occurred_at": "2026-08-25T00:00:00Z",
             "payload": {
                 "domain_model_hash": digest,
+                "world_ref": GOOD_WORLD,
                 "namespace": "agentic_capability_loop",
                 "work_request_id": wr,
                 "context_requirement_id": cr,
@@ -877,6 +889,31 @@ mod tests {
                     assert!(msg.contains("identity rejected"), "{msg}");
                 }
                 other => panic!("placeholder identity {bad} must fail closed: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn world_ref_missing_or_unpinned_fails_closed_at_dispatch() {
+        let service = ctx_service_with(std::env::temp_dir().join("s9-world"));
+        for bad in [
+            None,
+            Some("world:test"),
+            Some("world:test@sha256:ab"),
+            Some(""),
+        ] {
+            let mut req = e2_request("docs", "wr-1", "cr-1", GOOD_DIGEST);
+            match bad {
+                None => {
+                    req["payload"].as_object_mut().unwrap().remove("world_ref");
+                }
+                Some(v) => req["payload"]["world_ref"] = json!(v),
+            }
+            match service.call_tool("context_required", req) {
+                Err(McpError::InvalidArguments(msg)) => {
+                    assert!(msg.contains("world identity rejected"), "{msg}")
+                }
+                other => panic!("unpinned world {bad:?} must fail closed: {other:?}"),
             }
         }
     }

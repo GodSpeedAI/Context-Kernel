@@ -28,3 +28,4 @@ Status legend: [OPEN] unresolved · [MITIGATED] addressed but residual · [RESOL
 ## Reports
 - Audit: `.agents/reports/neatcode-audit-2026-07-29.md`.
 - Harden: `.agents/reports/neatcode-harden-2026-07-29.md`.
+

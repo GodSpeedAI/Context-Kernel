@@ -248,44 +248,58 @@ Resolves a colloquial library or framework name into a canonical library identit
 Fulfills the E2/E3 convergence boundary with SWE_SEED. Takes a canonical `ContextRequired` envelope and emits a `ContextPacketCreated` envelope.
 
 #### Request Arguments
-Must be a canonical v1 envelope stamped by `swe_seed`:
+Must be a canonical v1 envelope stamped by `swe-seed` (or `swe_seed`). Identity and correlation fields live in `payload`; `required` (default `true`) sits beside the envelope:
 ```json
 {
-  "schema_version": "1.0.0",
-  "event_type": "ContextRequired",
-  "source_agent": "swe_seed",
+  "schema_version": "v1",
   "event_id": "evt_swe_01",
-  "domain_model_hash": "a1b2c3...64-char-sha256...",
-  "work_request_id": "wr-123",
-  "context_requirement_id": "cr-456",
-  "corpus_id": "core_docs",
-  "query": "connection pooling",
-  "max_results": 10
+  "source_agent": "swe-seed",
+  "event_type": "ContextRequired",
+  "occurred_at": "2026-10-05T00:00:00Z",
+  "payload": {
+    "domain_model_hash": "<64 lowercase hex>",
+    "world_ref": "world:acme@sha256:<64 lowercase hex>",
+    "namespace": "agentic_capability_loop",
+    "work_request_id": "wr-123",
+    "context_requirement_id": "cr-456",
+    "corpus_id": "core_docs",
+    "query": "connection pooling",
+    "max_results": 10
+  },
+  "required": true
 }
 ```
+`world_ref` is required and must be well formed; an alias such as `world:acme` is rejected before any retrieval.
 
 #### Response Result Schema
 ```json
 {
-  "schema_version": "1.0.0",
-  "event_type": "ContextPacketCreated",
-  "source_agent": "context-kernel",
-  "event_id": "evt_ck_01",
-  "caused_by": "evt_swe_01",
-  "context_packet": {
-    "context_packet_id": "ctx_01",
-    "corpus_id": "core_docs",
-    "outcome": "cited",
-    "citations": [
-      {
-        "uri": "docs/db.md",
-        "heading": "Connection Pooling",
-        "excerpt": "..."
-      }
-    ]
-  }
+  "context_envelope": {
+    "schema_version": "v1",
+    "event_type": "ContextPacketCreated",
+    "source_agent": "context-kernel",
+    "event_id": "<ulid>",
+    "payload": {
+      "domain_model_hash": "<64 lowercase hex>",
+      "world_ref": "world:acme@sha256:<64 lowercase hex>",
+      "retrieval_completeness": "complete",
+      "omissions": [],
+      "work_request_id": "wr-123",
+      "context_requirement_id": "cr-456",
+      "context_packet_id": "ctx_<ulid>",
+      "corpus_id": "core_docs",
+      "citations": [
+        {"citation_id": "cit_<ulid>", "source": "docs/db.md", "content": "...", "fetched_at": "...", "truncated": false}
+      ]
+    },
+    "provenance": {"origin": "context-kernel", "chain": ["domain_model_hash:...", "caused_by:evt_swe_01"]}
+  },
+  "context_packet": { "...": "the same payload fields" },
+  "outcome": "cited",
+  "reason": null
 }
 ```
+`outcome` is `cited`, `no_context_governed` (required, zero citations) or `empty_optional`. `retrieval_completeness` is `complete`, `partial` or `none`; `omissions` lists `max_results_reached` and/or `citation_content_truncated`.
 
 ---
 

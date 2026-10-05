@@ -542,7 +542,7 @@ fn e2_context_required(wr: &str, cr: &str, corpus_id: &str) -> serde_json::Value
         "event_type": "ContextRequired",
         "occurred_at": "2026-08-25T00:00:00Z",
         "payload": {
-            "domain_model_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "domain_model_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "world_ref": "world:test@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "namespace": "agentic_capability_loop",
             "work_request_id": wr,
             "context_requirement_id": cr,
@@ -569,7 +569,11 @@ fn context_required_served_over_stdio_returns_cited_packet() {
     )
     .unwrap();
 
-    let input = tool_call(1, "context_required", e2_context_required("wr-stdio", "cr-stdio", "loop-docs"));
+    let input = tool_call(
+        1,
+        "context_required",
+        e2_context_required("wr-stdio", "cr-stdio", "loop-docs"),
+    );
 
     let mut cmd = Command::cargo_bin("context-kernal").unwrap();
     cmd.env("CK_CONTEXT_CORPUS_ROOT", corpus_root.to_str().unwrap())
@@ -933,7 +937,7 @@ enabled = true
             "schema_version":"v1","event_id":"22222222-2222-3333-4444-555555555555",
             "source_agent":"swe-seed","event_type":"ContextRequired",
             "occurred_at":"2026-08-25T00:00:00Z",
-            "payload":{"domain_model_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "payload":{"domain_model_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "world_ref": "world:test@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                        "namespace":"agentic_capability_loop","work_request_id":"wr-deny",
                        "context_requirement_id":"cr-deny","corpus_id":"other-corpus",
                        "query":"x","max_results":1}
@@ -986,7 +990,7 @@ enabled = true
             "schema_version":"v1","event_id":"33333333-3333-3333-4444-555555555555",
             "source_agent":"swe-seed","event_type":"ContextRequired",
             "occurred_at":"2026-08-25T00:00:00Z",
-            "payload":{"domain_model_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "payload":{"domain_model_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "world_ref": "world:test@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                        "namespace":"agentic_capability_loop","work_request_id":"wr-cite",
                        "context_requirement_id":"cr-cite","corpus_id":"loop-docs",
                        "query":"context packet","max_results":5}

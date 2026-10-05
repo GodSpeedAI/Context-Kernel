@@ -281,3 +281,11 @@
 - Alternatives considered: Joining through documents table at query time; rejected as slower for vector search. Separate index table; rejected as redundant.
 - Evidence in codebase: `crates/ck-vector/src/lib.rs`.
 - Consequences: Vector search respects data boundaries; remove_chunk_embeddings_by_document enables clean document deletion.
+
+## Decision: Context packets pin world_ref and state retrieval completeness
+- Date: 2026-10-05
+- Context: CEP-0008 world_ref migration Stage 9. Packets carried only a bare `domain_model_hash`, and a packet cut off at `max_results` looked identical to a complete one.
+- Decision: `ContextRequired` ingress requires a well-formed `world_ref` (syntax only; no digest recomputation). The packet echoes it unchanged and carries `retrieval_completeness` (complete/partial/none) plus machine-readable `omissions`. Hitting the cap with a further match, or truncating citation content, is `partial`.
+- Alternatives considered: deriving `world_ref` from `domain_model_hash` (rejected: different identity scheme, DomainForge owns it); making `world_ref` optional (rejected: fail-closed on consequential paths).
+- Evidence in codebase: `crates/ck-mcp/src/agentic_capability_loop.rs`, `crates/ck-mcp/tests/acl_context_agent.rs`, governing spec `.agents/specs/cep-world-ref-migration.spec.md` in the sea-rs migration worktree.
+- Consequences: SWE_SEED must send `world_ref` (Stage 9, same migration). Legacy requests without it are refused.
