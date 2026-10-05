@@ -542,7 +542,7 @@ fn e2_context_required(wr: &str, cr: &str, corpus_id: &str) -> serde_json::Value
         "event_type": "ContextRequired",
         "occurred_at": "2026-08-25T00:00:00Z",
         "payload": {
-            "domain_model_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "domain_model_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "world_ref": "world:test@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "namespace": "agentic_capability_loop",
             "work_request_id": wr,
             "context_requirement_id": cr,
@@ -933,7 +933,7 @@ enabled = true
             "schema_version":"v1","event_id":"22222222-2222-3333-4444-555555555555",
             "source_agent":"swe-seed","event_type":"ContextRequired",
             "occurred_at":"2026-08-25T00:00:00Z",
-            "payload":{"domain_model_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "payload":{"domain_model_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "world_ref": "world:test@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                        "namespace":"agentic_capability_loop","work_request_id":"wr-deny",
                        "context_requirement_id":"cr-deny","corpus_id":"other-corpus",
                        "query":"x","max_results":1}
@@ -986,7 +986,7 @@ enabled = true
             "schema_version":"v1","event_id":"33333333-3333-3333-4444-555555555555",
             "source_agent":"swe-seed","event_type":"ContextRequired",
             "occurred_at":"2026-08-25T00:00:00Z",
-            "payload":{"domain_model_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "payload":{"domain_model_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "world_ref": "world:test@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                        "namespace":"agentic_capability_loop","work_request_id":"wr-cite",
                        "context_requirement_id":"cr-cite","corpus_id":"loop-docs",
                        "query":"context packet","max_results":5}

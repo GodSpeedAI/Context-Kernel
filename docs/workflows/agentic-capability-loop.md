@@ -63,6 +63,14 @@ When `context_required` is invoked over stdio or SSE, `ck-mcp::McpService::handl
    - `domain_model_hash` must be a 64-character lowercase SHA-256 hexadecimal string.
    - Rejects the fallback pseudo-hash (`FALLBACK_PSEUDO_HASH = "dc144cbd71a483431301ca1bf32e95c014af4edba8dbcc525f505310e30a107e"`).
    - Rejects all-zero placeholder digests. Context Kernel never manufactures domain identities.
+6. **World Identity Gate (`verify_world_ref`)**:
+   - `payload.world_ref` must be `world:<name>@sha256:<64 lowercase hex>`. A missing value, a mutable alias (`world:<name>`) or a label is rejected before any retrieval.
+   - Context Kernel checks syntax only. It does not recompute the digest; SEA-Forge and DomainForge own that.
+   - The packet echoes `world_ref` unchanged. `domain_model_hash` stays as legacy identity and is never turned into a `world_ref`.
+
+### Retrieval completeness
+
+Every packet carries `retrieval_completeness` (`complete`, `partial`, `none`) and `omissions[]`. `complete` means every unit matching the query in the corpus was returned in full. Reaching `max_results` with a further match (`max_results_reached`) or cutting a citation to its first 500 characters (`citation_content_truncated`, also flagged per citation as `truncated`) makes the packet `partial`. Zero citations is `none`. Completeness is relative to the query and corpus, never a claim about reality, and a consumer must not read `partial` as sufficient.
 
 ---
 

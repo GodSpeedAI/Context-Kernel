@@ -256,6 +256,7 @@ Must be a canonical v1 envelope stamped by `swe_seed`:
   "source_agent": "swe_seed",
   "event_id": "evt_swe_01",
   "domain_model_hash": "a1b2c3...64-char-sha256...",
+  "world_ref": "world:acme@sha256:<64-char-sha256>",
   "work_request_id": "wr-123",
   "context_requirement_id": "cr-456",
   "corpus_id": "core_docs",
@@ -276,6 +277,9 @@ Must be a canonical v1 envelope stamped by `swe_seed`:
     "context_packet_id": "ctx_01",
     "corpus_id": "core_docs",
     "outcome": "cited",
+    "world_ref": "world:acme@sha256:<64-char-sha256>",
+    "retrieval_completeness": "complete",
+    "omissions": [],
     "citations": [
       {
         "uri": "docs/db.md",

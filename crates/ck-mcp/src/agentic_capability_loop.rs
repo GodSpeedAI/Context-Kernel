@@ -62,6 +62,76 @@ pub fn verify_domain_identity(hash: &str) -> Result<(), DomainIdentityError> {
     Ok(())
 }
 
+/// Why a candidate `world_ref` cannot enter the boundary (CEP-0008 / Stage 9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorldRefError {
+    /// Not `world:<name>@sha256:<64 lowercase hex>` with a valid name.
+    Malformed,
+}
+
+impl std::fmt::Display for WorldRefError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "world_ref is not world:<name>@sha256:<64 lowercase hex digest>"
+        )
+    }
+}
+
+/// Syntax-only gate for a `world_ref`. CK neither recomputes nor verifies the
+/// digest (SEA-Forge and DomainForge own that); it only refuses anything that
+/// is not a pinned, well-formed reference, so a mutable alias or label can
+/// never stand in for a world revision.
+pub fn verify_world_ref(world_ref: &str) -> Result<(), WorldRefError> {
+    let (name_part, digest) = world_ref
+        .split_once("@sha256:")
+        .ok_or(WorldRefError::Malformed)?;
+    let name = name_part
+        .strip_prefix("world:")
+        .ok_or(WorldRefError::Malformed)?;
+    let digest_ok = digest.len() == 64
+        && digest
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    // name: [a-z][a-z0-9]*(?:[._-][a-z0-9]+)*, at most 64 chars
+    let mut chars = name.chars().peekable();
+    let name_ok = name.len() <= 64 && chars.next().is_some_and(|c| c.is_ascii_lowercase()) && {
+        let mut prev_sep = false;
+        let mut ok = true;
+        for c in chars.by_ref() {
+            if c.is_ascii_lowercase() || c.is_ascii_digit() {
+                prev_sep = false;
+            } else if matches!(c, '.' | '_' | '-') && !prev_sep {
+                prev_sep = true;
+            } else {
+                ok = false;
+                break;
+            }
+        }
+        ok && !prev_sep
+    };
+    if digest_ok && name_ok {
+        Ok(())
+    } else {
+        Err(WorldRefError::Malformed)
+    }
+}
+
+/// How much of the matching corpus the packet carries. Relative to the query
+/// and corpus; never a claim about reality. Only `Complete` may be read as
+/// "everything that matched is here, in full".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RetrievalCompleteness {
+    Complete,
+    Partial,
+    None,
+}
+
+/// Omission reasons (machine-readable) recorded on a non-complete packet.
+pub const OMISSION_MAX_RESULTS: &str = "max_results_reached";
+pub const OMISSION_CONTENT_TRUNCATED: &str = "citation_content_truncated";
+
 /// Why a required-context acquisition resolved with zero citations.
 ///
 /// Frozen edge E3: missing corpus configuration MUST NOT silently settle as
@@ -108,6 +178,8 @@ pub struct EventEnvelope {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextRequiredPayload {
     pub domain_model_hash: String,
+    /// Immutable semantic-world reference the request is pinned to.
+    pub world_ref: String,
     pub work_request_id: String,
     pub context_requirement_id: String,
     pub corpus_id: String,
@@ -126,11 +198,19 @@ pub struct Citation {
     pub source: String,
     pub content: String,
     pub fetched_at: String,
+    /// True when `content` is a prefix of the source rather than all of it.
+    #[serde(default)]
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextPacketCreatedPayload {
     pub domain_model_hash: String,
+    /// Echo of the request's `world_ref`, unchanged.
+    pub world_ref: String,
+    pub retrieval_completeness: RetrievalCompleteness,
+    #[serde(default)]
+    pub omissions: Vec<String>,
     pub context_packet_id: String,
     pub context_requirement_id: String,
     pub work_request_id: String,
@@ -175,7 +255,9 @@ impl AclContextAgent {
         authority_decision_id: Option<&str>,
         authority_reference: Option<&str>,
     ) -> Result<ContextAcquisition, anyhow::Error> {
-        let (citations, reason) = self.resolve_citations(payload)?;
+        verify_world_ref(&payload.world_ref)
+            .map_err(|e| anyhow::anyhow!("world_ref rejected: {e}"))?;
+        let (citations, reason, more_available) = self.resolve_citations(payload)?;
         if citations.is_empty() {
             let reason = reason.expect("empty citations always carry a reason");
             let mut packet = self.packet_for(
@@ -187,12 +269,25 @@ impl AclContextAgent {
             packet.citations.clear();
             return Ok(ContextAcquisition::NoContext(packet, reason));
         }
-        let packet = self.packet_for(
+        let mut omissions = Vec::new();
+        if more_available {
+            omissions.push(OMISSION_MAX_RESULTS.to_string());
+        }
+        if citations.iter().any(|c| c.truncated) {
+            omissions.push(OMISSION_CONTENT_TRUNCATED.to_string());
+        }
+        let mut packet = self.packet_for(
             payload,
             citations,
             authority_decision_id,
             authority_reference,
         )?;
+        packet.retrieval_completeness = if omissions.is_empty() {
+            RetrievalCompleteness::Complete
+        } else {
+            RetrievalCompleteness::Partial
+        };
+        packet.omissions = omissions;
         Ok(ContextAcquisition::Cited(packet))
     }
 
@@ -206,6 +301,9 @@ impl AclContextAgent {
         let context_packet_id = format!("ctx_{}", Ulid::new());
         Ok(ContextPacketCreatedPayload {
             domain_model_hash: payload.domain_model_hash.clone(),
+            world_ref: payload.world_ref.clone(),
+            retrieval_completeness: RetrievalCompleteness::None,
+            omissions: Vec::new(),
             context_packet_id,
             context_requirement_id: payload.context_requirement_id.clone(),
             work_request_id: payload.work_request_id.clone(),
@@ -234,7 +332,7 @@ impl AclContextAgent {
     fn resolve_citations(
         &self,
         payload: &ContextRequiredPayload,
-    ) -> Result<(Vec<Citation>, Option<NoContextReason>), anyhow::Error> {
+    ) -> Result<(Vec<Citation>, Option<NoContextReason>, bool), anyhow::Error> {
         // Route learning-proposals corpus to JSONL ledger
         if payload.corpus_id.starts_with("learning-proposals") {
             return self.resolve_from_learning_proposals(payload);
@@ -249,15 +347,15 @@ impl AclContextAgent {
             Ok(p) => p,
             Err(_) => {
                 // corpus root not configured / missing — explicit, never silent
-                return Ok((vec![], Some(NoContextReason::CorpusRootUnconfigured)));
+                return Ok((vec![], Some(NoContextReason::CorpusRootUnconfigured), false));
             }
         };
         if !corpus_dir.is_dir() {
-            return Ok((vec![], Some(NoContextReason::CorpusNotFound)));
+            return Ok((vec![], Some(NoContextReason::CorpusNotFound), false));
         }
         let canonical_dir = match corpus_dir.canonicalize() {
             Ok(p) => p,
-            Err(_) => return Ok((vec![], Some(NoContextReason::CorpusNotFound))),
+            Err(_) => return Ok((vec![], Some(NoContextReason::CorpusNotFound), false)),
         };
         if !canonical_dir.starts_with(&canonical_root) {
             anyhow::bail!(
@@ -275,40 +373,45 @@ impl AclContextAgent {
         let now = Utc::now().to_rfc3339();
 
         let mut citations = Vec::new();
+        let mut more_available = false;
         for unit in units.iter() {
-            if citations.len() >= max {
-                break;
-            }
             let raw = adapter.fetch_content(&payload.corpus_id, unit, &config)?;
             let content = String::from_utf8_lossy(&raw.bytes).into_owned();
             if query.is_empty() || content.to_lowercase().contains(&query.to_lowercase()) {
+                if citations.len() >= max {
+                    // A further match exists that the cap cuts off.
+                    more_available = true;
+                    break;
+                }
+                let truncated = content.chars().count() > 500;
                 citations.push(Citation {
                     citation_id: format!("cit_{}", Ulid::new()),
                     source: unit.uri.clone().unwrap_or_else(|| unit.external_id.clone()),
                     content: content.chars().take(500).collect(),
                     fetched_at: now.clone(),
+                    truncated,
                 });
             }
         }
         if citations.is_empty() {
-            Ok((vec![], Some(NoContextReason::NoMatchingContent)))
+            Ok((vec![], Some(NoContextReason::NoMatchingContent), false))
         } else {
-            Ok((citations, None))
+            Ok((citations, None, more_available))
         }
     }
 
     fn resolve_from_learning_proposals(
         &self,
         payload: &ContextRequiredPayload,
-    ) -> Result<(Vec<Citation>, Option<NoContextReason>), anyhow::Error> {
+    ) -> Result<(Vec<Citation>, Option<NoContextReason>, bool), anyhow::Error> {
         use std::io::{BufRead, BufReader};
 
         let ledger_path = match &self.learning_proposals_ledger {
             Some(p) => p.clone(),
-            None => return Ok((vec![], Some(NoContextReason::CorpusRootUnconfigured))),
+            None => return Ok((vec![], Some(NoContextReason::CorpusRootUnconfigured), false)),
         };
         if !ledger_path.exists() {
-            return Ok((vec![], Some(NoContextReason::CorpusNotFound)));
+            return Ok((vec![], Some(NoContextReason::CorpusNotFound), false));
         }
 
         let file = std::fs::File::open(&ledger_path)?;
@@ -318,10 +421,8 @@ impl AclContextAgent {
         let now = Utc::now().to_rfc3339();
 
         let mut citations = Vec::new();
+        let mut more_available = false;
         for line in reader.lines() {
-            if citations.len() >= max {
-                break;
-            }
             let line = line?;
             let line = line.trim();
             if line.is_empty() {
@@ -362,6 +463,10 @@ impl AclContextAgent {
                 if proposal_text.is_empty() && domain_area.is_empty() {
                     continue;
                 }
+                if citations.len() >= max {
+                    more_available = true;
+                    break;
+                }
                 citations.push(Citation {
                     citation_id: format!("cit_{}", Ulid::new()),
                     source: format!(
@@ -374,13 +479,14 @@ impl AclContextAgent {
                     ),
                     content: proposal_text,
                     fetched_at: now.clone(),
+                    truncated: false,
                 });
             }
         }
         if citations.is_empty() {
-            Ok((vec![], Some(NoContextReason::NoMatchingContent)))
+            Ok((vec![], Some(NoContextReason::NoMatchingContent), false))
         } else {
-            Ok((citations, None))
+            Ok((citations, None, more_available))
         }
     }
 }
@@ -450,6 +556,18 @@ pub fn context_packet_envelope(
     payload.insert(
         "domain_model_hash".into(),
         serde_json::Value::String(packet.domain_model_hash.clone()),
+    );
+    payload.insert(
+        "world_ref".into(),
+        serde_json::Value::String(packet.world_ref.clone()),
+    );
+    payload.insert(
+        "retrieval_completeness".into(),
+        serde_json::to_value(packet.retrieval_completeness).unwrap_or_default(),
+    );
+    payload.insert(
+        "omissions".into(),
+        serde_json::to_value(&packet.omissions).unwrap_or_default(),
     );
     payload.insert(
         "namespace".into(),

@@ -28,3 +28,7 @@ Status legend: [OPEN] unresolved · [MITIGATED] addressed but residual · [RESOL
 ## Reports
 - Audit: `.agents/reports/neatcode-audit-2026-07-29.md`.
 - Harden: `.agents/reports/neatcode-harden-2026-07-29.md`.
+
+- (2026-10-05, Stage 9) `cargo fmt --check` already failed at baseline (e.g. `crates/ck-bin/tests/cli.rs`); not fixed here.
+- (2026-10-05, Stage 9) `docs/reference/mcp-tools.md` and `docs/workflows/agentic-capability-loop.md` describe `schema_version: "1.0.0"` and a flat request, but the code gates on `"v1"` with a `payload` object. Pre-existing doc drift.
+- (2026-10-05, Stage 9) No `justfile`/`just context-check` exists in this repo although AGENTS.md requires it.
