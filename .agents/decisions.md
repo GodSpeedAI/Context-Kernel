@@ -288,4 +288,33 @@
 - Decision: `ContextRequired` ingress requires a well-formed `world_ref` (syntax only; no digest recomputation). The packet echoes it unchanged and carries `retrieval_completeness` (complete/partial/none) plus machine-readable `omissions`. Hitting the cap with a further match, or truncating citation content, is `partial`.
 - Alternatives considered: deriving `world_ref` from `domain_model_hash` (rejected: different identity scheme, DomainForge owns it); making `world_ref` optional (rejected: fail-closed on consequential paths).
 - Evidence in codebase: `crates/ck-mcp/src/agentic_capability_loop.rs`, `crates/ck-mcp/tests/acl_context_agent.rs`, governing spec `.agents/specs/cep-world-ref-migration.spec.md` in the sea-rs migration worktree.
+
+## Decision: The CEP `godspeed.context_bundle` envelope is the ONE canonical cross-system context artifact (2026-10-07)
+- Context: CK crossed the GodSpeed boundary with a proprietary `ContextPacketCreated` payload; SWE_SEED/SEA-Forge consumed only that legacy wire. The task mandates CEP-0008 `godspeed.context_bundle` v1.0.0 as the boundary representation, dual-read/single-write migration, and no parallel packet protocol.
+- Decision: `context_required` emits the CEP envelope (integrity-stamped) as canonical and keeps the legacy `context_envelope`/`context_packet` as a deprecated dual-read window. SWE_SEED adjudicates the bundle first (kind/profile/world/correlation/completeness/integrity) and binds `context_bundle_ref` into E4/E7; SEA-Forge records it on `GovernedWorkIntent`; sxr carries it into E8. Legacy identity (`context_packet_ref`) stays as long as SEA-Forge's intake requires it.
+- Alternatives: a second CK wire schema (rejected — parallel protocol); dropping legacy immediately (rejected — breaks SEA-Forge intake + SWE_SEED tests mid-migration).
+- Evidence: `crates/ck-mcp/src/cep_bundle.rs`, `crates/swe-seed-core/src/federation/context_bundle.rs`, SEA-Forge `governed_work_ingress.rs` 4c gate, `scripts/e2e-world-loop.sh` EXIT=0.
+- Consequences: future consumers bind `envelope_id` (occurrence), `integrity.content_hash` (content), `scope.world_ref` (semantic world) as three separate identities.
+
+## Decision: Canonical bundle hashes normalize floats (2026-10-07)
+- Context: serde_json's fast float parser drifts 1 ULP on long float spellings, so a bundle's integrity hash did not recompute after any parse round-trip (e2e hop 2 `integrity mismatch`).
+- Decision: `canonical_json`/`bundle_content_hash` normalize every float to 6 decimals and flatten `-0.0` before hashing, identically on CK and SWE_SEED. Documented as a MUST for any consumer recomputing hashes.
+- Evidence: `ck-mcp::cep_bundle::canonical_json`, `context_bundle::bundle_content_hash`, `context_bundle_adjudication.rs` tamper tests.
+- Consequences: hash stability across languages/parsers; scores round to 1e-6 in hashed space.
+
+## Decision: Context access is not action authority (2026-10-07)
+- Context: legacy code/docs emitted `ContextAuthorized` with `allow`/`deny` (POL-ACL-002), colliding with SEA-Forge's authority vocabulary.
+- Decision: CK reports context ACCESS (`accessible`/`inaccessible`/`requires_scope`) only; the Python integration shim emits `ContextAccessEvaluated`; docs updated. SEA-Forge remains the only action-authority producer.
+- Consequences: no `allow/deny/escalate` semantics remain in CK; bundle `access` never implies capability.
+
+## Decision: Retrieval contract is ranked excerpts with resolvable locators (2026-10-07)
+- Context: the legacy packet carried raw file content with a 500-char truncation rule (`citation_content_truncated` omission); the real pipeline chunks/normalizes documents.
+- Decision: the bounded representation is ranked excerpts + locator (`target_uri_or_id` + anchor + `target_hash` + `target_version`); excerpt truncation is a per-reference `content_truncated` limitation, NOT a retrieval-completeness omission. Completeness covers retrieval coverage (results/budgets/freshness/concepts).
+- Evidence: `acl_context_agent.rs::excerpt_truncation_is_a_reference_limitation_not_a_retrieval_omission`.
+- Consequences: complete remains achievable for short and long documents; full text resolves at the cited locator.
+
+## Decision: Settlement-backed Context Effect ledger for retrieval calibration (2026-10-07)
+- Context: post-settlement feedback needed without building a second developmental-memory/capability system.
+- Decision: append-only JSONL `ContextEffectStore` (CK_CONTEXT_EFFECT_LEDGER), ingestion only with a settlement/evidence `evidence_ref` (self-reports rejected), world-scoped, idempotent by `effect_id`; only `source_contradicted`/`source_stale` demote future retrieval; historical bundles never rewritten.
+- Evidence: `ck-app/src/context_effect.rs`, `context_calibration.rs` tests, `ingest_context_effects` MCP tool.
 - Consequences: SWE_SEED must send `world_ref` (Stage 9, same migration). Legacy requests without it are refused.

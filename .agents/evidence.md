@@ -709,4 +709,34 @@
 - Timestamp/context: 2026-06-02 deployment readiness session
 - Proof classification: release-gate-proof
 - Notes: Binary supports `migrate`, `doctor`, `export-schema`, and `serve` commands. All 18 deployment readiness tasks complete.
+
+## Claim: The GodSpeed context path uses the real CK retrieval pipeline
+- Evidence type: code + test
+- Files: `crates/ck-app/src/context.rs` (`AppServices::resolve_context`), `crates/ck-mcp/src/agentic_capability_loop.rs` (`acquire_context` -> `resolve_context`; ad hoc substring retrieval deleted), `crates/ck-mcp/tests/context_pipeline.rs`
+- Confidence: high
+- Notes: lexical + semantic-when-configured, corpus filtering, private-scope enforcement, trust/freshness, ranking, budgets, deterministic refs all covered by tests through `query_reference`.
+
+## Claim: The cross-system context artifact is a valid CEP `godspeed.context_bundle` v1.0.0 with CEP integrity
+- Evidence type: code + test + snapshot
+- Files: `crates/ck-mcp/src/cep_bundle.rs` (projection, `content_hash`, `verify_envelope_integrity`, `validate_context_bundle`), `crates/ck-mcp/tests/context_bundle_conformance.rs`, `/tmp/e2e-smoke/e3_context_bundle.cep.json` shape, CEP reference validator via `CEP_REPO=/home/sprime01/projects/cep` (green)
+- Confidence: high
+- Notes: complete/partial/none truthful; wrong kind/profile/version, missing/malformed world_ref, falsely-complete, missing omissions, tampered integrity all refused (tests).
+
+## Claim: SWE_SEED consumes the bundle and binds its identity through SEA-Forge and RealityTrace into settlement lineage
+- Evidence type: test
+- Files: `swe-seed-core/src/federation/context_bundle.rs` (adjudication + integrity recompute), `governed_submission.rs` (`context_bundle_ref` on E4), `proof_completed.rs` (E7), SEA-Forge `governed_work_ingress.rs` 4c (`GovernedWorkIntent.context_bundle_ref`), sxr `evidence_emit.rs` (E8), `scripts/e2e-world-loop.sh` run 2026-10-07 EXIT=0
+- Confidence: high
+- Notes: e2e driver asserts bundle identity at hop 2/3; refusals (wrong world, unknown world, denied) all held.
+
+## Claim: Context access semantics no longer duplicate SEA-Forge action authority
+- Evidence type: code + config/docs
+- Files: `ck-app/src/context.rs` (`ContextAccess`), `ck-mcp/src/lib.rs` (response `access`), `docs/mcp-contracts.md`, `integration/agentic_capability_loop/adapters.py` (`ContextAccessEvaluated`)
+- Confidence: high
+- Notes: no allow/deny/escalate vocabulary remains in the CK Rust path.
+
+## Claim: Settlement-backed calibration has a clean prospective path
+- Evidence type: code + test
+- Files: `ck-app/src/context_effect.rs`, `ck-mcp/src/lib.rs` (`ingest_context_effects`), `crates/ck-mcp/tests/context_calibration.rs`
+- Confidence: high
+- Notes: evidence-gated ingestion (self-reports rejected), append-only world-scoped ledger, prospective demotion in `resolve_context`, historical bundles untouched.
 - Confidence: high

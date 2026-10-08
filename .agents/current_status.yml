@@ -1,70 +1,60 @@
 # Resumable handoff state. Keep current enough for any agent to resume cold.
 objective: >
-  Construct a self-contained, Diátaxis-structured, progressive-disclosure technical
-  knowledge system for Context Kernel with DeepWiki architecture guides and Google Code
-  Wiki source traceability across all 20 crates.
-worktree_state: modified (documentation knowledge system files created and verified)
+  CEP context_bundle architectural completion: make Context Kernel the bounded
+  representation compiler of the GodSpeed loop (typed Context Requirement ->
+  real retrieval pipeline -> CEP-0008 godspeed.context_bundle v1.0.0 ->
+  SWE_SEED/SEA-Forge/RealityTrace lineage -> settlement-backed calibration).
+worktree_state: implementation complete, memory files updated, commits pending
 changed_files:
-  - docs/README.md
-  - docs/documentation-map.md
-  - docs/architecture.md
-  - docs/source-map.md
-  - docs/mental-model.md
-  - docs/concepts.md
-  - docs/troubleshooting.md
-  - docs/subsystems/core-and-domain.md
-  - docs/subsystems/storage-and-persistence.md
-  - docs/subsystems/retrieval-and-ranking.md
-  - docs/subsystems/source-adapters.md
-  - docs/subsystems/application-orchestration.md
-  - docs/subsystems/mcp-and-protocols.md
-  - docs/subsystems/runtime-and-cli.md
-  - docs/workflows/service-lifecycle-and-startup.md
-  - docs/workflows/documentation-ingestion-and-refresh.md
-  - docs/workflows/reference-query-and-resolution.md
-  - docs/workflows/session-context-continuity.md
-  - docs/workflows/agentic-capability-loop.md
-  - docs/explanation/architectural-decisions.md
-  - docs/explanation/retrieval-and-ranking-design.md
-  - docs/explanation/retention-and-memory-model.md
-  - docs/explanation/known-limits-and-debt.md
-  - docs/tutorials/01-first-steps.md
-  - docs/tutorials/02-local-documentation-indexing.md
-  - docs/how-to/configure-sse-with-auth.md
-  - docs/how-to/manage-database-and-migrations.md
-  - docs/how-to/configure-semantic-retrieval.md
-  - docs/how-to/implement-a-source-adapter.md
-  - docs/reference/cli.md
-  - docs/reference/configuration.md
-  - docs/reference/mcp-tools.md
-  - docs/reference/database-schema.md
-  - .agents/current_plan.md
-  - .agents/work_log.md
-  - .agents/decisions.md
-  - .agents/evidence.md
-  - .agents/project_state.md
-  - .agents/current_status.yml
+  - crates/ck-core/src/types/context.rs (new; shared completeness/no-context/omission/world gate)
+  - crates/ck-core/src/types/mod.rs
+  - crates/ck-core/src/entities/retrieval.rs (Budget derives)
+  - crates/ck-app/src/context.rs (new; ContextRequirement/ContextAccess/resolve_context)
+  - crates/ck-app/src/context_effect.rs (new; settlement-backed Context Effect ledger)
+  - crates/ck-app/src/lib.rs (adapter-by-kind, visibility-preserving ingest, effect store)
+  - crates/ck-app/Cargo.toml (serde)
+  - crates/ck-storage-sqlite/src/lib.rs (UPSERT upsert_source/upsert_corpus)
+  - crates/ck-search-fts/src/lib.rs (empty query = bounded browse)
+  - crates/ck-ranker/src/lib.rs (component-preserving score_breakdown)
+  - crates/ck-mcp/src/{agentic_capability_loop,cep_bundle,lib}.rs
+  - crates/ck-mcp/tests/{acl_context_agent,e2e_world_loop,context_pipeline,context_bundle_conformance,context_calibration,common/mod}.rs
+  - crates/ck-mcp/Cargo.toml (dev-deps)
+  - crates/ck-bin/src/main.rs (LearningProposalsAdapter, CK_CONTEXT_EFFECT_LEDGER)
+  - crates/ck-bin/tests/cli.rs
+  - docs/mcp-contracts.md
+  - integration/agentic_capability_loop/{adapters,__init__}.py
 completed_work:
-  - Researched and reconstructed system model across all 20 crates, schemas, CLI entry points, and tests
-  - Authored documentation homepage and navigation-by-intent hub (`docs/README.md`)
-  - Created documentation catalog (`docs/documentation-map.md`) classifying every page by Diátaxis and audience need
-  - Authored canonical architecture overview (`docs/architecture.md`) with 6 distinct views and Mermaid diagrams
-  - Authored symbol-level traceability index (`docs/source-map.md`) mapping concepts, ports, and tools to source files
-  - Authored foundational mental model (`docs/mental-model.md`) and domain vocabulary (`docs/concepts.md`)
-  - Authored 7 comprehensive subsystem guides (`docs/subsystems/*`)
-  - Authored 5 detailed execution workflows with sequence traces (`docs/workflows/*`)
-  - Authored 4 design rationale and architectural explanation documents (`docs/explanation/*`)
-  - Authored 2 hands-on tutorials (`docs/tutorials/*`)
-  - Authored 4 operational how-to guides (`docs/how-to/*`)
-  - Authored 4 technical reference manuals and operational failure diagnostics (`docs/reference/*`, `docs/troubleshooting.md`)
-  - Updated all required `.agents/` memory files (`current_plan.md`, `work_log.md`, `decisions.md`, `evidence.md`, `project_state.md`, `current_status.yml`)
+  - Typed ContextRequirement + AppServices::resolve_context (real query_reference pipeline; POL-ACL-002 strict; budgets; freshness; concepts; calibration)
+  - GodSpeed agent rewired through resolve_context; ad hoc substring retrieval deleted; traversal still a hard refusal
+  - CEP godspeed.context_bundle projector with integrity (float-normalized canonical JSON) + structural validator + verify_envelope_integrity
+  - complete/partial/none truthful; access semantics (accessible/inaccessible/requires_scope) replace authorization language
+  - Settlement-backed Context Effect ledger + ingest_context_effects MCP tool + prospective demotion
+  - SWE_SEED-cep: bundle adjudication (dual-read), context_bundle_ref on E4/E7, persistent-service client + negotiation
+  - SEA-Forge worktree branch cep-bundle-lineage: GovernedWorkIntent.context_bundle_ref (world-checked, content-addressed)
+  - sxr: context_bundle_ref carried E7 -> E8
 verification:
-  - Static cross-referencing of all symbol, trait, struct, table, CLI flag, and error code citations against repository source code
-  - Verified that unwired crates (`ck-adapter-github`, `ck-adapter-web`, `ck-scheduler`) are clearly identified as tracked debt rather than claimed as shipped CLI features
-  - Verified that internal links between documentation pages resolve accurately
+  - CK cargo test --workspace: 265 passed / 0 failed (baseline 237)
+  - SWE_SEED cargo test -p swe-seed-core: 437 passed / 0 failed (baseline 428)
+  - sxr cargo test --workspace: all green (one load-flaky writer_lock test passes in isolation/quiet rerun)
+  - sea-forge-server cargo test: green after cargo build -p sea-forge-cli (pre-existing test prerequisite)
+  - live CK binary <-> SWE_SEED client test: green (bundle verified + identity bound)
+  - scripts/e2e-world-loop.sh (SEA worktree driver, all repos, CEP_REPO set): EXIT=0
+    - hops 1/0/2/3/4/5/6 all green; CEP reference validator green;
+      refusals: E4 in another world, unregistered world, denied request all held
+  - CEP_REPO-gated conformance test (complete/partial/none) green
 remaining_steps:
-  - User review of the comprehensive documentation system
-blockers: []
+  - Commit (code+tests first, .agents memory files second) on each modified repo
+  - Push intended branches after validation (validation passed 2026-10-07)
+blockers: none
 decisions:
-  - Combined Diátaxis, DeepWiki architecture models, and Google Code Wiki traceability into 9 progressive disclosure layers
-  - Explicitly separated verified runtime behaviors from unwired library adapters and known debts in documentation
+  - CEP godspeed.context_bundle v1.0.0 is THE canonical cross-system context artifact; legacy ContextPacketCreated dual-read window is deprecated
+  - Bundle hashes normalize floats to 6 decimals (serde_json 1-ULP float parse drift) -- MUST for any consumer
+  - Context access != action authority (SEA-Forge alone owns allow/deny)
+  - Retrieval contract = ranked excerpts + resolvable locators (truncation = reference limitation, not omission)
+  - UPSERT (not INSERT OR REPLACE) for FK-parented rows; ingest preserves registered corpus visibility
+  - Calibration: settlement-backed Context Effect ledger only; self-reports rejected; prospective only
+deps:
+  - SWE_SEED-cep branch e2e/world-loop (bundle consumption + lineage)
+  - SEA-Forge worktree .tmp/ref/SEA-Forge branch cep-bundle-lineage (intent.context_bundle_ref)
+  - sxr branch migration/cep-world-evidence (E8 bundle ref)
+  - cep branch profiles/context-bundle (read-only validator, CEP_REPO)

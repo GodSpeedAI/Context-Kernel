@@ -286,4 +286,57 @@
   - `crates/ck-bin/tests/cli.rs` — added 3 new integration tests (refresh_source, SSE mode, citations)
 - Tests run: `cargo test --workspace` (57 tests pass), `cargo fmt --check` (clean), `cargo clippy --workspace` (zero warnings)
 - Results: All milestones 4-6 acceptance criteria met.
+
+## 2026-10-07 — CEP context_bundle architectural completion (GodSpeed boundary)
+
+- Objective: make CK the bounded representation compiler: typed Context
+  Requirement -> real retrieval pipeline -> CEP-0008 `godspeed.context_bundle`
+  -> SWE_SEED/SEA-Forge/RealityTrace lineage -> settlement-backed calibration.
+- Changed (CK):
+  - `crates/ck-core/src/types/context.rs` (new): shared `RetrievalCompleteness`,
+    `NoContextReason` (incl. `corpus_scope_unresolved`, `budget_exhausted`,
+    `no_fresh_content`), omission codes, `verify_world_ref` gate.
+  - `crates/ck-app/src/context.rs` (new): typed `ContextRequirement`,
+    `ContextAccess` (accessible/inaccessible/requires_scope — never action
+    authority), `ContextResolution`, `AppServices::resolve_context` (real
+    query_reference pipeline; POL-ACL-002 strict private scope; budgets;
+    freshness; required-concept accounting; calibration hook).
+  - `crates/ck-app/src/context_effect.rs` (new): settlement-backed Context
+    Effect ledger (append-only JSONL, evidence-gated ingestion, world-scoped
+    prospective demotion) + `AppServices::ingest_context_effects`.
+  - `crates/ck-app/src/lib.rs`: kind-selected source adapters
+    (`with_source_adapter_kind`), visibility-preserving ingestion,
+    `with_context_effect_store`, `corpus()`.
+  - `crates/ck-storage-sqlite/src/lib.rs`: `upsert_source`/`upsert_corpus` now
+    UPSERT (INSERT OR REPLACE cascade-deleted the index).
+  - `crates/ck-ranker/src/lib.rs`: compact score_breakdown keeps participating
+    components (fts/trust_score/freshness/semantic/calibration).
+  - `crates/ck-search-fts/src/lib.rs`: empty query = bounded browse.
+  - `crates/ck-mcp`: `AclContextAgent` resolves through `resolve_context`
+    (ad hoc substring retrieval deleted); `handle_context_required` emits the
+    canonical CEP `context_bundle` (integrity-stamped, truthful
+    complete/partial/none) + deprecated dual-read legacy fields + `access`;
+    `ingest_context_effects` tool; `cep_bundle` projector with
+    `canonical_json` (float-normalized) + `content_hash` +
+    `verify_envelope_integrity` + `validate_context_bundle`.
+  - `crates/ck-bin`: `LearningProposalsAdapter` wiring, `CK_CONTEXT_EFFECT_LEDGER`.
+  - docs/mcp-contracts.md + integration Python adapter: authorization language
+    retired (`ContextAccessEvaluated`), canonical bundle documented.
+  - Tests: `context_pipeline.rs` (12), `context_bundle_conformance.rs` (9),
+    `context_calibration.rs` (6), rewritten `acl_context_agent.rs` (10),
+    `e2e_world_loop.rs`, ck-mcp lib tests, ck-bin cli tests.
+- Changed (SWE_SEED-cep): `context_bundle.rs` (bundle adjudication + integrity
+  recompute, float-normalized), dual-read `adjudicate_context_response`,
+  `context_bundle_ref` bound into E4/E7, persistent-service client mode
+  (`SWE_SEED_CONTEXT_KERNEL_URL`, std-only HTTP) + `negotiate()`; new tests
+  `context_bundle_adjudication.rs` (9) + e2e hop assertions.
+- Changed (SEA-Forge worktree `.tmp/ref/SEA-Forge`, branch `cep-bundle-lineage`):
+  `GovernedWorkIntent.context_bundle_ref` (world-checked, content-addressed)
+  + e2e lineage assertions + a wrong-world falsification test.
+- Changed (sxr): `EvidenceEmission.context_bundle_ref` carried into E8 payload
+  + e2e assertions.
+- Verified: CK 265 tests green (baseline 237); SWE_SEED 437 green (baseline
+  428 + new); sxr workspace green; sea-forge-server green; live CK<->SWE_SEED
+  test green (real binary); `scripts/e2e-world-loop.sh` EXIT=0 (all 7 hops,
+  CEP reference validator, 3 refusal paths); CEP_REPO-gated conformance green.
 - Notes: Fixed clippy warnings (option_map_unit_fn, unnecessary_lazy_evaluations). Used parallel subagent delegation for integration tests and periodic refresh implementation.

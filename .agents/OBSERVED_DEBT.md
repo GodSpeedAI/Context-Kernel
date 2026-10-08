@@ -7,7 +7,7 @@ Status legend: [OPEN] unresolved · [MITIGATED] addressed but residual · [RESOL
 - [RESOLVED] Config reload drops MCP tool/corpus authorization policy (+ context agent).
 - [RESOLVED] SQLite enum codecs do not round-trip reachable persisted variants.
 - [MITIGATED] Context/ingestion write consistency: refresh no longer accumulates; artifact payload compensated on metadata-write failure. RESIDUAL: FTS indexing and document/chunk writes use separate connections — a mid-ingest crash can leave a partial FTS index. Full single-transaction coverage needs the storage connection threaded into `FtsSearch` (restructure).
-- [MITIGATED] `context_required` still trusts caller-supplied `is_private`/`scope_claim`. Mitigated by SSE corpus allowlist (`corpus_ids_from_arguments`) + path containment; server-side privacy registry not implemented.
+- [RESOLVED] `context_required` still trusts caller-supplied `is_private`/`scope_claim`. Mitigated by SSE corpus allowlist (`corpus_ids_from_arguments`) + path containment; server-side privacy registry not implemented. (2026-10-07: RESOLVED — registered `corpora.visibility` is now authoritative in `resolve_context`; private corpora require explicit `scope_claim` (POL-ACL-002) and return `requires_scope` otherwise; re-ingestion preserves registered visibility; a caller-declared-private unregistered corpus is never auto-ingested.)
 
 ## Operational
 - [RESOLVED] Observability guard dropped immediately; config ignored.
