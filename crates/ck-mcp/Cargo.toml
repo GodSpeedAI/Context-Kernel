@@ -20,3 +20,7 @@ ulid.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+ck-storage-sqlite = { path = "../ck-storage-sqlite" }
+ck-search-fts = { path = "../ck-search-fts" }
+ck-ranker = { path = "../ck-ranker" }
+ck-artifacts = { path = "../ck-artifacts" }

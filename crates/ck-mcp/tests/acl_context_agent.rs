@@ -1,85 +1,99 @@
-//! Integration tests for AclContextAgent — Context Kernel's retrieval-only
-//! adapter. CK resolves citations and returns a packet with authority
-//! references; it does NOT create authority decisions.
+//! Integration tests for AclContextAgent — Context Kernel's thin GodSpeed
+//! adapter. Every acquisition routes through the real application retrieval
+//! pipeline (`AppServices::resolve_context`); the agent only resolves corpora,
+//! enforces the boundary, and reports access — it does NOT create authority
+//! decisions (SEA-Forge owns those).
+
+mod common;
 
 use std::fs;
 
 use ck_mcp::agentic_capability_loop::{
-    context_packet_envelope, verify_world_ref, AclContextAgent, ContextAcquisition,
-    ContextRequiredPayload, RetrievalCompleteness,
+    verify_world_ref, AclContextAgent, ContextRequiredPayload, RetrievalCompleteness,
 };
+use common::test_kernel;
 use serde_json::json;
 
-const WORLD: &str =
-    "world:test@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+fn payload(corpus_id: &str) -> ContextRequiredPayload {
+    serde_json::from_value(common::required_payload(corpus_id, None)).unwrap()
+}
 
-fn make_payload(corpus_id: &str) -> ContextRequiredPayload {
-    ContextRequiredPayload {
-        domain_model_hash: "deadbeef".to_string(),
-        world_ref: WORLD.to_string(),
-        work_request_id: "wr_test".to_string(),
-        context_requirement_id: "cr_test".to_string(),
-        corpus_id: corpus_id.to_string(),
-        query: None,
-        max_results: 10,
+fn agent_over(corpus_root: &std::path::Path) -> AclContextAgent {
+    AclContextAgent {
+        corpus_root: corpus_root.to_path_buf(),
+        learning_proposals_ledger: None,
     }
 }
 
+fn corpus_with(corpus_root: &std::path::Path, corpus_id: &str, files: &[(&str, &str)]) {
+    let root = corpus_root.join(corpus_id);
+    fs::create_dir_all(&root).unwrap();
+    for (name, text) in files {
+        fs::write(root.join(name), *text).unwrap();
+    }
+}
+
+fn cited(acq: &ck_mcp::agentic_capability_loop::ContextAcquisitionResult) -> bool {
+    acq.no_context.is_none()
+}
+
 #[test]
-fn acl_agent_resolves_citations_from_filesystem_corpus() {
-    let dir = tempfile::tempdir().unwrap();
-    let corpus_id = "test-corpus";
-    let corpus_dir = dir.path().join(corpus_id);
-    fs::create_dir_all(&corpus_dir).unwrap();
-    fs::write(corpus_dir.join("doc1.md"), "Hello world from doc1").unwrap();
+fn acl_agent_resolves_citations_through_the_real_pipeline() {
+    let corpus = tempfile::tempdir().unwrap();
+    let kernel = tempfile::tempdir().unwrap();
+    corpus_with(
+        corpus.path(),
+        "test-corpus",
+        &[("doc1.md", "# Doc1\nHello world from doc1")],
+    );
+    let app = test_kernel(kernel.path());
+    let agent = agent_over(corpus.path());
 
-    let agent = AclContextAgent {
-        corpus_root: dir.path().to_path_buf(),
-        learning_proposals_ledger: None,
-    };
+    let acq = agent
+        .acquire_context(&app, &payload("test-corpus"), None, None)
+        .unwrap();
 
-    let payload = make_payload(corpus_id);
-    let packet = agent.handle_context_required(&payload, None, None).unwrap();
-
-    let packet_val = serde_json::to_value(&packet).unwrap();
-    assert_eq!(packet_val["citations"].as_array().unwrap().len(), 1);
-    assert!(packet_val["citations"][0]["content"]
-        .as_str()
-        .unwrap()
-        .contains("Hello world"));
+    assert!(cited(&acq), "the corpus has matching content: {:?}", acq.no_context);
+    assert_eq!(acq.packet.citations.len(), 1);
+    assert!(acq.packet.citations[0].content.contains("Hello world"));
+    // Real pipeline identity: the resolution carries chunk/document identity.
+    assert!(acq.resolution.results[0].chunk_id.is_some());
+    assert!(acq.resolution.results[0].document_id.is_some());
+    assert_eq!(acq.resolution.completeness, RetrievalCompleteness::Complete);
 }
 
 #[test]
 fn acl_agent_passes_authority_references_through() {
-    let dir = tempfile::tempdir().unwrap();
-    let agent = AclContextAgent {
-        corpus_root: dir.path().to_path_buf(),
-        learning_proposals_ledger: None,
-    };
+    let corpus = tempfile::tempdir().unwrap();
+    let kernel = tempfile::tempdir().unwrap();
+    let app = test_kernel(kernel.path());
+    let agent = agent_over(corpus.path());
 
-    let payload = make_payload("nonexistent");
-    let packet = agent
-        .handle_context_required(
-            &payload,
+    let acq = agent
+        .acquire_context(
+            &app,
+            &payload("nonexistent"),
             Some("sea-decision-001"),
             Some("AuthorityChecked#evt_abc"),
         )
         .unwrap();
 
     assert_eq!(
-        packet.authority_decision_id,
+        acq.packet.authority_decision_id,
         Some("sea-decision-001".into())
     );
     assert_eq!(
-        packet.authority_reference,
+        acq.packet.authority_reference,
         Some("AuthorityChecked#evt_abc".into())
     );
+    assert!(!cited(&acq));
 }
 
 #[test]
 fn acl_agent_resolves_citations_from_learning_proposals_ledger() {
-    let dir = tempfile::tempdir().unwrap();
-    let ledger_path = dir.path().join("agentic_learning_proposals.jsonl");
+    let corpus = tempfile::tempdir().unwrap();
+    let kernel = tempfile::tempdir().unwrap();
+    let ledger_path = corpus.path().join("agentic_learning_proposals.jsonl");
 
     let ledger_entry = json!({
         "event_id": "evt_lp_001",
@@ -92,169 +106,113 @@ fn acl_agent_resolves_citations_from_learning_proposals_ledger() {
             "proposal": "Prefer table-driven tests for enum variants"
         }
     });
-    let line = serde_json::to_string(&ledger_entry).unwrap();
-    fs::write(&ledger_path, line).unwrap();
+    fs::write(&ledger_path, serde_json::to_string(&ledger_entry).unwrap()).unwrap();
 
+    let app = test_kernel(kernel.path());
     let agent = AclContextAgent {
-        corpus_root: dir.path().to_path_buf(),
+        corpus_root: corpus.path().to_path_buf(),
         learning_proposals_ledger: Some(ledger_path),
     };
+    let mut p = payload("learning-proposals");
+    p.query = Some("table-driven tests".to_string());
 
-    let payload = ContextRequiredPayload {
-        domain_model_hash: "deadbeef".to_string(),
-        world_ref: WORLD.to_string(),
-        work_request_id: "wr_test".to_string(),
-        context_requirement_id: "cr_test".to_string(),
-        corpus_id: "learning-proposals".to_string(),
-        query: Some("testing".to_string()),
-        max_results: 10,
-    };
-    let packet = agent.handle_context_required(&payload, None, None).unwrap();
+    let acq = agent.acquire_context(&app, &p, None, None).unwrap();
 
-    let packet_val = serde_json::to_value(&packet).unwrap();
-    let citations = packet_val["citations"].as_array().unwrap();
-    assert_eq!(citations.len(), 1);
-    assert!(citations[0]["content"]
-        .as_str()
-        .unwrap()
-        .contains("table-driven tests"));
-    assert!(citations[0]["source"]
-        .as_str()
-        .unwrap()
-        .contains("learning-proposals://lp_001"));
-}
-
-fn agent_over(dir: &tempfile::TempDir) -> AclContextAgent {
-    AclContextAgent {
-        corpus_root: dir.path().to_path_buf(),
-        learning_proposals_ledger: None,
-    }
-}
-
-fn corpus_with(dir: &tempfile::TempDir, files: &[(&str, String)]) {
-    let corpus_dir = dir.path().join("c");
-    fs::create_dir_all(&corpus_dir).unwrap();
-    for (name, body) in files {
-        fs::write(corpus_dir.join(name), body).unwrap();
-    }
-}
-
-fn cited(acq: ContextAcquisition) -> ck_mcp::agentic_capability_loop::ContextPacketCreatedPayload {
-    match acq {
-        ContextAcquisition::Cited(p) => p,
-        ContextAcquisition::NoContext(..) => panic!("expected cited"),
-    }
+    assert!(cited(&acq), "the ledger has a matching proposal: {:?}", acq.no_context);
+    assert!(
+        acq.packet.citations[0].source.starts_with("learning-proposals://lp_001"),
+        "citation keeps the ledger identity: {:?}",
+        acq.packet.citations[0].source
+    );
 }
 
 #[test]
-fn world_ref_is_echoed_unchanged_and_in_the_envelope() {
-    let dir = tempfile::tempdir().unwrap();
-    corpus_with(&dir, &[("a.md", "alpha".into())]);
-    let packet = cited(
-        agent_over(&dir)
-            .acquire_context(&make_payload("c"), None, None)
-            .unwrap(),
-    );
-    assert_eq!(packet.world_ref, WORLD);
-    let env = context_packet_envelope(Some("evt_req"), &packet);
-    assert_eq!(env["payload"]["world_ref"], WORLD);
-    assert_eq!(env["payload"]["retrieval_completeness"], "complete");
-}
-
-#[test]
-fn full_corpus_within_cap_is_complete() {
-    let dir = tempfile::tempdir().unwrap();
-    corpus_with(&dir, &[("a.md", "alpha".into()), ("b.md", "beta".into())]);
-    let packet = cited(
-        agent_over(&dir)
-            .acquire_context(&make_payload("c"), None, None)
-            .unwrap(),
-    );
-    assert_eq!(
-        packet.retrieval_completeness,
-        RetrievalCompleteness::Complete
-    );
-    assert!(packet.omissions.is_empty());
-}
-
-#[test]
-fn hitting_the_cap_with_more_matches_is_partial_not_complete() {
-    let dir = tempfile::tempdir().unwrap();
+fn result_cap_marks_partial_with_a_machine_readable_omission() {
+    let corpus = tempfile::tempdir().unwrap();
+    let kernel = tempfile::tempdir().unwrap();
     corpus_with(
-        &dir,
-        &[
-            ("a.md", "alpha".into()),
-            ("b.md", "beta".into()),
-            ("c.md", "gamma".into()),
-        ],
+        corpus.path(),
+        "c",
+        &[("a.md", "alpha shared"), ("b.md", "beta shared"), ("c.md", "gamma shared")],
     );
-    let mut payload = make_payload("c");
-    payload.max_results = 2;
-    let packet = cited(
-        agent_over(&dir)
-            .acquire_context(&payload, None, None)
-            .unwrap(),
-    );
-    assert_eq!(packet.citations.len(), 2);
-    assert_eq!(
-        packet.retrieval_completeness,
-        RetrievalCompleteness::Partial
-    );
-    assert_eq!(packet.omissions, vec!["max_results_reached"]);
+    let app = test_kernel(kernel.path());
+    let mut p = payload("c");
+    p.query = Some("shared".into());
+    p.max_results = 2;
+
+    let acq = agent_over(corpus.path())
+        .acquire_context(&app, &p, None, None)
+        .unwrap();
+
+    assert!(cited(&acq));
+    assert_eq!(acq.resolution.results.len(), 2);
+    assert_eq!(acq.resolution.completeness, RetrievalCompleteness::Partial);
+    assert_eq!(acq.packet.omissions, vec!["max_results_reached"]);
 }
 
 #[test]
 fn cap_exactly_met_with_no_further_match_stays_complete() {
-    let dir = tempfile::tempdir().unwrap();
-    corpus_with(&dir, &[("a.md", "alpha".into()), ("b.md", "beta".into())]);
-    let mut payload = make_payload("c");
-    payload.max_results = 2;
-    let packet = cited(
-        agent_over(&dir)
-            .acquire_context(&payload, None, None)
-            .unwrap(),
+    let corpus = tempfile::tempdir().unwrap();
+    let kernel = tempfile::tempdir().unwrap();
+    corpus_with(
+        corpus.path(),
+        "c",
+        &[("a.md", "alpha shared"), ("b.md", "beta shared")],
     );
-    assert_eq!(
-        packet.retrieval_completeness,
-        RetrievalCompleteness::Complete
-    );
-}
+    let app = test_kernel(kernel.path());
+    let mut p = payload("c");
+    p.query = Some("shared".into());
+    p.max_results = 2;
 
-#[test]
-fn truncated_citation_content_is_partial() {
-    let dir = tempfile::tempdir().unwrap();
-    corpus_with(&dir, &[("long.md", "x".repeat(900))]);
-    let packet = cited(
-        agent_over(&dir)
-            .acquire_context(&make_payload("c"), None, None)
-            .unwrap(),
-    );
-    assert!(packet.citations[0].truncated);
-    assert_eq!(
-        packet.retrieval_completeness,
-        RetrievalCompleteness::Partial
-    );
-    assert_eq!(packet.omissions, vec!["citation_content_truncated"]);
-}
-
-#[test]
-fn no_citations_is_none() {
-    let dir = tempfile::tempdir().unwrap();
-    let acq = agent_over(&dir)
-        .acquire_context(&make_payload("missing"), None, None)
+    let acq = agent_over(corpus.path())
+        .acquire_context(&app, &p, None, None)
         .unwrap();
-    match acq {
-        ContextAcquisition::NoContext(p, _) => {
-            assert_eq!(p.retrieval_completeness, RetrievalCompleteness::None)
-        }
-        ContextAcquisition::Cited(_) => panic!("expected no context"),
-    }
+
+    assert_eq!(acq.resolution.completeness, RetrievalCompleteness::Complete);
+}
+
+#[test]
+fn excerpt_truncation_is_a_reference_limitation_not_a_retrieval_omission() {
+    // The declared retrieval contract is ranked excerpts with resolvable
+    // locators: a bounded excerpt is surfaced as `content_truncated` on the
+    // reference (and the legacy citation flag), never silently dropped — and
+    // it does not by itself make the retrieval incomplete.
+    let corpus = tempfile::tempdir().unwrap();
+    let kernel = tempfile::tempdir().unwrap();
+    corpus_with(corpus.path(), "c", &[("long.md", &"x".repeat(900))]);
+    let app = test_kernel(kernel.path());
+
+    let acq = agent_over(corpus.path())
+        .acquire_context(&app, &payload("c"), None, None)
+        .unwrap();
+
+    assert!(acq.packet.citations[0].truncated);
+    assert_eq!(acq.resolution.completeness, RetrievalCompleteness::Complete);
+}
+
+#[test]
+fn no_citations_is_none_with_an_explicit_reason() {
+    let corpus = tempfile::tempdir().unwrap();
+    let kernel = tempfile::tempdir().unwrap();
+    let app = test_kernel(kernel.path());
+
+    let acq = agent_over(corpus.path())
+        .acquire_context(&app, &payload("missing"), None, None)
+        .unwrap();
+
+    assert!(!cited(&acq));
+    assert_eq!(acq.resolution.completeness, RetrievalCompleteness::None);
+    assert!(acq.resolution.no_context_reason.is_some());
+    assert_eq!(acq.packet.citations.len(), 0);
+    assert!(!acq.packet.omissions.is_empty(), "absence is always explained");
 }
 
 #[test]
 fn unpinned_world_refs_are_refused_before_any_retrieval() {
-    let dir = tempfile::tempdir().unwrap();
-    corpus_with(&dir, &[("a.md", "alpha".into())]);
+    let corpus = tempfile::tempdir().unwrap();
+    let kernel = tempfile::tempdir().unwrap();
+    corpus_with(corpus.path(), "c", &[("a.md", "alpha")]);
+    let app = test_kernel(kernel.path());
     for bad in [
         "",
         "world:test",
@@ -264,31 +222,44 @@ fn unpinned_world_refs_are_refused_before_any_retrieval() {
         "world:test@sha256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
     ] {
         assert!(verify_world_ref(bad).is_err(), "accepted {bad:?}");
-        let mut payload = make_payload("c");
-        payload.world_ref = bad.to_string();
-        assert!(agent_over(&dir)
-            .acquire_context(&payload, None, None)
+        let mut p = payload("c");
+        p.world_ref = bad.to_string();
+        assert!(agent_over(corpus.path())
+            .acquire_context(&app, &p, None, None)
             .is_err());
     }
 }
 
 #[test]
-fn world_ref_vectors_match_the_cep_pattern() {
-    let d = "b".repeat(64);
-    for ok in [
-        format!("world:a@sha256:{d}"),
-        format!("world:acme.core-v2_x@sha256:{d}"),
-        format!("world:{}@sha256:{d}", "a".repeat(64)),
-    ] {
-        assert!(verify_world_ref(&ok).is_ok(), "rejected {ok:?}");
-    }
-    for bad in [
-        format!("world:{}@sha256:{d}", "a".repeat(65)),
-        format!("world:a-@sha256:{d}"),
-        format!("world:a..b@sha256:{d}"),
-        format!("world:1a@sha256:{d}"),
-        format!("world:a@sha256:{d}0"),
-    ] {
-        assert!(verify_world_ref(&bad).is_err(), "accepted {bad:?}");
-    }
+fn corpus_id_traversal_is_a_hard_refusal() {
+    let corpus = tempfile::tempdir().unwrap();
+    let kernel = tempfile::tempdir().unwrap();
+    let corpus_root = corpus.path().join("root");
+    fs::create_dir_all(&corpus_root).unwrap();
+    // Sibling dir OUTSIDE corpus_root containing a secret file.
+    let sibling = corpus.path().join("sibling");
+    fs::create_dir_all(&sibling).unwrap();
+    fs::write(sibling.join("secret.md"), "TOP SECRET CONTENT").unwrap();
+    let app = test_kernel(kernel.path());
+
+    let mut p = payload("c");
+    p.corpus_id = "../sibling".into();
+    let err = agent_over(&corpus_root).acquire_context(&app, &p, None, None);
+    assert!(err.is_err(), "traversal corpus_id must be refused: {err:?}");
+}
+
+#[test]
+fn a_declared_private_corpus_is_never_auto_ingested_open() {
+    let corpus = tempfile::tempdir().unwrap();
+    let kernel = tempfile::tempdir().unwrap();
+    corpus_with(corpus.path(), "secrets", &[("s.md", "private content")]);
+    let app = test_kernel(kernel.path());
+    let mut p = payload("secrets");
+    p.is_private = true;
+
+    let acq = agent_over(corpus.path())
+        .acquire_context(&app, &p, None, None)
+        .unwrap();
+    assert!(!cited(&acq));
+    assert!(app.corpus("secrets").unwrap().is_none(), "must not be registered");
 }

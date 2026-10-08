@@ -6,6 +6,12 @@ use ck_core::types::*;
 use serde_json::json;
 use ulid::Ulid;
 
+pub mod context;
+pub mod context_effect;
+
+pub use context::*;
+pub use context_effect::*;
+
 pub use ck_memory::{
     classify_event_kind, EventRetentionClass, SessionRetentionPolicy as MemoryRetentionPolicy,
 };
@@ -23,6 +29,12 @@ pub struct AppServices {
     chunker: Box<dyn Chunker>,
     embedding: Option<Box<dyn EmbeddingPort>>,
     vector_search: Option<Box<dyn VectorSearchPort>>,
+    /// Additional source adapters selected by `SourceAdapter::kind()` during
+    /// ingestion (e.g. the learning-proposals JSONL ledger adapter).
+    kind_adapters: Vec<(String, Box<dyn SourceAdapter>)>,
+    /// Settlement-backed context-effect ledger for prospective retrieval
+    /// calibration. Absent = calibration disabled (never faked).
+    context_effects: Option<std::sync::Arc<context_effect::ContextEffectStore>>,
 }
 
 // --- retention GC ---
@@ -118,6 +130,8 @@ impl AppServices {
             chunker,
             embedding: None,
             vector_search: None,
+            kind_adapters: Vec::new(),
+            context_effects: None,
         }
     }
 
@@ -132,9 +146,39 @@ impl AppServices {
         self
     }
 
+    /// Register an additional source adapter by kind. Ingestion selects the
+    /// adapter whose `SourceAdapter::kind()` matches `IngestSourceRequest::source_kind`;
+    /// unregistered kinds fall back to the default adapter.
+    pub fn with_source_adapter_kind(
+        mut self,
+        kind: impl Into<String>,
+        adapter: Box<dyn SourceAdapter>,
+    ) -> Self {
+        self.kind_adapters.push((kind.into(), adapter));
+        self
+    }
+
+    /// Attach the settlement-backed context-effect ledger so prospective
+    /// retrieval calibration is enabled.
+    pub fn with_context_effect_store(
+        mut self,
+        store: context_effect::ContextEffectStore,
+    ) -> Self {
+        self.context_effects = Some(std::sync::Arc::new(store));
+        self
+    }
+
     /// Whether semantic retrieval is available.
     pub fn semantic_available(&self) -> bool {
         self.embedding.as_ref().is_some_and(|e| e.is_available())
+    }
+
+    fn adapter_for_kind(&self, kind: &str) -> &dyn SourceAdapter {
+        self.kind_adapters
+            .iter()
+            .find(|(k, _)| k == kind)
+            .map(|(_, a)| a.as_ref())
+            .unwrap_or(self.source_adapter.as_ref())
     }
 }
 
@@ -372,13 +416,24 @@ impl AppServices {
         self.storage.upsert_source(&source)?;
 
         let ingest_result: Result<(i64, i64)> = (|| {
-            // Ensure corpus exists
+            // Ensure corpus exists. An existing corpus KEEPS its registered
+            // visibility: re-ingestion must never open a private corpus.
+            let existing = self.storage.get_corpus(&corpus_id)?;
             let corpus = Corpus {
                 corpus_id: corpus_id.clone(),
-                name: req.source_id.clone(),
+                name: existing
+                    .as_ref()
+                    .map(|c| c.name.clone())
+                    .unwrap_or_else(|| req.source_id.clone()),
                 kind: "library_docs".to_string(),
-                visibility: "local".to_string(),
-                created_at: now.clone(),
+                visibility: existing
+                    .as_ref()
+                    .map(|c| c.visibility.clone())
+                    .unwrap_or_else(|| "local".to_string()),
+                created_at: existing
+                    .as_ref()
+                    .map(|c| c.created_at.clone())
+                    .unwrap_or_else(|| now.clone()),
                 updated_at: now.clone(),
             };
             self.storage.upsert_corpus(&corpus)?;
@@ -387,9 +442,8 @@ impl AppServices {
 
             // Discover and fetch the entire snapshot BEFORE mutating previous
             // rows. An adapter/fetch failure leaves the old snapshot untouched.
-            let units = self
-                .source_adapter
-                .discover_units(&req.source_id, &req.adapter_config_json)?;
+            let adapter = self.adapter_for_kind(&req.source_kind);
+            let units = adapter.discover_units(&req.source_id, &req.adapter_config_json)?;
 
             // Fetch + normalize + chunk all units into memory first.
             struct PreparedDoc {
@@ -399,11 +453,7 @@ impl AppServices {
             let mut prepared: Vec<PreparedDoc> = Vec::new();
 
             for unit in &units {
-                let raw = self.source_adapter.fetch_content(
-                    &req.source_id,
-                    unit,
-                    &req.adapter_config_json,
-                )?;
+                let raw = adapter.fetch_content(&req.source_id, unit, &req.adapter_config_json)?;
 
                 let documents = self
                     .normalizer
@@ -557,6 +607,8 @@ impl AppServices {
         if let Some(cid) = &corpus_id {
             if let Some(corpus) = self.storage.get_corpus(cid)? {
                 if corpus.visibility == "private" {
+                    // POL-ACL-002: a private corpus requires EXPLICIT scope.
+                    // A missing or empty source_scope never grants access.
                     let allowed_scopes: Vec<String> = req
                         .filters
                         .get("source_scope")
@@ -568,7 +620,7 @@ impl AppServices {
                         })
                         .unwrap_or_default();
 
-                    if !allowed_scopes.is_empty() && !allowed_scopes.contains(&cid.to_string()) {
+                    if !allowed_scopes.contains(&cid.to_string()) {
                         anyhow::bail!(
                             "unauthorized corpus: {} is private and not in source_scope",
                             cid

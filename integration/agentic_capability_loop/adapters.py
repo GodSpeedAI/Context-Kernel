@@ -1,11 +1,15 @@
-"""Context-Kernel Python integration adapter for the agentic_capability_loop domain.
+"""LEGACY integration adapter for the agentic_capability_loop domain.
 
-This module is used for integration tests. The production implementation
-is in crates/ck-mcp/src/agentic_capability_loop.rs.
+DEPRECATED: the production implementation is
+``crates/ck-mcp`` (the GodSpeed path through the real CK retrieval
+pipeline). The canonical cross-system context artifact is the CEP-0008
+``godspeed.context_bundle`` envelope; this module predates it and is kept
+only as a bounded dual-read compatibility shim for old integration tests.
 
-Context-Kernel emits:
-  - ContextPacketCreated
-  - ContextAuthorized
+Context-Kernel emits here:
+  - ContextPacketCreated (legacy wire, deprecated)
+  - ContextAccessEvaluated (CONTEXT ACCESS: accessible/inaccessible/
+    requires_scope - never action authority; SEA-Forge owns that)
 
 Context-Kernel consumes:
   - ContextRequired (from SWE_SEED)
@@ -69,7 +73,7 @@ def handle_context_required(
     *,
     available_documents: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Handle ContextRequired event and emit ContextPacketCreated + ContextAuthorized.
+    """Handle ContextRequired event and emit ContextPacketCreated + ContextAccessEvaluated.
     
     Checks POL-ACL-002 (PrivateCorpusRequiresExplicitScope) and either
     grants or denies corpus access, then builds a ContextPacket.
@@ -80,7 +84,7 @@ def handle_context_required(
             Each doc should have: {source, content, fetched_at}.
     
     Returns:
-        Tuple of (ContextPacketCreated event, ContextAuthorized event).
+        Tuple of (ContextPacketCreated event, ContextAccessEvaluated event).
     
     Raises:
         ValueError: If event type does not match.
@@ -102,22 +106,24 @@ def handle_context_required(
     scope_claim = payload.get("scope_claim")
     query = payload.get("query", "")
     
-    # Check POL-ACL-002: Private corpus requires explicit scope
+    # POL-ACL-002 is DATA ACCESS policy (private corpus requires explicit
+    # scope), not action authority. The result vocabulary is context access:
+    # accessible / inaccessible / requires_scope.
     authorized = True
-    auth_result = "allow"
+    auth_result = "accessible"
     auth_reason = "Corpus is publicly accessible"
     
     if is_private:
         if not scope_claim:
             authorized = False
-            auth_result = "deny"
+            auth_result = "requires_scope"
             auth_reason = (
                 f"Private corpus '{corpus_id}' requires an explicit scope claim; "
                 "none provided (POL-ACL-002)"
             )
         else:
-            auth_result = "allow"
-            auth_reason = f"Private corpus access authorized with scope '{scope_claim}'"
+            auth_result = "accessible"
+            auth_reason = f"Private corpus accessible with scope '{scope_claim}'"
     
     # Build citations from available documents (or generate stub citations for testing)
     docs = available_documents or []
@@ -150,12 +156,12 @@ def handle_context_required(
             "work_request_id": work_request_id,
             "corpus_id": corpus_id,
             "citations": citations,
-            "authorized": authorized,
+            "accessible": authorized,
         },
     )
     
-    context_authorized = _event(
-        "ContextAuthorized",
+    context_access = _event(
+        "ContextAccessEvaluated",
         {
             "context_requirement_id": context_requirement_id,
             "work_request_id": work_request_id,
@@ -168,7 +174,7 @@ def handle_context_required(
         },
     )
     
-    return context_packet_created, context_authorized
+    return context_packet_created, context_access
 
 
 def emit_context_packet_created(
@@ -252,12 +258,12 @@ def _handle_learning_proposals_corpus(
         },
     )
     context_authorized = _event(
-        "ContextAuthorized",
+        "ContextAccessEvaluated",
         {
             "context_requirement_id": payload.get("context_requirement_id", ""),
             "work_request_id": payload.get("work_request_id", ""),
             "corpus_id": payload.get("corpus_id", ""),
-            "result": "allow",
+            "result": "accessible",
             "reason": "learning-proposals corpus is always public",
             "policy_code": POL_PRIVATE_CORPUS_SCOPE,
             "scope_claim": None,

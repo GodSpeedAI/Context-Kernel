@@ -590,7 +590,11 @@ fn context_required_served_over_stdio_returns_cited_packet() {
         .success()
         .stdout(predicate::str::contains("context_packet"))
         .stdout(predicate::str::contains("citations"))
-        .stdout(predicate::str::contains("POL-ACL-001"));
+        // Real pipeline: the heading survives as the citation anchor and the
+        // body is the cited excerpt (ranked excerpt + resolvable locator).
+        .stdout(predicate::str::contains("pol-acl-001"))
+        .stdout(predicate::str::contains("cited context packet"))
+        .stdout(predicate::str::contains("context_bundle"));
 }
 
 // --- SSE lifecycle + reload hardening tests ---
@@ -1002,8 +1006,12 @@ enabled = true
         "post-reload context_required must return a packet; got: {cited_resp}"
     );
     assert!(
-        cited_resp.contains("POL-RELOAD"),
-        "post-reload context_required must cite the live corpus; got: {cited_resp}"
+        cited_resp.contains("pol-reload"),
+        "post-reload context_required must cite the live corpus (anchor); got: {cited_resp}"
+    );
+    assert!(
+        cited_resp.contains("preserve the context agent"),
+        "post-reload context_required must cite the live corpus content; got: {cited_resp}"
     );
 
     // (4) Auth/service atomic swap: a request with NO token is denied even

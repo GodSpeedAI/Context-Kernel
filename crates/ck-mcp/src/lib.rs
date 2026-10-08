@@ -131,6 +131,7 @@ impl McpService {
             "resolve_reference" | "resolve-library-id" => self.handle_resolve_reference(arguments),
             // WP-5 (F-05): the loop-facing context agent, served over MCP.
             "context_required" => self.handle_context_required(arguments),
+            "ingest_context_effects" => self.handle_ingest_context_effects(arguments),
             other => Err(McpError::UnknownTool(other.to_string())),
         };
         let elapsed = start.elapsed().as_millis() as u64;
@@ -433,6 +434,32 @@ impl McpService {
         }))
     }
 
+    /// Ingest settlement-backed context effects for prospective retrieval
+    /// calibration. NOT a memory/capability surface: every effect must cite a
+    /// settlement/evidence artifact (`evidence_ref`), self-reports are
+    /// rejected, and historical bundles are never rewritten.
+    fn handle_ingest_context_effects(&self, arguments: Value) -> Result<Value, McpError> {
+        let app = self.require_app()?;
+        let effects_value = arguments.get("effects").ok_or_else(|| {
+            McpError::InvalidArguments("ingest_context_effects requires `effects`".to_string())
+        })?;
+        let effects: Vec<ck_app::ContextEffect> = serde_json::from_value(effects_value.clone())
+            .map_err(|e| McpError::InvalidArguments(format!("effects rejected: {e}")))?;
+        if effects.is_empty() {
+            return Err(McpError::InvalidArguments(
+                "ingest_context_effects requires at least one effect".to_string(),
+            ));
+        }
+        let report = app
+            .ingest_context_effects(&effects)
+            .map_err(|e| McpError::Internal(format!("effect ledger unavailable: {e}")))?;
+        Ok(serde_json::json!({
+            "accepted": report.accepted,
+            "skipped_duplicates": report.skipped_duplicates,
+            "rejected": report.rejected,
+        }))
+    }
+
     /// Serve the frozen E2/E3 boundary (convergence T02).
     ///
     /// Ingress: the arguments ARE the canonical E2 envelope produced by the
@@ -440,19 +467,19 @@ impl McpService {
     /// CK rejects wrong-producer, non-v1, placeholder-identity, or
     /// correlation-less requests fail-closed.
     ///
-    /// Egress: the `ContextPacketCreated` payload inside a canonical v1
-    /// envelope stamped by `context-kernel`, recording the E2 request event id
-    /// as causal parent (`caused_by:`), with an EXPLICIT acquisition outcome.
-    /// Zero-citation results are never silent: when `required=true` the
-    /// response carries `outcome="no_context_governed"` plus a machine-readable
-    /// reason; only `outcome="cited"` is successful acquisition. Authority
-    /// fields are pass-through references — CK never decides authority.
+    /// Egress: the canonical cross-system artifact is the CEP-0008
+    /// `godspeed.context_bundle` envelope (`context_bundle` key). The legacy
+    /// `context_envelope` / `context_packet` wire shape is retained for
+    /// bounded dual-read compatibility and is DEPRECATED — write CEP only.
+    /// `access` reports CONTEXT ACCESS (accessible / inaccessible /
+    /// requires_scope) — never action authority; SEA-Forge owns that.
     fn handle_context_required(&self, arguments: Value) -> Result<Value, McpError> {
         let agent = self.acl_context.as_ref().ok_or_else(|| {
             McpError::Internal(
                 "context_required tool not configured (no ACL context agent)".to_string(),
             )
         })?;
+        let app = self.require_app()?;
 
         // --- E2 envelope ingress gates ------------------------------------
         let schema_version = arguments["schema_version"].as_str().unwrap_or("");
@@ -486,94 +513,59 @@ impl McpService {
         let payload_obj = arguments["payload"].as_object().ok_or_else(|| {
             McpError::InvalidArguments("request envelope missing payload".to_string())
         })?;
+        let payload: agentic_capability_loop::ContextRequiredPayload =
+            serde_json::from_value(Value::Object(payload_obj.clone()))
+                .map_err(|e| McpError::InvalidArguments(format!("payload rejected: {e}")))?;
 
-        let domain_model_hash = payload_obj
-            .get("domain_model_hash")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        agentic_capability_loop::verify_domain_identity(&domain_model_hash)
+        agentic_capability_loop::verify_domain_identity(&payload.domain_model_hash)
             .map_err(|e| McpError::InvalidArguments(format!("domain identity rejected: {e}")))?;
-
-        let world_ref = payload_obj
-            .get("world_ref")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        agentic_capability_loop::verify_world_ref(&world_ref)
+        agentic_capability_loop::verify_world_ref(&payload.world_ref)
             .map_err(|e| McpError::InvalidArguments(format!("world identity rejected: {e}")))?;
-
-        let work_request_id = payload_obj
-            .get("work_request_id")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        let context_requirement_id = payload_obj
-            .get("context_requirement_id")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        if work_request_id.is_empty() || context_requirement_id.is_empty() {
+        if payload.work_request_id.is_empty() || payload.context_requirement_id.is_empty() {
             return Err(McpError::InvalidArguments(
                 "work_request_id and context_requirement_id are required correlation".to_string(),
             ));
         }
 
-        let payload = agentic_capability_loop::ContextRequiredPayload {
-            domain_model_hash,
-            world_ref,
-            work_request_id,
-            context_requirement_id,
-            corpus_id: payload_obj
-                .get("corpus_id")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string(),
-            query: payload_obj
-                .get("query")
-                .and_then(Value::as_str)
-                .map(String::from),
-            max_results: payload_obj
-                .get("max_results")
-                .and_then(Value::as_u64)
-                .unwrap_or(10) as u32,
-        };
-
-        let authority_decision_id = payload_obj
-            .get("authority_decision_id")
-            .and_then(Value::as_str);
-        let authority_reference = payload_obj
-            .get("authority_reference")
-            .and_then(Value::as_str);
+        let authority_decision_id = payload_obj.get("authority_decision_id").and_then(Value::as_str);
+        let authority_reference = payload_obj.get("authority_reference").and_then(Value::as_str);
         // Frozen E3 semantics key off REQUIRED context; the tool name already
         // declares the caller's intent, but an explicit flag lets optional
         // acquisitions stay legitimate.
         let required = arguments["required"].as_bool().unwrap_or(true);
 
         let acquisition = agent
-            .acquire_context(&payload, authority_decision_id, authority_reference)
+            .acquire_context(app, &payload, authority_decision_id, authority_reference)
             .map_err(|e| McpError::Internal(format!("{e:#}")))?;
 
-        let (packet, outcome, reason): (_, &str, Option<&str>) = match acquisition {
-            agentic_capability_loop::ContextAcquisition::Cited(p) => (p, "cited", None),
-            agentic_capability_loop::ContextAcquisition::NoContext(p, r) => {
-                let outcome = if required {
-                    "no_context_governed"
-                } else {
-                    "empty_optional"
-                };
-                (p, outcome, Some(r.as_str()))
-            }
-        };
+        let outcome = acquisition.outcome(required);
+        let reason = acquisition.reason();
 
-        let envelope =
-            agentic_capability_loop::context_packet_envelope(Some(&request_event_id), &packet);
+        // DEPRECATED legacy E3 envelope (dual-read compatibility).
+        let envelope = agentic_capability_loop::context_packet_envelope(
+            Some(&request_event_id),
+            &acquisition.packet,
+        );
+
+        // Canonical cross-system artifact: the CEP godspeed.context_bundle.
+        let created_at = chrono::Utc::now().to_rfc3339();
+        let requirement = payload.to_requirement();
+        let bundle = cep_bundle::project_context_bundle(&cep_bundle::BundleInput {
+            requirement: &requirement,
+            resolution: &acquisition.resolution,
+            packet: &acquisition.packet,
+            request_event_id: Some(request_event_id.as_str()),
+            created_at: &created_at,
+        })
+        .map_err(|e| McpError::Internal(format!("context bundle projection refused: {e}")))?;
 
         Ok(serde_json::json!({
+            "context_bundle": bundle,
             "context_envelope": envelope,
-            "context_packet": serde_json::to_value(&packet).unwrap_or_default(),
+            "context_packet": serde_json::to_value(&acquisition.packet).unwrap_or_default(),
             "outcome": outcome,
             "reason": reason,
+            "access": serde_json::to_value(&acquisition.resolution.access).unwrap_or_default(),
         }))
     }
 
@@ -776,13 +768,7 @@ mod tests {
         fs::create_dir_all(&docs).unwrap();
         fs::write(docs.join("a.md"), "# Plan A\nDeploy via blue-green").unwrap();
 
-        let status = KernelStatus::placeholder();
-        let cleanup = corpus_root.clone();
-        let agent = AclContextAgent {
-            corpus_root,
-            learning_proposals_ledger: None,
-        };
-        let service = McpService::new(status).with_context_agent(agent);
+        let service = ctx_service_with(corpus_root.clone());
 
         let mut req = e2_request("docs", "wr-1", "cr-1", GOOD_DIGEST);
         req["payload"]["query"] = json!("blue-green");
@@ -815,17 +801,12 @@ mod tests {
         );
         let key = env["idempotency_key"].as_str().expect("idempotency key");
         assert_eq!(key.len(), 64, "idempotency key is sha256-hex");
-        fs::remove_dir_all(&cleanup).ok();
+        fs::remove_dir_all(&corpus_root).ok();
     }
 
     #[test]
     fn context_required_no_longer_emits_authorization() {
-        let status = KernelStatus::placeholder();
-        let agent = AclContextAgent {
-            corpus_root: std::env::temp_dir().join("nonexistent-ck-ctx"),
-            learning_proposals_ledger: None,
-        };
-        let service = McpService::new(status).with_context_agent(agent);
+        let service = ctx_service_with(std::env::temp_dir().join("nonexistent-ck-ctx"));
         let mut req = e2_request("docs", "wr-x", "cr-x", GOOD_DIGEST);
         req["required"] = json!(false);
         let result = service.call_tool("context_required", req);
@@ -868,11 +849,34 @@ mod tests {
     }
 
     fn ctx_service_with(corpus_root: std::path::PathBuf) -> McpService {
+        let nonce = format!(
+            "{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let state_root = std::env::temp_dir().join(format!("ck-mcp-test-{nonce}"));
+        std::fs::create_dir_all(state_root.join("data")).unwrap();
+        let db_path = state_root.join("ck.db");
+        let store = ck_storage_sqlite::SqliteStore::open(&db_path).unwrap();
+        store.migrate().unwrap();
+        let app = ck_app::AppServices::new(
+            Box::new(store.clone()),
+            Box::new(store.clone()),
+            Box::new(ck_artifacts::FileArtifactStore::new(state_root.join("data"))),
+            Box::new(ck_search_fts::FtsSearch::open(db_path).unwrap()),
+            Box::new(ck_ranker::LexicalRanker),
+            Box::new(ck_adapter_filesystem::FilesystemSourceAdapter),
+            Box::new(ck_adapter_filesystem::MarkdownNormalizer),
+            Box::new(ck_adapter_filesystem::HeadingChunker),
+        );
         let agent = AclContextAgent {
             corpus_root,
             learning_proposals_ledger: None,
         };
-        McpService::new(KernelStatus::placeholder()).with_context_agent(agent)
+        McpService::with_app(KernelStatus::placeholder(), app).with_context_agent(agent)
     }
 
     #[test]

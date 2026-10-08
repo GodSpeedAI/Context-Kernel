@@ -137,10 +137,17 @@ impl LexicalRanker {
             });
             (combined, debug_breakdown)
         } else {
-            let compact_breakdown = serde_json::json!({
-                "combined": combined,
-            });
-            (combined, compact_breakdown)
+            // Compact breakdown: the combined score plus the component
+            // evaluations that actually participated, so downstream (and the
+            // context bundle projection) can see WHY this result ranked.
+            let mut compact = serde_json::Map::new();
+            compact.insert("combined".to_string(), serde_json::json!(combined));
+            for key in ["fts", "trust_score", "freshness", "semantic", "calibration"] {
+                if let Some(v) = breakdown.get(key) {
+                    compact.insert(key.to_string(), v.clone());
+                }
+            }
+            (combined, serde_json::Value::Object(compact))
         }
     }
 }

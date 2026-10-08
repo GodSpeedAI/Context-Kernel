@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use chrono::Utc;
-use ck_adapter_filesystem::{FilesystemSourceAdapter, HeadingChunker, MarkdownNormalizer};
+use ck_adapter_filesystem::{
+    FilesystemSourceAdapter, HeadingChunker, LearningProposalsAdapter, MarkdownNormalizer,
+};
 use ck_app::{AppServices, RetentionPolicy};
 use ck_artifacts::FileArtifactStore;
 use ck_auth::BearerAuth;
@@ -380,6 +382,13 @@ fn wire_app(
         Box::new(FilesystemSourceAdapter),
         Box::new(MarkdownNormalizer),
         Box::new(HeadingChunker),
+    )
+    // Kind-selected ingestion: the learning-proposals ledger corpus goes
+    // through the real pipeline (discovery + fetch + normalization +
+    // chunking + FTS + ranking), not an ad hoc reader.
+    .with_source_adapter_kind(
+        "learning_proposals_jsonl",
+        Box::new(LearningProposalsAdapter),
     );
 
     // Wire semantic retrieval when configured
@@ -411,14 +420,26 @@ fn wire_app(
         );
     }
 
+    // Settlement-backed context-effect ledger (prospective retrieval
+    // calibration). CK_CONTEXT_EFFECT_LEDGER names the append-only JSONL
+    // ledger; unset = calibration disabled (never faked).
+    if let Some(ledger) = std::env::var("CK_CONTEXT_EFFECT_LEDGER")
+        .ok()
+        .filter(|s| !s.is_empty())
+    {
+        app = app.with_context_effect_store(ck_app::ContextEffectStore::new(ledger));
+    }
+
     Ok(app)
 }
 
 /// WP-5 (F-05): build the ACL context agent from env-configured paths.
-/// `CK_CONTEXT_CORPUS_ROOT` enables filesystem-corpus citation; the optional
+/// `CK_CONTEXT_CORPUS_ROOT` enables filesystem-corpus citation (auto-ingested
+/// into the real retrieval pipeline on first use); the optional
 /// `CK_LEARNING_PROPOSALS_LEDGER` adds the GodSpeed-Agent learning-proposals
-/// corpus. Returns None when neither is set (the `context_required` tool then
-/// reports itself as unconfigured).
+/// corpus through the real `LearningProposalsAdapter`. Returns None when
+/// neither is set (the `context_required` tool then reports itself as
+/// unconfigured).
 fn build_context_agent() -> Option<AclContextAgent> {
     let corpus_root = std::env::var("CK_CONTEXT_CORPUS_ROOT")
         .ok()

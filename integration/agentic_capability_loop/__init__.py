@@ -5,7 +5,7 @@ The production implementation uses the Rust crates in crates/ck-mcp/.
 
 Context-Kernel emits:
   - ContextPacketCreated
-  - ContextAuthorized
+  - ContextAccessEvaluated (context access, never action authority)
 
 Context-Kernel consumes:
   - ContextRequired (from SWE_SEED)

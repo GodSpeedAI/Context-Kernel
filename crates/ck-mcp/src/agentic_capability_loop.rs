@@ -62,109 +62,13 @@ pub fn verify_domain_identity(hash: &str) -> Result<(), DomainIdentityError> {
     Ok(())
 }
 
-/// Why a candidate `world_ref` cannot enter the boundary (CEP-0008 / Stage 9).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WorldRefError {
-    /// Not `world:<name>@sha256:<64 lowercase hex>` with a valid name.
-    Malformed,
-}
-
-impl std::fmt::Display for WorldRefError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "world_ref is not world:<name>@sha256:<64 lowercase hex digest>"
-        )
-    }
-}
-
-/// Syntax-only gate for a `world_ref`. CK neither recomputes nor verifies the
-/// digest (SEA-Forge and DomainForge own that); it only refuses anything that
-/// is not a pinned, well-formed reference, so a mutable alias or label can
-/// never stand in for a world revision.
-pub fn verify_world_ref(world_ref: &str) -> Result<(), WorldRefError> {
-    let (name_part, digest) = world_ref
-        .split_once("@sha256:")
-        .ok_or(WorldRefError::Malformed)?;
-    let name = name_part
-        .strip_prefix("world:")
-        .ok_or(WorldRefError::Malformed)?;
-    let digest_ok = digest.len() == 64
-        && digest
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
-    // name: [a-z][a-z0-9]*(?:[._-][a-z0-9]+)*, at most 64 chars
-    let mut chars = name.chars().peekable();
-    let name_ok = name.len() <= 64 && chars.next().is_some_and(|c| c.is_ascii_lowercase()) && {
-        let mut prev_sep = false;
-        let mut ok = true;
-        for c in chars.by_ref() {
-            if c.is_ascii_lowercase() || c.is_ascii_digit() {
-                prev_sep = false;
-            } else if matches!(c, '.' | '_' | '-') && !prev_sep {
-                prev_sep = true;
-            } else {
-                ok = false;
-                break;
-            }
-        }
-        ok && !prev_sep
-    };
-    if digest_ok && name_ok {
-        Ok(())
-    } else {
-        Err(WorldRefError::Malformed)
-    }
-}
-
-/// How much of the matching corpus the packet carries. Relative to the query
-/// and corpus; never a claim about reality. Only `Complete` may be read as
-/// "everything that matched is here, in full".
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RetrievalCompleteness {
-    Complete,
-    Partial,
-    None,
-}
-
-/// Omission reasons (machine-readable) recorded on a non-complete packet.
-pub const OMISSION_MAX_RESULTS: &str = "max_results_reached";
-pub const OMISSION_CONTENT_TRUNCATED: &str = "citation_content_truncated";
-
-/// Why a required-context acquisition resolved with zero citations.
-///
-/// Frozen edge E3: missing corpus configuration MUST NOT silently settle as
-/// successful required-context acquisition; zero-citation outcomes must be
-/// explicit and governed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NoContextReason {
-    /// Corpus root itself was not configured / does not exist.
-    CorpusRootUnconfigured,
-    /// Requested corpus directory does not exist under the root.
-    CorpusNotFound,
-    /// Corpus exists but no content matched the query.
-    NoMatchingContent,
-}
-
-impl NoContextReason {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::CorpusRootUnconfigured => "corpus_root_unconfigured",
-            Self::CorpusNotFound => "corpus_not_found",
-            Self::NoMatchingContent => "no_matching_content",
-        }
-    }
-}
-
-/// Outcome of one context acquisition against the agent.
-#[derive(Debug)]
-pub enum ContextAcquisition {
-    /// At least one citation resolved.
-    Cited(ContextPacketCreatedPayload),
-    /// Zero citations; the reason makes the absence explicit (never silent).
-    NoContext(ContextPacketCreatedPayload, NoContextReason),
-}
+/// The immutable semantic-world gate and retrieval-completeness vocabulary
+/// live in `ck-core` (shared across the kernel). Re-exported here so the
+/// boundary module keeps its public paths.
+pub use ck_core::types::{
+    verify_world_ref, NoContextReason, RetrievalCompleteness, WorldRefError,
+    OMISSION_CONTENT_TRUNCATED, OMISSION_MAX_RESULTS,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventEnvelope {
@@ -175,10 +79,16 @@ pub struct EventEnvelope {
     pub payload: serde_json::Value,
 }
 
+/// The E2 `ContextRequired` wire payload. This is the *wire* shape; the
+/// native Context Kernel input model is `ck_app::ContextRequirement`
+/// (built by [`ContextRequiredPayload::to_requirement`]).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextRequiredPayload {
     pub domain_model_hash: String,
     /// Immutable semantic-world reference the request is pinned to.
+    /// `#[serde(default)]` so a missing field reaches the fail-closed world
+    /// gate (""), rather than a bare decode error.
+    #[serde(default)]
     pub world_ref: String,
     pub work_request_id: String,
     pub context_requirement_id: String,
@@ -186,6 +96,95 @@ pub struct ContextRequiredPayload {
     pub query: Option<String>,
     #[serde(default = "default_max_results")]
     pub max_results: u32,
+    // --- typed requirement extensions (all optional on the wire) ---------
+    /// Retrieval mode: `lexical`, `semantic`, `hybrid`.
+    #[serde(default)]
+    pub mode: Option<String>,
+    /// Purpose / retrieval intent.
+    #[serde(default)]
+    pub purpose: Option<String>,
+    /// Semantic concepts the requirement must represent.
+    #[serde(default)]
+    pub required_concepts: Vec<String>,
+    /// Caller-declared scope claim (POL-ACL-002: required for private corpora).
+    #[serde(default)]
+    pub scope_claim: Option<String>,
+    /// Caller assertion that the corpus is private (storage is authoritative).
+    #[serde(default)]
+    pub is_private: bool,
+    /// Corpora/sources excluded from this retrieval.
+    #[serde(default)]
+    pub exclusions: Vec<String>,
+    /// Maximum accepted source age (seconds).
+    #[serde(default)]
+    pub freshness_max_age_secs: Option<u64>,
+    /// Token ceiling for the retrieved context.
+    #[serde(default)]
+    pub token_budget: Option<i64>,
+    /// Task/route identity.
+    #[serde(default)]
+    pub task_id: Option<String>,
+    #[serde(default)]
+    pub route_id: Option<String>,
+    /// Expected artifact/proof references.
+    #[serde(default)]
+    pub expected_refs: Vec<String>,
+    /// Caller-supplied risk classification (informational; SEA-Forge decides
+    /// consequential-action authority).
+    #[serde(default)]
+    pub risk_classification: Option<String>,
+    #[serde(default)]
+    pub correlation_id: Option<String>,
+    #[serde(default)]
+    pub causation_id: Option<String>,
+}
+
+impl ContextRequiredPayload {
+    /// Project the wire payload onto the native typed context requirement.
+    pub fn to_requirement(&self) -> ck_app::ContextRequirement {
+        ck_app::ContextRequirement {
+            identity: ck_app::RequirementIdentity {
+                work_request_ref: self.work_request_id.clone(),
+                context_requirement_id: self.context_requirement_id.clone(),
+                task_ref: self.task_id.clone(),
+                route_ref: self.route_id.clone(),
+            },
+            world_ref: self.world_ref.clone(),
+            purpose: self.purpose.clone(),
+            query: self.query.clone(),
+            mode: self.mode.clone(),
+            required_concepts: self.required_concepts.clone(),
+            corpora: if self.corpus_id.is_empty() {
+                Vec::new()
+            } else {
+                vec![self.corpus_id.clone()]
+            },
+            constraints: ck_app::SourceConstraints {
+                caller_scope: self
+                    .scope_claim
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                exclusions: self.exclusions.clone(),
+            },
+            freshness: ck_app::FreshnessRequirement {
+                max_age_secs: self.freshness_max_age_secs,
+            },
+            max_results: self.max_results,
+            budget: self
+                .token_budget
+                .map(|max_tokens| ck_core::entities::Budget {
+                    max_tokens,
+                    max_chunks: i64::from(self.max_results.max(1)),
+                }),
+            expected_refs: self.expected_refs.clone(),
+            risk_classification: self.risk_classification.clone(),
+            trace: ck_app::TraceRefs {
+                correlation_id: self.correlation_id.clone(),
+                causation_id: self.causation_id.clone(),
+            },
+        }
+    }
 }
 
 fn default_max_results() -> u32 {
@@ -229,66 +228,164 @@ pub struct ContextPacketCreatedPayload {
 use std::path::PathBuf;
 
 use chrono::Utc;
-use ck_core::ports::SourceAdapter;
 use ulid::Ulid;
 
-/// Concrete implementation backed by ck-adapter-filesystem.
-///
-/// For the `learning-proposals` corpus, reads from a JSONL ledger written by GodSpeed-Agent.
-/// For all other corpora, uses FilesystemSourceAdapter to resolve citations from a local path.
+/// The GodSpeed-facing context acquisition adapter. Thin by design: it
+/// validates the boundary, resolves requested corpora into the real kernel
+/// (auto-ingesting operator-configured corpus sources on first use), and
+/// delegates ALL retrieval to `AppServices::resolve_context` — the same
+/// application pipeline as normal Context Kernel operation. There is no
+/// degraded, integration-only retrieval path.
 ///
 /// Context Kernel does NOT decide authority — SEA-Forge owns that. This agent
-/// only resolves citations and returns a packet carrying authority *references*
+/// only resolves context and returns a packet carrying authority *references*
 /// (passed through from the caller, not computed locally).
 pub struct AclContextAgent {
+    /// Operator-configured filesystem corpus root used for auto-ingest.
     pub corpus_root: PathBuf,
+    /// GodSpeed-Agent learning-proposals JSONL ledger (auto-ingested through
+    /// the real `LearningProposalsAdapter` source adapter).
     pub learning_proposals_ledger: Option<PathBuf>,
+}
+
+/// The outcome of one context acquisition: the legacy packet (dual-read
+/// compatibility) plus the full native resolution the CEP projection is
+/// built from.
+#[derive(Debug)]
+pub struct ContextAcquisitionResult {
+    pub packet: ContextPacketCreatedPayload,
+    pub resolution: ck_app::ContextResolution,
+    pub no_context: Option<NoContextReason>,
+}
+
+impl ContextAcquisitionResult {
+    /// Frozen E3 outcome naming: only `cited` is a successful acquisition;
+    /// zero citations are explicit and governed, never silently successful.
+    pub fn outcome(&self, required: bool) -> &'static str {
+        if self.no_context.is_none() {
+            "cited"
+        } else if required {
+            "no_context_governed"
+        } else {
+            "empty_optional"
+        }
+    }
+
+    pub fn reason(&self) -> Option<&'static str> {
+        self.no_context.map(|r| r.as_str())
+    }
+}
+
+/// Why a corpus could not be made retrievable.
+enum EnsureOutcome {
+    Ready,
+    Blocked(NoContextReason),
 }
 
 impl AclContextAgent {
     /// Acquire context with an EXPLICIT outcome: cited success or governed
-    /// no-context with a machine-readable reason. This is the frozen E3
-    /// boundary — zero citations are never silently successful.
+    /// no-context with a machine-readable reason.
     pub fn acquire_context(
         &self,
+        app: &ck_app::AppServices,
         payload: &ContextRequiredPayload,
         authority_decision_id: Option<&str>,
         authority_reference: Option<&str>,
-    ) -> Result<ContextAcquisition, anyhow::Error> {
+    ) -> Result<ContextAcquisitionResult, anyhow::Error> {
         verify_world_ref(&payload.world_ref)
             .map_err(|e| anyhow::anyhow!("world_ref rejected: {e}"))?;
-        let (citations, reason, more_available) = self.resolve_citations(payload)?;
-        if citations.is_empty() {
-            let reason = reason.expect("empty citations always carry a reason");
-            let mut packet = self.packet_for(
-                payload,
-                Vec::new(),
-                authority_decision_id,
-                authority_reference,
-            )?;
-            packet.citations.clear();
-            return Ok(ContextAcquisition::NoContext(packet, reason));
+        let requirement = payload.to_requirement();
+
+        // Resolve requested corpora into the kernel BEFORE retrieval. An
+        // operator-configured corpus is auto-ingested exactly once; anything
+        // else resolves to an explicit no-context reason, never to fabricated
+        // context.
+        for corpus_id in &requirement.corpora {
+            if app.corpus(corpus_id)?.is_some() {
+                continue;
+            }
+            if payload.is_private {
+                // A caller-declared private corpus must already be registered
+                // with its visibility — it is never auto-ingested open.
+                return Ok(self.no_context_result(
+                    payload,
+                    NoContextReason::CorpusNotFound,
+                    authority_decision_id,
+                    authority_reference,
+                )?);
+            }
+            match self.ensure_corpus_ingested(app, corpus_id) {
+                Ok(EnsureOutcome::Ready) => {}
+                Ok(EnsureOutcome::Blocked(reason)) => {
+                    return Ok(self.no_context_result(
+                        payload,
+                        reason,
+                        authority_decision_id,
+                        authority_reference,
+                    )?);
+                }
+                Err(e) => return Err(e),
+            }
         }
-        let mut omissions = Vec::new();
-        if more_available {
-            omissions.push(OMISSION_MAX_RESULTS.to_string());
-        }
-        if citations.iter().any(|c| c.truncated) {
-            omissions.push(OMISSION_CONTENT_TRUNCATED.to_string());
-        }
+
+        // The real retrieval pipeline: lexical + semantic-when-configured,
+        // corpus filtering, scope enforcement, ranking, trust/freshness,
+        // budgets, completeness accounting, calibration.
+        let resolution = app.resolve_context(&requirement)?;
+
+        let citations: Vec<Citation> = resolution.results.iter().map(result_to_citation).collect();
+        let omissions: Vec<String> = resolution.omissions.iter().map(|o| o.code.clone()).collect();
         let mut packet = self.packet_for(
             payload,
             citations,
             authority_decision_id,
             authority_reference,
         )?;
-        packet.retrieval_completeness = if omissions.is_empty() {
-            RetrievalCompleteness::Complete
-        } else {
-            RetrievalCompleteness::Partial
-        };
+        packet.retrieval_completeness = resolution.completeness;
         packet.omissions = omissions;
-        Ok(ContextAcquisition::Cited(packet))
+        let no_context = resolution.no_context_reason;
+        if no_context.is_some() {
+            packet.citations.clear();
+        }
+        Ok(ContextAcquisitionResult {
+            packet,
+            resolution,
+            no_context,
+        })
+    }
+
+    /// Explicit no-context outcome with an empty packet and a blocked
+    /// resolution — absence is stated, never fabricated.
+    fn no_context_result(
+        &self,
+        payload: &ContextRequiredPayload,
+        reason: NoContextReason,
+        authority_decision_id: Option<&str>,
+        authority_reference: Option<&str>,
+    ) -> Result<ContextAcquisitionResult, anyhow::Error> {
+        let requirement = payload.to_requirement();
+        let mut packet = self.packet_for(
+            payload,
+            Vec::new(),
+            authority_decision_id,
+            authority_reference,
+        )?;
+        packet.retrieval_completeness = RetrievalCompleteness::None;
+        packet.omissions = vec![reason.as_str().to_string()];
+        let resolution = ck_app::ContextResolution::blocked(
+            format!("qry_{}", Ulid::new()),
+            requirement.mode.clone().unwrap_or_else(|| "hybrid".to_string()),
+            ck_app::ContextAccess::Accessible,
+            reason,
+            requirement.corpora.clone(),
+            requirement.effective_result_cap(),
+            requirement.budget.as_ref().map(|b| b.max_tokens),
+        );
+        Ok(ContextAcquisitionResult {
+            packet,
+            resolution,
+            no_context: Some(reason),
+        })
     }
 
     fn packet_for(
@@ -309,185 +406,96 @@ impl AclContextAgent {
             work_request_id: payload.work_request_id.clone(),
             corpus_id: payload.corpus_id.clone(),
             citations,
-            authority_decision_id: authority_decision_id.map(|s| s.to_string()),
-            authority_reference: authority_reference.map(|s| s.to_string()),
+            authority_decision_id: authority_decision_id.map(str::to_string),
+            authority_reference: authority_reference.map(str::to_string),
         })
     }
 
-    /// Back-compat entry point: returns the packet regardless of outcome.
-    /// Prefer [`Self::acquire_context`] at canonical boundaries so zero-citation
-    /// acquisitions stay explicit.
-    pub fn handle_context_required(
+    /// Make one requested corpus retrievable through the real kernel:
+    /// auto-ingest the operator-configured source (filesystem tree under
+    /// `corpus_root`, or the learning-proposals ledger) exactly once.
+    ///
+    /// A corpus_id that escapes `corpus_root` via traversal is a hard refusal,
+    /// not a quiet no-context.
+    fn ensure_corpus_ingested(
         &self,
-        payload: &ContextRequiredPayload,
-        authority_decision_id: Option<&str>,
-        authority_reference: Option<&str>,
-    ) -> Result<ContextPacketCreatedPayload, anyhow::Error> {
-        match self.acquire_context(payload, authority_decision_id, authority_reference)? {
-            ContextAcquisition::Cited(p) => Ok(p),
-            ContextAcquisition::NoContext(p, _) => Ok(p),
-        }
-    }
-
-    fn resolve_citations(
-        &self,
-        payload: &ContextRequiredPayload,
-    ) -> Result<(Vec<Citation>, Option<NoContextReason>, bool), anyhow::Error> {
-        // Route learning-proposals corpus to JSONL ledger
-        if payload.corpus_id.starts_with("learning-proposals") {
-            return self.resolve_from_learning_proposals(payload);
-        }
-
-        // Resolve from filesystem corpus directory
-        let corpus_dir = self.corpus_root.join(&payload.corpus_id);
-
-        // Containment: reject corpus_id that escapes corpus_root via traversal,
-        // absolute paths, or symlinks. Canonicalize resolves symlinks.
-        let canonical_root = match self.corpus_root.canonicalize() {
-            Ok(p) => p,
-            Err(_) => {
-                // corpus root not configured / missing — explicit, never silent
-                return Ok((vec![], Some(NoContextReason::CorpusRootUnconfigured), false));
+        app: &ck_app::AppServices,
+        corpus_id: &str,
+    ) -> Result<EnsureOutcome, anyhow::Error> {
+        if corpus_id.starts_with("learning-proposals") {
+            let Some(ledger) = &self.learning_proposals_ledger else {
+                return Ok(EnsureOutcome::Blocked(NoContextReason::CorpusRootUnconfigured));
+            };
+            if !ledger.exists() {
+                return Ok(EnsureOutcome::Blocked(NoContextReason::CorpusNotFound));
             }
-        };
-        if !corpus_dir.is_dir() {
-            return Ok((vec![], Some(NoContextReason::CorpusNotFound), false));
+            let config =
+                serde_json::json!({ "path": ledger.to_str().unwrap_or("") }).to_string();
+            return match app.ingest_source(ck_app::IngestSourceRequest {
+                source_id: format!("learning-proposals:{corpus_id}"),
+                source_kind: "learning_proposals_jsonl".to_string(),
+                adapter_config_json: config,
+                corpus_id: Some(corpus_id.to_string()),
+            }) {
+                Ok(_) => Ok(EnsureOutcome::Ready),
+                Err(_) => Ok(EnsureOutcome::Blocked(NoContextReason::CorpusUnavailable)),
+            };
         }
-        let canonical_dir = match corpus_dir.canonicalize() {
-            Ok(p) => p,
-            Err(_) => return Ok((vec![], Some(NoContextReason::CorpusNotFound), false)),
+
+        let Ok(canonical_root) = self.corpus_root.canonicalize() else {
+            // corpus root not configured / missing — explicit, never silent
+            return Ok(EnsureOutcome::Blocked(
+                NoContextReason::CorpusRootUnconfigured,
+            ));
+        };
+        let corpus_dir = self.corpus_root.join(corpus_id);
+        if !corpus_dir.is_dir() {
+            return Ok(EnsureOutcome::Blocked(NoContextReason::CorpusNotFound));
+        }
+        let Ok(canonical_dir) = corpus_dir.canonicalize() else {
+            return Ok(EnsureOutcome::Blocked(NoContextReason::CorpusNotFound));
         };
         if !canonical_dir.starts_with(&canonical_root) {
             anyhow::bail!(
                 "corpus_id '{}' escapes the configured corpus root",
-                payload.corpus_id
+                corpus_id
             );
         }
         let config =
             serde_json::json!({ "path": canonical_dir.to_str().unwrap_or("") }).to_string();
-        let adapter = ck_adapter_filesystem::FilesystemSourceAdapter;
-        let units = adapter.discover_units(&payload.corpus_id, &config)?;
-
-        let query = payload.query.as_deref().unwrap_or("");
-        let max = payload.max_results as usize;
-        let now = Utc::now().to_rfc3339();
-
-        let mut citations = Vec::new();
-        let mut more_available = false;
-        for unit in units.iter() {
-            let raw = adapter.fetch_content(&payload.corpus_id, unit, &config)?;
-            let content = String::from_utf8_lossy(&raw.bytes).into_owned();
-            if query.is_empty() || content.to_lowercase().contains(&query.to_lowercase()) {
-                if citations.len() >= max {
-                    // A further match exists that the cap cuts off.
-                    more_available = true;
-                    break;
-                }
-                let truncated = content.chars().count() > 500;
-                citations.push(Citation {
-                    citation_id: format!("cit_{}", Ulid::new()),
-                    source: unit.uri.clone().unwrap_or_else(|| unit.external_id.clone()),
-                    content: content.chars().take(500).collect(),
-                    fetched_at: now.clone(),
-                    truncated,
-                });
-            }
-        }
-        if citations.is_empty() {
-            Ok((vec![], Some(NoContextReason::NoMatchingContent), false))
-        } else {
-            Ok((citations, None, more_available))
+        match app.ingest_source(ck_app::IngestSourceRequest {
+            source_id: format!("ctxfs:{corpus_id}"),
+            source_kind: "filesystem_tree".to_string(),
+            adapter_config_json: config,
+            corpus_id: Some(corpus_id.to_string()),
+        }) {
+            Ok(_) => Ok(EnsureOutcome::Ready),
+            Err(_) => Ok(EnsureOutcome::Blocked(NoContextReason::CorpusUnavailable)),
         }
     }
+}
 
-    fn resolve_from_learning_proposals(
-        &self,
-        payload: &ContextRequiredPayload,
-    ) -> Result<(Vec<Citation>, Option<NoContextReason>, bool), anyhow::Error> {
-        use std::io::{BufRead, BufReader};
-
-        let ledger_path = match &self.learning_proposals_ledger {
-            Some(p) => p.clone(),
-            None => return Ok((vec![], Some(NoContextReason::CorpusRootUnconfigured), false)),
-        };
-        if !ledger_path.exists() {
-            return Ok((vec![], Some(NoContextReason::CorpusNotFound), false));
-        }
-
-        let file = std::fs::File::open(&ledger_path)?;
-        let reader = BufReader::new(file);
-        let query = payload.query.as_deref().unwrap_or("").to_lowercase();
-        let max = payload.max_results as usize;
-        let now = Utc::now().to_rfc3339();
-
-        let mut citations = Vec::new();
-        let mut more_available = false;
-        for line in reader.lines() {
-            let line = line?;
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            let raw: serde_json::Value = serde_json::from_str(line)?;
-            // Handle both raw proposal envelopes and LedgerStore-wrapped envelopes:
-            // - raw: {event_id, payload: {proposal, domain_area, ...}}
-            // - wrapped: {record: {event_id, payload: ...}, ledger, checksum, ...}
-            // - developmental_events developmental variant where proposal may be backfilled
-            let event = if raw.get("record").is_some() && raw["record"].is_object() {
-                raw.get("record").unwrap().clone()
-            } else {
-                raw.clone()
-            };
-            // Proposal text may be at payload.proposal (canonical) or payload.status fallback;
-            // if still empty but domain_area present, synthesize a citable stub (mirrors GSA export helper).
-            let mut proposal_text = event["payload"]["proposal"]
-                .as_str()
-                .unwrap_or("")
-                .to_string();
-            let domain_area = event["payload"]["domain_area"]
-                .as_str()
-                .unwrap_or("")
-                .to_string();
-            if proposal_text.is_empty() && !domain_area.is_empty() {
-                let status = event["payload"]["status"].as_str().unwrap_or("open");
-                proposal_text = format!("Learning proposal in {domain_area}: {status}");
-            }
-            // Also support the developmental ledger's LearningProposalCreated where proposal
-            // may be synthesized from domain_area/status above — still citable via learning-proposals://
-
-            if query.is_empty()
-                || proposal_text.to_lowercase().contains(&query)
-                || domain_area.to_lowercase().contains(&query)
-            {
-                // Skip entries with no citable proposal text and no domain_area (degenerate, not provenance)
-                if proposal_text.is_empty() && domain_area.is_empty() {
-                    continue;
-                }
-                if citations.len() >= max {
-                    more_available = true;
-                    break;
-                }
-                citations.push(Citation {
-                    citation_id: format!("cit_{}", Ulid::new()),
-                    source: format!(
-                        "learning-proposals://{}",
-                        event["payload"]["learning_proposal_id"]
-                            .as_str()
-                            .or_else(|| event["payload"]["learning_proposal_id"].as_str())
-                            .or_else(|| event["payload"]["coherence_break_id"].as_str())
-                            .unwrap_or("unknown")
-                    ),
-                    content: proposal_text,
-                    fetched_at: now.clone(),
-                    truncated: false,
-                });
-            }
-        }
-        if citations.is_empty() {
-            Ok((vec![], Some(NoContextReason::NoMatchingContent), false))
-        } else {
-            Ok((citations, None, more_available))
-        }
+/// Project one real retrieval result onto the legacy citation wire shape.
+/// The bounded representation is the ranked excerpt with a resolvable
+/// locator; full content lives at the cited source (see the retrieval
+/// contract recorded on the bundle projection).
+fn result_to_citation(result: &ck_core::entities::RetrievalResult) -> Citation {
+    let uri = result
+        .citation
+        .get("uri")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| result.result_id.clone());
+    let source = match result.citation.get("anchor").and_then(|v| v.as_str()) {
+        Some(anchor) => format!("{uri}#{anchor}"),
+        None => uri,
+    };
+    Citation {
+        citation_id: format!("cit_{}", Ulid::new()),
+        source,
+        content: result.excerpt.clone(),
+        fetched_at: Utc::now().to_rfc3339(),
+        truncated: result.excerpt.ends_with('…'),
     }
 }
 

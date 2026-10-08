@@ -385,12 +385,24 @@ fn row_to_session_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionEven
 impl StoragePort for SqliteStore {
     fn upsert_source(&self, source: &Source) -> Result<()> {
         let conn = self.conn()?;
+        // UPSERT (not INSERT OR REPLACE): a replace deletes the old row and
+        // cascades away every document/chunk of the source.
         conn.execute(
-            "INSERT OR REPLACE INTO sources \
+            "INSERT INTO sources \
              (source_id, kind, display_name, enabled, adapter_config_json, auth_ref, \
               first_indexed_at, last_refresh_attempt_at, last_refresh_success_at, \
               last_refresh_error, freshness_ttl_secs, upstream_revision, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) \
+             ON CONFLICT(source_id) DO UPDATE SET \
+              kind = excluded.kind, display_name = excluded.display_name, \
+              enabled = excluded.enabled, adapter_config_json = excluded.adapter_config_json, \
+              auth_ref = excluded.auth_ref, first_indexed_at = excluded.first_indexed_at, \
+              last_refresh_attempt_at = excluded.last_refresh_attempt_at, \
+              last_refresh_success_at = excluded.last_refresh_success_at, \
+              last_refresh_error = excluded.last_refresh_error, \
+              freshness_ttl_secs = excluded.freshness_ttl_secs, \
+              upstream_revision = excluded.upstream_revision, \
+              updated_at = excluded.updated_at",
             rusqlite::params![
                 source.source_id,
                 source.kind,
@@ -437,10 +449,15 @@ impl StoragePort for SqliteStore {
 
     fn upsert_corpus(&self, corpus: &Corpus) -> Result<()> {
         let conn = self.conn()?;
+        // UPSERT (not INSERT OR REPLACE): a replace deletes the old row and
+        // cascades away every document/chunk of the corpus.
         conn.execute(
-            "INSERT OR REPLACE INTO corpora \
+            "INSERT INTO corpora \
              (corpus_id, name, kind, visibility, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+             ON CONFLICT(corpus_id) DO UPDATE SET \
+              name = excluded.name, kind = excluded.kind, \
+              visibility = excluded.visibility, updated_at = excluded.updated_at",
             rusqlite::params![
                 corpus.corpus_id,
                 corpus.name,

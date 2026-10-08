@@ -17,7 +17,7 @@ pub struct RetrievalQuery {
 }
 
 /// Budget constraints for retrieval.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Budget {
     pub max_tokens: i64,
     pub max_chunks: i64,
