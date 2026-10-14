@@ -1,5 +1,14 @@
 # Evidence Log
 
+## Claim: Repository-side Devin configuration
+- Claim: .devin/wiki.json and .devin/blueprint.yaml exist; generated DeepWiki and working Devin snapshot are not yet established.
+- Status: partially implemented
+- Evidence type: config
+- Files: .devin/wiki.json, .devin/blueprint.yaml, AGENTS.md, .github/copilot-instructions.md
+- Notes: Repo syntax and page relationships inspected statically. No live Devin API or snapshot test was performed.
+- Confidence: high for committed configuration; unknown for external generation.
+
+
 ## Claim
 - Claim: README expresses the combined value propositions of current docs, token-efficient reference retrieval, and durable session continuity.
 - Status: implemented

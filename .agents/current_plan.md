@@ -50,3 +50,9 @@
 ## Validation Results
 
 - All 18 tasks complete. Release gate passed: 186 tests, zero warnings, release binary builds and runs.
+
+
+## 2026-10-13 — Devin onboarding
+- Objective: Configure low-effort DeepWiki and a pinned Rust environment without changing runtime code.
+- Scope: Declarative .devin files; repair stale .agent/ references in agent instructions to existing .agents/ memory.
+- Verification plan: Parse JSON, validate page hierarchy and limits, check blueprint sections, inspect PR and CI. Actual Devin indexing/snapshot execution remains pending and must not be claimed.

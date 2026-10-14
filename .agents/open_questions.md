@@ -4,6 +4,7 @@
 - None.
 
 ## Non-Blocking
+- Private-repository indexing and Low/free DeepWiki availability depend on the connected Devin account; verify in the Devin UI after merge. The Git configuration alone does not establish entitlement or generated wiki success.
 - Observability is structured tracing plus config for an OTEL endpoint; no OpenTelemetry exporter/metrics backend is wired yet (ck-observability crate exists with text/JSON tracing init). This is a future enhancement, not a v1 blocker.
 - Context7 dataset adapter is not part of v1 deployment. Context7 compatibility is provided through tool-contract aliases (resolve-library-id, get-library-docs, query-docs) only. Can be added as a future adapter behind SourceAdapter port.
 - PDF source adapter is not part of v1 deployment. Filesystem, GitHub, and web adapters cover the primary documentation use case. Can be added as a future adapter behind SourceAdapter port.

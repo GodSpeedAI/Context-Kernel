@@ -57,23 +57,23 @@ Agents working in this repository MUST follow the rules in this file.
 
 ## Required Project Memory Files
 
-Agents MUST use the `.agent/` directory for persistent, file-based working memory.
+Agents MUST use the `.agents/` directory for persistent, file-based working memory.
 
 Required files:
 
-- `.agent/project_state.md`
-- `.agent/current_plan.md`
-- `.agent/work_log.md`
-- `.agent/decisions.md`
-- `.agent/open_questions.md`
-- `.agent/evidence.md`
-- `.agent/OBSERVED_DEBT.md`
+- `.agents/project_state.md`
+- `.agents/current_plan.md`
+- `.agents/work_log.md`
+- `.agents/decisions.md`
+- `.agents/open_questions.md`
+- `.agents/evidence.md`
+- `.agents/OBSERVED_DEBT.md`
 
 If the directory or files do not exist, the agent MUST create them.
 
 ### File purposes
 
-#### `.agent/project_state.md`
+#### `.agents/project_state.md`
 Canonical snapshot of current implementation status.
 
 Must include:
@@ -88,7 +88,7 @@ Must include:
 
 This file should describe **actual repository state**, not aspirational state.
 
-#### `.agent/current_plan.md`
+#### `.agents/current_plan.md`
 The active task plan.
 
 Must include:
@@ -101,7 +101,7 @@ Must include:
 
 Update this before coding if the task is non-trivial.
 
-#### `.agent/work_log.md`
+#### `.agents/work_log.md`
 Chronological log of work performed.
 
 Each entry should include:
@@ -112,7 +112,7 @@ Each entry should include:
 - results
 - blockers if any
 
-#### `.agent/decisions.md`
+#### `.agents/decisions.md`
 Architecture and implementation decisions.
 
 Each decision entry should include:
@@ -124,7 +124,7 @@ Each decision entry should include:
 - evidence in codebase
 - consequences
 
-#### `.agent/open_questions.md`
+#### `.agents/open_questions.md`
 Outstanding uncertainties that require resolution.
 
 Must distinguish:
@@ -132,7 +132,7 @@ Must distinguish:
 - non-blocking follow-ups
 - assumptions currently in use
 
-#### `.agent/evidence.md`
+#### `.agents/evidence.md`
 Repository-grounded evidence for important claims.
 
 For each claim, record:
@@ -153,11 +153,11 @@ This file is especially important when summarizing project status.
 
 Before making changes, agents MUST read:
 
-- `.agent/project_state.md`
-- `.agent/current_plan.md`
-- `.agent/decisions.md`
-- `.agent/open_questions.md`
-- `.agent/evidence.md`
+- `.agents/project_state.md`
+- `.agents/current_plan.md`
+- `.agents/decisions.md`
+- `.agents/open_questions.md`
+- `.agents/evidence.md`
 
 If they are missing, create them with minimal initial structure.
 
@@ -176,7 +176,7 @@ Priority order of evidence:
 ### 3. Update the plan
 
 Before non-trivial work:
-- update `.agent/current_plan.md`
+- update `.agents/current_plan.md`
 - write explicit validation steps
 - identify which files/crates are expected to change
 
@@ -190,16 +190,16 @@ After changes:
 - run relevant tests
 - inspect generated or changed artifacts
 - confirm behavior from code paths, not only comments
-- record evidence in `.agent/evidence.md`
+- record evidence in `.agents/evidence.md`
 
 ### 6. Update memory files
 
 After meaningful work, update:
-- `.agent/project_state.md`
-- `.agent/work_log.md`
-- `.agent/evidence.md`
-- `.agent/decisions.md` if architectural choices were made
-- `.agent/open_questions.md` if new unknowns arose
+- `.agents/project_state.md`
+- `.agents/work_log.md`
+- `.agents/evidence.md`
+- `.agents/decisions.md` if architectural choices were made
+- `.agents/open_questions.md` if new unknowns arose
 
 ---
 
@@ -298,15 +298,15 @@ Rules:
 If a port/trait changes:
 - update all implementations
 - update tests
-- record the decision in `.agent/decisions.md`
+- record the decision in `.agents/decisions.md`
 
 ### Schema changes
 
 If SQLite schema changes:
 - add a migration
 - update schema-related tests
-- update `.agent/project_state.md`
-- note compatibility implications in `.agent/decisions.md`
+- update `.agents/project_state.md`
+- note compatibility implications in `.agents/decisions.md`
 
 ### MCP changes
 
@@ -314,7 +314,7 @@ If MCP tools or JSON contracts change:
 - update handlers
 - update DTOs
 - update tests/golden outputs
-- update `.agent/evidence.md` with exact handler registration evidence
+- update `.agents/evidence.md` with exact handler registration evidence
 
 ---
 
@@ -358,7 +358,7 @@ If the environment prevents running tests:
 
 ## File-Based Memory Templates
 
-### `.agent/project_state.md`
+### `.agents/project_state.md`
 
 ```markdown
 # Project State
@@ -408,7 +408,7 @@ If the environment prevents running tests:
 -
 ```
 
-### `.agent/current_plan.md`
+### `.agents/current_plan.md`
 
 ```markdown
 # Current Plan
@@ -434,7 +434,7 @@ If the environment prevents running tests:
 -
 ```
 
-### `.agent/work_log.md`
+### `.agents/work_log.md`
 
 ```markdown
 # Work Log
@@ -447,7 +447,7 @@ If the environment prevents running tests:
 - Notes:
 ```
 
-### `.agent/decisions.md`
+### `.agents/decisions.md`
 
 ```markdown
 # Decisions
@@ -461,7 +461,7 @@ If the environment prevents running tests:
 - Consequences:
 ```
 
-### `.agent/open_questions.md`
+### `.agents/open_questions.md`
 
 ```markdown
 # Open Questions
@@ -476,7 +476,7 @@ If the environment prevents running tests:
 -
 ```
 
-### `.agent/evidence.md`
+### `.agents/evidence.md`
 
 ```markdown
 # Evidence Log
@@ -526,18 +526,18 @@ Agents MUST NOT:
 Before concluding a meaningful task, the agent SHOULD verify:
 
 - [ ] Relevant code inspected directly
-- [ ] `.agent/current_plan.md` updated
+- [ ] `.agents/current_plan.md` updated
 - [ ] Implementation completed or partial status clearly stated
 - [ ] Tests run or inability documented
-- [ ] `.agent/work_log.md` updated
-- [ ] `.agent/project_state.md` updated
-- [ ] `.agent/evidence.md` updated
-- [ ] `.agent/decisions.md` updated if needed
-- [ ] `.agent/open_questions.md` updated if needed
+- [ ] `.agents/work_log.md` updated
+- [ ] `.agents/project_state.md` updated
+- [ ] `.agents/evidence.md` updated
+- [ ] `.agents/decisions.md` updated if needed
+- [ ] `.agents/open_questions.md` updated if needed
 
 ---
 
 ## Final Rule
 
 If there is a conflict between repository documentation and repository code, **trust the code** and
-record the discrepancy in `.agent/open_questions.md` or `.agent/evidence.md`.
+record the discrepancy in `.agents/open_questions.md` or `.agents/evidence.md`.
