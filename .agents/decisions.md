@@ -215,3 +215,11 @@
 - Alternatives considered: Joining through documents table at query time; rejected as slower for vector search. Separate index table; rejected as redundant.
 - Evidence in codebase: `crates/ck-vector/src/lib.rs`.
 - Consequences: Vector search respects data boundaries; remove_chunk_embeddings_by_document enables clean document deletion.
+
+## Decision: Reuse existing .agents/ for Devin
+- Date: 2026-10-13
+- Context: Existing AGENTS.md and Copilot instructions pointed to absent .agent/ while persistent state was already committed in .agents/.
+- Decision: Correct the instructions and preserve one source of continuity; add Git-backed Devin configuration without code/dependency changes.
+- Alternatives considered: Duplicate seven memory files under .agent/ (rejected: conflicting ledgers), retain stale instructions (rejected: repeatable agent misrouting).
+- Evidence: AGENTS.md, .github/copilot-instructions.md, .agents/current_plan.md, .agents/project_state.md, .agents/evidence.md.
+- Consequences: Future agents reuse existing memory; previous historical work-log references stay intact as provenance.
