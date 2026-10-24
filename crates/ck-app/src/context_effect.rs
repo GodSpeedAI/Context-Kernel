@@ -214,7 +214,9 @@ impl ContextEffectStore {
     /// (idempotent); records are never rewritten.
     pub fn append(&self, effect: &ContextEffect) -> Result<bool, ContextEffectError> {
         effect.validate()?;
-        let existing = self.load().unwrap_or_default();
+        // A ledger that cannot be read must fail the append: swallowing the
+        // error here would treat every effect as new and append duplicates.
+        let existing = self.load()?;
         if existing.iter().any(|e| e.effect_id == effect.effect_id) {
             return Ok(false);
         }
@@ -272,5 +274,51 @@ impl ContextEffectStore {
             }
         }
         Ok(summary)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn effect(effect_id: &str) -> ContextEffect {
+        ContextEffect {
+            effect_id: effect_id.into(),
+            recorded_at: "2026-10-07T12:00:00Z".into(),
+            kind: ContextEffectKind::SourceContradicted,
+            world_ref: format!("world:test@sha256:{}", "b".repeat(64)),
+            work_request_ref: "wr_test".into(),
+            bundle_envelope_id: "env-ctx_01TEST".into(),
+            bundle_content_hash: format!("sha256:{}", "c".repeat(64)),
+            affected_sources: vec!["src-a".into()],
+            evidence_ref: "settlement:e6_operational_settlement-001".into(),
+            detail: None,
+        }
+    }
+
+    #[test]
+    fn append_fails_closed_when_ledger_is_corrupt() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ledger.jsonl");
+        let corrupt = "{ not json\n";
+        std::fs::write(&path, corrupt).unwrap();
+        let ledger = ContextEffectStore::new(&path);
+
+        let err = ledger.append(&effect("eff-1")).unwrap_err();
+        assert!(
+            matches!(err, ContextEffectError::Io(ref m) if m.contains("malformed ledger line")),
+            "got: {err:?}"
+        );
+        // Nothing was appended on top of the unreadable ledger.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), corrupt);
+    }
+
+    #[test]
+    fn append_is_idempotent_on_readable_ledger() {
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = ContextEffectStore::new(dir.path().join("ledger.jsonl"));
+        assert!(ledger.append(&effect("eff-1")).unwrap());
+        assert!(!ledger.append(&effect("eff-1")).unwrap());
+        assert_eq!(ledger.load().unwrap().len(), 1);
     }
 }
