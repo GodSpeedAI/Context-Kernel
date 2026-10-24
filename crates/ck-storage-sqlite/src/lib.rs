@@ -72,12 +72,15 @@ impl SqliteStore {
     /// Clears all FTS tables and repopulates them from canonical rows.
     /// Returns (chunks_reindexed, session_events_reindexed, aliases_reindexed).
     pub fn rebuild_fts_index(&self) -> Result<(u64, u64, u64)> {
-        let conn = self.conn()?;
-        conn.execute("DELETE FROM chunks_fts", [])?;
-        conn.execute("DELETE FROM session_events_fts", [])?;
-        conn.execute("DELETE FROM library_aliases_fts", [])?;
+        // One transaction: a failure part-way leaves the existing index intact
+        // rather than cleared or half-populated.
+        let mut conn = self.conn()?;
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM chunks_fts", [])?;
+        tx.execute("DELETE FROM session_events_fts", [])?;
+        tx.execute("DELETE FROM library_aliases_fts", [])?;
 
-        let chunks = conn.execute(
+        let chunks = tx.execute(
             "INSERT INTO chunks_fts (chunk_id, document_id, corpus_id, library_id, title, heading, text)
              SELECT c.chunk_id, c.document_id, c.corpus_id,
                     COALESCE(d.library_id, ''), COALESCE(d.title, ''),
@@ -86,13 +89,13 @@ impl SqliteStore {
             [],
         )? as u64;
 
-        let events = conn.execute(
+        let events = tx.execute(
             "INSERT INTO session_events_fts (event_id, session_id, kind, text)
              SELECT event_id, session_id, kind, text FROM session_events",
             [],
         )? as u64;
 
-        let aliases = conn.execute(
+        let aliases = tx.execute(
             "INSERT INTO library_aliases_fts (alias, library_id, name, provider)
              SELECT la.alias, la.library_id, COALESCE(li.name, ''), COALESCE(li.provider, '')
              FROM library_aliases la
@@ -100,6 +103,7 @@ impl SqliteStore {
             [],
         )? as u64;
 
+        tx.commit()?;
         Ok((chunks, events, aliases))
     }
 }
@@ -918,7 +922,9 @@ impl StoragePort for SqliteStore {
         let conn = self.conn()?;
         let deleted = conn.execute(
             "DELETE FROM sessions \
-             WHERE status IN ('closed', 'compacted') AND updated_at < ?1",
+             WHERE status IN ('closed', 'compacted') AND updated_at < ?1 \
+             AND NOT EXISTS (SELECT 1 FROM session_events e \
+                 WHERE e.session_id = sessions.session_id AND e.pinned = 1)",
             rusqlite::params![cutoff_rfc3339],
         )?;
         Ok(deleted as u64)
@@ -947,7 +953,9 @@ impl StoragePort for SqliteStore {
     fn delete_artifacts_older_than(&self, cutoff_rfc3339: &str) -> Result<u64> {
         let conn = self.conn()?;
         let deleted = conn.execute(
-            "DELETE FROM artifacts WHERE created_at < ?1",
+            "DELETE FROM artifacts WHERE created_at < ?1 \
+             AND NOT EXISTS (SELECT 1 FROM session_events e \
+                 WHERE e.artifact_id = artifacts.artifact_id AND e.pinned = 1)",
             rusqlite::params![cutoff_rfc3339],
         )?;
         Ok(deleted as u64)
@@ -976,7 +984,13 @@ impl StoragePort for SqliteStore {
 
     fn list_artifacts_older_than(&self, cutoff_rfc3339: &str) -> Result<Vec<String>> {
         let conn = self.conn()?;
-        let mut stmt = conn.prepare("SELECT artifact_id FROM artifacts WHERE created_at < ?1")?;
+        // Artifacts referenced by a pinned event are retained: their payloads
+        // must not be deleted either, so this list gates payload removal too.
+        let mut stmt = conn.prepare(
+            "SELECT artifact_id FROM artifacts WHERE created_at < ?1 \
+             AND NOT EXISTS (SELECT 1 FROM session_events e \
+                 WHERE e.artifact_id = artifacts.artifact_id AND e.pinned = 1)",
+        )?;
         let rows = stmt.query_map(rusqlite::params![cutoff_rfc3339], |row| row.get(0))?;
         let mut ids = Vec::new();
         for r in rows {
@@ -1620,11 +1634,14 @@ mod tests {
         assert!(store.get_event(&pinned_event.event_id).unwrap().is_some());
         assert!(store.get_event(&recent_event.event_id).unwrap().is_some());
 
+        // The session still holds a pinned event, so it is retained: deleting
+        // it would cascade-delete the pinned event.
         assert_eq!(
             store.delete_inactive_sessions_older_than(cutoff).unwrap(),
-            1
+            0
         );
-        assert!(store.get_session("sess-old").unwrap().is_none());
+        assert!(store.get_session("sess-old").unwrap().is_some());
+        assert!(store.get_event(&pinned_event.event_id).unwrap().is_some());
 
         store
             .upsert_source(&Source {
@@ -1682,6 +1699,116 @@ mod tests {
         );
         assert!(store.get_refresh_job("job-old").unwrap().is_none());
         assert!(store.get_refresh_job("job-active").unwrap().is_some());
+    }
+
+    #[test]
+    fn rebuild_fts_index_is_atomic_on_failure() {
+        let (store, _dir) = test_store();
+        {
+            let conn = store.conn().unwrap();
+            conn.execute(
+                "INSERT INTO chunks_fts (chunk_id, document_id, corpus_id, library_id, title, heading, text) \
+                 VALUES ('chunk-keep', 'doc-1', 'corp-1', '', 't', '', 'still indexed')",
+                [],
+            )
+            .unwrap();
+            // Force the last INSERT to fail after the earlier DELETEs ran.
+            conn.execute("DROP TABLE library_aliases_fts", []).unwrap();
+        }
+
+        assert!(store.rebuild_fts_index().is_err());
+
+        let conn = store.conn().unwrap();
+        let kept: i64 = conn
+            .query_row("SELECT COUNT(*) FROM chunks_fts", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(kept, 1, "failed rebuild must roll back the chunk DELETE");
+    }
+
+    fn artifact_row(artifact_id: &str, created_at: &str) -> Artifact {
+        Artifact {
+            artifact_id: artifact_id.into(),
+            session_id: None,
+            kind: "blob".into(),
+            mime_type: None,
+            storage_uri: format!("file:///{artifact_id}"),
+            size_bytes: 1,
+            summary: None,
+            checksum: "sha256:00".into(),
+            created_at: created_at.into(),
+        }
+    }
+
+    #[test]
+    fn retention_keeps_artifacts_referenced_by_pinned_events() {
+        let (store, _dir) = test_store();
+        let old = "2026-01-01T00:00:00Z";
+        let cutoff = "2026-02-01T00:00:00Z";
+        store
+            .create_session(
+                "sess-art",
+                SessionTransport::Stdio,
+                ContinuationMode::Ephemeral,
+            )
+            .unwrap();
+        store
+            .upsert_artifact(&artifact_row("art-pinned", old))
+            .unwrap();
+        store
+            .upsert_artifact(&artifact_row("art-plain", old))
+            .unwrap();
+        store
+            .add_event("sess-art", "note", "pinned", Some("art-pinned"), "{}", true)
+            .unwrap();
+
+        // Only the unreferenced artifact is eligible; the payload list gates
+        // payload deletion too, so the pinned artifact is never offered.
+        assert_eq!(
+            store.list_artifacts_older_than(cutoff).unwrap(),
+            vec!["art-plain".to_string()]
+        );
+        assert_eq!(store.delete_artifacts_older_than(cutoff).unwrap(), 1);
+        let conn = store.conn().unwrap();
+        let remaining: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM artifacts WHERE artifact_id = 'art-pinned'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 1, "pinned-event artifact must survive retention");
+    }
+
+    #[test]
+    fn retention_keeps_sessions_with_pinned_events_and_their_events() {
+        let (store, _dir) = test_store();
+        let old = "2026-01-01T00:00:00Z";
+        let cutoff = "2026-02-01T00:00:00Z";
+        store
+            .create_session(
+                "sess-pinned",
+                SessionTransport::Stdio,
+                ContinuationMode::Ephemeral,
+            )
+            .unwrap();
+        let pinned = store
+            .add_event("sess-pinned", "decision", "keep me", None, "{}", true)
+            .unwrap();
+        {
+            let conn = store.conn().unwrap();
+            conn.execute(
+                "UPDATE sessions SET status = 'closed', updated_at = ?1 WHERE session_id = 'sess-pinned'",
+                rusqlite::params![old],
+            )
+            .unwrap();
+        }
+
+        assert_eq!(
+            store.delete_inactive_sessions_older_than(cutoff).unwrap(),
+            0
+        );
+        assert!(store.get_session("sess-pinned").unwrap().is_some());
+        assert!(store.get_event(&pinned.event_id).unwrap().is_some());
     }
 
     #[test]

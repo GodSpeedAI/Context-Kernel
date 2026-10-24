@@ -43,6 +43,8 @@ WHERE created_at < ? AND pinned = 0
 ```
 This guarantees that teams and autonomous agents can flag foundational requirements, constraints, or decisions as pinned, confident that maintenance sweeps will never discard them.
 
+The same guard applies beyond individual events: a session that still contains a pinned event is not deleted with its inactive-session sweep (deleting it would cascade to the pinned event), and an artifact referenced by a pinned event is neither deleted nor has its payload removed.
+
 ---
 
 ## 3. Data Integrity & Compensation in Artifact Storage
