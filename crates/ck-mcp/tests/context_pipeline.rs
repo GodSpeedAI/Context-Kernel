@@ -412,3 +412,51 @@ fn an_empty_query_browses_the_corpus_within_budget() {
     );
     assert_eq!(res.completeness, RetrievalCompleteness::Complete);
 }
+
+#[test]
+fn whole_kernel_search_without_scope_never_returns_private_corpus_content() {
+    // Empty `corpora` means the whole kernel scope. A caller without private
+    // scope must not receive private-corpus chunks through that path.
+    let corpus = tempfile::tempdir().unwrap();
+    let kernel = tempfile::tempdir().unwrap();
+    seed_corpus(
+        corpus.path(),
+        "private_docs",
+        &[("s.md", "classified deployment notes")],
+    );
+    seed_corpus(
+        corpus.path(),
+        "public_docs",
+        &[("p.md", "classified public deployment notes")],
+    );
+    let (app, store) = test_kernel_with_store(kernel.path());
+    ingest(&app, corpus.path(), "private_docs");
+    ingest(&app, corpus.path(), "public_docs");
+    let mut c = store.get_corpus("private_docs").unwrap().unwrap();
+    c.visibility = "private".into();
+    store.upsert_corpus(&c).unwrap();
+
+    let mut req = requirement("private_docs", Some("classified"));
+    req.corpora = Vec::new();
+    let res = app.resolve_context(&req).unwrap();
+    assert!(
+        res.results
+            .iter()
+            .all(|r| r.metadata.get("corpus_id").and_then(|v| v.as_str()) != Some("private_docs")),
+        "private corpus content leaked through whole-kernel search: {:?}",
+        res.results
+    );
+    assert!(
+        res.results.iter().any(|r| r.excerpt.contains("public")),
+        "public corpus stays searchable: {:?}",
+        res.results
+    );
+
+    // Explicit scope restores private content on the same whole-kernel path.
+    req.constraints.caller_scope = vec!["private_docs".into()];
+    let scoped = app.resolve_context(&req).unwrap();
+    assert!(scoped
+        .results
+        .iter()
+        .any(|r| r.metadata.get("corpus_id").and_then(|v| v.as_str()) == Some("private_docs")));
+}

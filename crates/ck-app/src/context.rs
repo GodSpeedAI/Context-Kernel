@@ -310,7 +310,14 @@ impl AppServices {
             truncated = resp.truncated;
             query_id = resp.query_id;
             mode = resp.mode;
-            candidates = resp.results;
+            // A whole-kernel search has no per-corpus gate of its own, so the
+            // private-scope and exclusion rules are applied to each result's
+            // corpus here (fail closed).
+            for r in resp.results {
+                if self.result_corpus_permitted(&r, &req.constraints)? {
+                    candidates.push(r);
+                }
+            }
         } else {
             for corpus in &req.corpora {
                 let resp = self.query_reference(QueryReferenceRequest {
@@ -529,6 +536,30 @@ impl AppServices {
             },
             corpora: searched,
         })
+    }
+
+    /// Whether a result's corpus may be returned to this caller: not excluded,
+    /// and not a private corpus without explicit scope (POL-ACL-002). A result
+    /// with no attributable corpus carries no private-corpus content.
+    fn result_corpus_permitted(
+        &self,
+        r: &RetrievalResult,
+        constraints: &SourceConstraints,
+    ) -> Result<bool> {
+        let Some(corpus_id) = r.metadata.get("corpus_id").and_then(|v| v.as_str()) else {
+            return Ok(true);
+        };
+        if constraints.exclusions.iter().any(|e| e == corpus_id) {
+            return Ok(false);
+        }
+        if let Some(corpus) = self.storage.get_corpus(corpus_id)? {
+            if corpus.visibility == "private"
+                && !constraints.caller_scope.iter().any(|s| s == corpus_id)
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Whether a result's backing source is older than the declared freshness
