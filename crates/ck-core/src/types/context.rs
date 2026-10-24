@@ -63,8 +63,6 @@ impl NoContextReason {
     }
 }
 
-/// Machine-readable omission codes recorded on a non-complete resolution.
-
 /// Why a candidate `world_ref` cannot enter a protected boundary
 /// (CEP-0008 / GodSpeed profile).
 #[derive(Debug, Clone, PartialEq, Eq)]
