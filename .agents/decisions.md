@@ -318,3 +318,11 @@
 - Decision: append-only JSONL `ContextEffectStore` (CK_CONTEXT_EFFECT_LEDGER), ingestion only with a settlement/evidence `evidence_ref` (self-reports rejected), world-scoped, idempotent by `effect_id`; only `source_contradicted`/`source_stale` demote future retrieval; historical bundles never rewritten.
 - Evidence: `ck-app/src/context_effect.rs`, `context_calibration.rs` tests, `ingest_context_effects` MCP tool.
 - Consequences: SWE_SEED must send `world_ref` (Stage 9, same migration). Legacy requests without it are refused.
+
+## Decision: Reuse existing .agents/ for Devin
+- Date: 2026-10-13
+- Context: Existing AGENTS.md and Copilot instructions pointed to absent .agent/ while persistent state was already committed in .agents/.
+- Decision: Correct the instructions and preserve one source of continuity; add Git-backed Devin configuration without code/dependency changes.
+- Alternatives considered: Duplicate seven memory files under .agent/ (rejected: conflicting ledgers), retain stale instructions (rejected: repeatable agent misrouting).
+- Evidence: AGENTS.md, .github/copilot-instructions.md, .agents/current_plan.md, .agents/project_state.md, .agents/evidence.md.
+- Consequences: Future agents reuse existing memory; previous historical work-log references stay intact as provenance.

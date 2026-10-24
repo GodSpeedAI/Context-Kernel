@@ -1,0 +1,112 @@
+{
+  "repo_notes": [
+    {
+      "content": "This is a twenty-crate Rust Cargo workspace producing one MCP service binary. ck-core holds domain entities/ports; ck-app orchestrates use cases; ck-bin composes runtime; ck-mcp dispatches tools; concrete source/storage/retrieval/transport adapters supply implementation. Trace actual wired code and tests, not just narrative documents.",
+      "author": "Context Kernel maintainers"
+    },
+    {
+      "content": "Canonical project memory exists under .agents/ (project_state.md, current_plan.md, work_log.md, decisions.md, open_questions.md, evidence.md, OBSERVED_DEBT.md). Previous root instructions mistakenly referred to .agent/. This onboarding changes their path references; never create a duplicate memory hierarchy.",
+      "author": "Context Kernel maintainers"
+    },
+    {
+      "content": "Treat AGENTS.md as working rules. Context_Kernel_Service_Specification.md and Context_Kernel_Service_Plan.md record intended design, not evidence of current implementation. Distinguish implemented, partially implemented, stubbed, not implemented and unclear. Verify behavior against source and runnable tests before claims.",
+      "author": "Context Kernel maintainers"
+    },
+    {
+      "content": "The concrete retrieval path is source discovery/fetch -> normalization/chunking -> SQLite documents, chunks and FTS5 -> optional scoped vector retrieval -> intent-aware ranking -> compact cited responses. Distinguish library identity resolution, retrieval, context continuity and artifact storage; context access alone does not prove reliable capability.",
+      "author": "Context Kernel maintainers"
+    },
+    {
+      "content": "Security distinctions matter: stdio local trust is not SSE bearer authentication; enforce tool/corpus authorizations, private-scope checks and safe external fetch behavior. Cover web SSRF and DNS defenses, GitHub truncated trees and artifact path validation using relevant tests.",
+      "author": "Context Kernel maintainers"
+    },
+    {
+      "content": "The Rust context_required tool is composed in ck-bin conditionally via CK_CONTEXT_CORPUS_ROOT and/or CK_LEARNING_PROPOSALS_LEDGER; compare ck-mcp handler and executable tests. Python integration/agentic_capability_loop/adapters.py is a test-oriented helper and may generate synthetic citations; do not represent its output as production retrieved evidence.",
+      "author": "Context Kernel maintainers"
+    },
+    {
+      "content": "Preserve the shipping executable spelling context-kernal in accurate CLI examples; rename only with an explicit compatibility decision. Rust 1.92.0 pinned in rust-toolchain.toml, no Bun/Node application, and external embeddings are optional. Describe missing OTEL exporter, PDF ingestion and Context7 dataset adapter as unimplemented if source inspection confirms.",
+      "author": "Context Kernel maintainers"
+    },
+    {
+      "content": "Prioritize code/test references over historical .agents logs or long skills reference bundles. Keep documentation within the minimum useful hierarchy, and do not claim a successful Devin snapshot/wiki generation until actually observed.",
+      "author": "Context Kernel maintainers"
+    }
+  ],
+  "pages": [
+    {
+      "title": "Architecture and Evidence Orientation",
+      "purpose": "Explain the system mission, implemented-vs-intended evidence hierarchy and overall data flow; cite root AGENTS.md, Cargo.toml, README and source."
+    },
+    {
+      "title": "Workspace, Ports and Composition",
+      "purpose": "Map twenty Rust crates, typed port interfaces and the composition root, showing allowed dependency directions and wiring from ck-bin.",
+      "parent": "Architecture and Evidence Orientation"
+    },
+    {
+      "title": "Domain Entities and Retrieval Contracts",
+      "purpose": "Document Source, Corpus, LibraryIdentity, Document, Chunk, Session, Artifact, RefreshJob and port traits based on ck-core implementations.",
+      "parent": "Workspace, Ports and Composition"
+    },
+    {
+      "title": "Configuration, CLI and Initialization",
+      "purpose": "Trace TOML/env defaults, startup wiring, rust-toolchain.toml, config templates, migrate, doctor, export-schema and serve commands.",
+      "parent": "Workspace, Ports and Composition"
+    },
+    {
+      "title": "Filesystem, GitHub and Web Ingestion",
+      "purpose": "Explain adapter discovery, fetch and normalization; include web SSRF/DNS protections, GitHub tree truncation and conditional web refresh.",
+      "parent": "Workspace, Ports and Composition"
+    },
+    {
+      "title": "Normalization, Chunking and Indexing",
+      "purpose": "Explain normalizer and heading chunker, document/chunk identity, storage, search indexing and refresh/cleanup behavior.",
+      "parent": "Filesystem, GitHub and Web Ingestion"
+    },
+    {
+      "title": "SQLite Persistence, Schema and FTS5",
+      "purpose": "Describe embedded migration SQL, storage port implementation, FTS5/BM25, indexing filters and persistence tests.",
+      "parent": "Workspace, Ports and Composition"
+    },
+    {
+      "title": "Reference Lookup and Ranking",
+      "purpose": "Trace query_reference, resolve_reference, library identity, lexical retrieval, rank weights, freshness/trust/session affinity and de-duplication.",
+      "parent": "SQLite Persistence, Schema and FTS5"
+    },
+    {
+      "title": "Optional Embeddings and Vector Retrieval",
+      "purpose": "Describe optional OpenAI-compatible and no-op embedding providers, vector search/filtering and test-backed limitations.",
+      "parent": "Reference Lookup and Ranking"
+    },
+    {
+      "title": "Session Memory, Artifacts and Retention",
+      "purpose": "Trace store_context, recall_context, event classification, pinned memory, artifact payload storage and retention garbage collection.",
+      "parent": "SQLite Persistence, Schema and FTS5"
+    },
+    {
+      "title": "MCP Protocol, Tools and Compatibility",
+      "purpose": "Document canonical MCP calls, aliases, tools/call schemas, real handler registration and error behavior. Note aliases are not external integrations.",
+      "parent": "Workspace, Ports and Composition"
+    },
+    {
+      "title": "Transport, Authentication and Authorization",
+      "purpose": "Contrast stdio JSON-RPC and SSE routes, bearer checks, tool/corpus allowlists, private source scopes, config reload behavior and security tests.",
+      "parent": "MCP Protocol, Tools and Compatibility"
+    },
+    {
+      "title": "Agentic Context Packets and Evidence",
+      "purpose": "Trace context_required, Rust AclContextAgent, POL-ACL-002, ContextPacketCreated, ContextAuthorized and learning-proposals ledger. Separate Python synthetic test adapters from real production evidence.",
+      "parent": "MCP Protocol, Tools and Compatibility"
+    },
+    {
+      "title": "Scheduling, Health and Observability",
+      "purpose": "Trace refresh scheduler/job coalescing, status/health checks, tracing and currently unwired telemetry options.",
+      "parent": "Workspace, Ports and Composition"
+    },
+    {
+      "title": "Tests, CI, Release and Deployment",
+      "purpose": "Map actual fmt/clippy/test/release gates, integration tests and source of truth for build, deploy and recovery. Report prior outcomes as historical.",
+      "parent": "Architecture and Evidence Orientation"
+    }
+  ]
+}

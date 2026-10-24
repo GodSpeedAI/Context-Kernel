@@ -1,0 +1,60 @@
+# Context Kernel: reproducible, minimal-cost Devin setup.
+initialize:
+  - name: Install native Rust build prerequisites
+    run: |
+      if command -v apt-get >/dev/null 2>&1; then
+        if command -v sudo >/dev/null 2>&1; then
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential pkg-config libssl-dev curl ca-certificates
+        elif [ "$(id -u)" -eq 0 ]; then
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential pkg-config libssl-dev curl ca-certificates
+        fi
+      fi
+  - name: Install repository-pinned Rust
+    run: |
+      if ! command -v rustup >/dev/null 2>&1; then
+        curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.92.0
+      fi
+      export PATH="$HOME/.cargo/bin:$PATH"
+      rustup toolchain install 1.92.0 --profile minimal --component clippy --component rustfmt
+      rustup default 1.92.0
+maintenance:
+  - name: Fetch exact Cargo lockfile dependencies
+    run: |
+      export PATH="$HOME/.cargo/bin:$PATH"
+      cargo fetch --locked
+knowledge:
+  - name: orientation
+    contents: |
+      Read AGENTS.md and .agents/ project continuity files before substantial work.
+      Preserve ports/adapters layering: ck-core must not depend on SQL, HTTP, MCP transport or infrastructure.
+      Runtime executable spelling is context-kernal; source and tests outrank plans or speculative documentation.
+      Do not create another .agent/ memory tree; the existing memory lives in .agents/.
+  - name: lint
+    contents: |
+      cargo fmt --check
+      cargo clippy --workspace --all-targets -- -D warnings
+  - name: test
+    contents: |
+      Focused: cargo test -p <crate-name>
+      Full: cargo test --workspace
+      Prefer hermetic tests. Do not use API keys or remote data ingestion as a smoke check.
+  - name: build
+    contents: |
+      cargo check --workspace
+      cargo build --release -p ck-bin
+      Disposable local smoke:
+        target/release/context-kernal migrate --database /tmp/ck-devin-check.db
+        target/release/context-kernal doctor --database /tmp/ck-devin-check.db
+        target/release/context-kernal export-schema
+  - name: security
+    contents: |
+      Distinguish local stdio trust from SSE bearer authentication.
+      Keep tool/corpus allowlists and private-scope checks. Preserve SSRF and DNS protections.
+      Do not commit private context, credentials or production session artifacts.
+  - name: verification
+    contents: |
+      Follow CI: fmt, clippy, full cargo tests, release build.
+      Record exact results in .agents/ continuity. Missing evidence does not imply success.
+      Devin wiki/snapshot build and private-repo entitlement require separate verification.

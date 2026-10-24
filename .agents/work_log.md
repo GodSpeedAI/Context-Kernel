@@ -103,6 +103,13 @@
 - Results: all green. +8 net new tests.
 - Notes: deferred (documented in harden report + OBSERVED_DEBT) — FTS transactional atomicity, is_private server-validation, GitHub/web wiring, graceful shutdown, remaining dead config fields, scheduler ownership, broad StoragePort.
 
+## 2026-10-13 — Devin configuration
+- Task: Inspected code, tests, workflow, spec and memory paths. Added low-effort DeepWiki and Git-backed Rust blueprint. Corrected agent memory path instructions.
+- Files: .devin/, AGENTS.md, .github/copilot-instructions.md, .agents/ continuity files.
+- Tests: Configuration/static checks only; no Rust tests or Devin snapshot run.
+- Result: Repository configuration submitted for GitHub review. External Devin execution pending.
+
+
 ## 2026-06-02 18:00 EDT
 
 - Task: Updated README value proposition after reading upstream Context7, Ref MCP, and Context Mode READMEs.

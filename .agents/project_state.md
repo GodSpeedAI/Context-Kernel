@@ -1,5 +1,11 @@
 # Project State
 
+## Devin onboarding (2026-10-13)
+- Repository configuration: low-effort DeepWiki plan and pinned Rust environment blueprint.
+- Existing code and behavior are unchanged; no cargo test execution is claimed here.
+- Corrected instructions to existing .agents/ memory directory; external Devin generation and snapshot remain unverified.
+
+
 ## Last Updated
 - Date: 2026-09-02
 - By: Antigravity (Repository Documentation Architecture Knowledge System)
