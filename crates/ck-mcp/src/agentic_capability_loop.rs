@@ -303,22 +303,22 @@ impl AclContextAgent {
             if payload.is_private {
                 // A caller-declared private corpus must already be registered
                 // with its visibility — it is never auto-ingested open.
-                return Ok(self.no_context_result(
+                return self.no_context_result(
                     payload,
                     NoContextReason::CorpusNotFound,
                     authority_decision_id,
                     authority_reference,
-                )?);
+                );
             }
             match self.ensure_corpus_ingested(app, corpus_id) {
                 Ok(EnsureOutcome::Ready) => {}
                 Ok(EnsureOutcome::Blocked(reason)) => {
-                    return Ok(self.no_context_result(
+                    return self.no_context_result(
                         payload,
                         reason,
                         authority_decision_id,
                         authority_reference,
-                    )?);
+                    );
                 }
                 Err(e) => return Err(e),
             }

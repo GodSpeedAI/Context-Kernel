@@ -149,7 +149,9 @@ fn effects_never_cross_worlds_and_reingest_is_idempotent() {
 
     // Idempotent: re-ingesting the same effect_id appends nothing.
     let e = effect(ContextEffectKind::SourceStale, "ctxfs:docs");
-    let first = app.ingest_context_effects(&[e.clone()]).unwrap();
+    let first = app
+        .ingest_context_effects(std::slice::from_ref(&e))
+        .unwrap();
     let second = app.ingest_context_effects(&[e]).unwrap();
     assert_eq!(first.accepted, 1);
     assert_eq!(second.skipped_duplicates, 1);

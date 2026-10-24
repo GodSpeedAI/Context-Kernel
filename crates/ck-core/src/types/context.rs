@@ -121,6 +121,15 @@ pub fn verify_world_ref(world_ref: &str) -> Result<(), WorldRefError> {
     }
 }
 
+/// These become CEP `omissions` entries at the boundary.
+pub const OMISSION_MAX_RESULTS: &str = "max_results_reached";
+/// Legacy code: packet-carried citation content was cut short. Kept for wire
+/// compatibility with historical packets.
+pub const OMISSION_CONTENT_TRUNCATED: &str = "citation_content_truncated";
+pub const OMISSION_TOKEN_BUDGET: &str = "token_budget_exhausted";
+pub const OMISSION_STALE_SOURCE: &str = "stale_source_excluded";
+pub const OMISSION_REQUIRED_CONCEPT: &str = "required_distinction_absent";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,12 +173,3 @@ mod tests {
         );
     }
 }
-
-/// These become CEP `omissions` entries at the boundary.
-pub const OMISSION_MAX_RESULTS: &str = "max_results_reached";
-/// Legacy code: packet-carried citation content was cut short. Kept for wire
-/// compatibility with historical packets.
-pub const OMISSION_CONTENT_TRUNCATED: &str = "citation_content_truncated";
-pub const OMISSION_TOKEN_BUDGET: &str = "token_budget_exhausted";
-pub const OMISSION_STALE_SOURCE: &str = "stale_source_excluded";
-pub const OMISSION_REQUIRED_CONCEPT: &str = "required_distinction_absent";
