@@ -165,7 +165,7 @@ impl McpService {
             )));
         }
 
-        for corpus_id in corpus_ids_from_arguments(name, arguments) {
+        for corpus_id in corpus_ids_from_arguments(name, arguments)? {
             if !auth.authorize_corpus(token, &corpus_id) {
                 return Err(McpError::InvalidArguments(format!(
                     "unauthorized corpus: {corpus_id}"
@@ -599,8 +599,11 @@ impl McpService {
     }
 }
 
-fn corpus_ids_from_arguments(name: &str, arguments: &Value) -> Vec<String> {
-    match name {
+fn corpus_ids_from_arguments(name: &str, arguments: &Value) -> Result<Vec<String>, McpError> {
+    if name == "context_required" {
+        return context_required_corpus_ids(arguments);
+    }
+    Ok(match name {
         "ingest_source" => arguments
             .get("source")
             .and_then(|s| s.get("corpus_id"))
@@ -624,17 +627,25 @@ fn corpus_ids_from_arguments(name: &str, arguments: &Value) -> Vec<String> {
                     .collect()
             })
             .unwrap_or_default(),
-        // Canonical E2 requests nest corpus_id inside the envelope payload;
-        // legacy flat requests carry it top-level. Both must surface so the
-        // corpus allowlist is enforced on every wire shape.
-        "context_required" => arguments
-            .get("corpus_id")
-            .or_else(|| arguments.get("payload").and_then(|p| p.get("corpus_id")))
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-            .map(|s| vec![s.to_string()])
-            .unwrap_or_default(),
         _ => Vec::new(),
+    })
+}
+
+/// Canonical E2 requests nest corpus_id inside the envelope payload; legacy
+/// flat requests carry it top-level. Both must surface so the corpus allowlist
+/// is enforced on every wire shape. A present-but-empty (or non-string)
+/// corpus_id is rejected rather than treated as "no corpus", which would skip
+/// the allowlist check.
+fn context_required_corpus_ids(arguments: &Value) -> Result<Vec<String>, McpError> {
+    match arguments
+        .get("corpus_id")
+        .or_else(|| arguments.get("payload").and_then(|p| p.get("corpus_id")))
+    {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::String(s)) if !s.is_empty() => Ok(vec![s.clone()]),
+        Some(_) => Err(McpError::InvalidArguments(
+            "corpus_id must be a non-empty string".to_string(),
+        )),
     }
 }
 
@@ -1014,14 +1025,27 @@ mod tests {
         // context_required corpus_id so the authorize() allowlist check runs.
         // Without the dedicated arm this falls through to `_ => Vec::new()` and
         // the corpus is never checked.
-        let ids = corpus_ids_from_arguments("context_required", &json!({"corpus_id": "x"}));
+        let ids =
+            corpus_ids_from_arguments("context_required", &json!({"corpus_id": "x"})).unwrap();
         assert_eq!(ids, vec!["x".to_string()]);
 
-        // Empty/missing corpus_id yields no ids (no false positives).
-        assert!(corpus_ids_from_arguments("context_required", &json!({})).is_empty());
-        assert!(
-            corpus_ids_from_arguments("context_required", &json!({"corpus_id": ""})).is_empty()
-        );
+        // Missing corpus_id yields no ids (no false positives).
+        assert!(corpus_ids_from_arguments("context_required", &json!({}))
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn context_required_present_but_empty_corpus_id_is_rejected() {
+        // A present-but-empty corpus_id must not be widened to "no corpora",
+        // which would bypass the allowlist. It is an error, on both wire shapes.
+        assert!(corpus_ids_from_arguments("context_required", &json!({"corpus_id": ""})).is_err());
+        assert!(corpus_ids_from_arguments(
+            "context_required",
+            &json!({"payload": {"corpus_id": ""}})
+        )
+        .is_err());
+        assert!(corpus_ids_from_arguments("context_required", &json!({"corpus_id": 7})).is_err());
     }
 
     #[test]
