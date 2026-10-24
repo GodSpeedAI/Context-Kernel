@@ -10,13 +10,24 @@ Implemented canonical tools:
 - `refresh_source`
 - `query_reference`
 - `resolve_reference`
-- `context_required` (WP-5, F-05) — the agentic-capability-loop context agent.
-  Returns a citation-bearing `ContextPacketCreated` payload + the POL-ACL-002
-  `ContextAuthorized` decision. SWE_SEED's context stage calls this to satisfy
-  POL-ACL-001/003 with a CK-sourced packet. Served only when
+- `context_required` (WP-5, F-05) — the GodSpeed loop's context agent.
+  Resolves the request through the REAL application retrieval pipeline and
+  returns the canonical CEP-0008 `godspeed.context_bundle` envelope
+  (`extensions["cep.profile"].profile_id = "godspeed.context_bundle"`,
+  `profile_version = "1.0.0"`). The legacy `context_envelope` /
+  `context_packet` wire shape is retained for bounded dual-read
+  compatibility and is DEPRECATED (write CEP only). SWE_SEED's context stage
+  consumes the bundle. The `access` field reports CONTEXT ACCESS
+  (`accessible` / `inaccessible` / `requires_scope`) — Context Kernel never
+  decides action authority; that is SEA-Forge's role. Served only when
   `CK_CONTEXT_CORPUS_ROOT` (filesystem corpus) and/or
   `CK_LEARNING_PROPOSALS_LEDGER` is set; otherwise the tool reports itself
   unconfigured rather than failing the server.
+- `ingest_context_effects` — settlement-backed Context Effect ingestion for
+  prospective retrieval calibration. Every effect must cite a
+  settlement/evidence artifact (`evidence_ref`); self-reports are rejected.
+  Calibration influences FUTURE retrieval only; historical bundles are
+  immutable. Requires the `CK_CONTEXT_EFFECT_LEDGER` ledger to be configured.
 
 Implemented compatibility aliases:
 - `resolve-library-id` maps to `resolve_reference`
@@ -32,12 +43,25 @@ Implemented compatibility aliases:
 }}}
 ```
 
-Response result shape:
+Response result shape (canonical `context_bundle` first; legacy dual-read
+fields deprecated):
 
 ```json
-{"context_packet":{"context_packet_id":"ctx_...","corpus_id":"docs","citations":[...],"authorized":true},
- "authorization":{"result":"allow","policy_code":"POL-ACL-002","reason":"public corpus"}}
+{"context_bundle":{"envelope_id":"env-ctx_...","envelope_kind":"context_bundle",
+  "scope":{"world_ref":"world:<name>@sha256:<digest>"},
+  "completeness_status":"complete_for_context",
+  "extensions":{"cep.profile":{"profile_id":"godspeed.context_bundle","profile_version":"1.0.0"},
+    "godspeed.context_bundle":{"work_request_ref":"wr-1","retrieval_completeness":"complete",...}},
+  "references":[...],"omissions":[...],"integrity":{"content_hash":"sha256:..."}},
+ "context_envelope":{"schema_version":"v1","event_type":"ContextPacketCreated",...},
+ "context_packet":{"context_packet_id":"ctx_...","corpus_id":"docs","citations":[...]},
+ "outcome":"cited","reason":null,
+ "access":{"result":"accessible"}}
 ```
+
+A partial or empty retrieval never reads as complete: `partial` bundles carry
+`references` + `omissions`, `none` bundles carry the unanswered `questions` +
+`omissions`, and absence is never converted into falsehood.
 
 `get_status` request:
 

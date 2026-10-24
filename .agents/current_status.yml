@@ -1,0 +1,60 @@
+# Resumable handoff state. Keep current enough for any agent to resume cold.
+objective: >
+  CEP context_bundle architectural completion: make Context Kernel the bounded
+  representation compiler of the GodSpeed loop (typed Context Requirement ->
+  real retrieval pipeline -> CEP-0008 godspeed.context_bundle v1.0.0 ->
+  SWE_SEED/SEA-Forge/RealityTrace lineage -> settlement-backed calibration).
+worktree_state: implementation complete, memory files updated, commits pending
+changed_files:
+  - crates/ck-core/src/types/context.rs (new; shared completeness/no-context/omission/world gate)
+  - crates/ck-core/src/types/mod.rs
+  - crates/ck-core/src/entities/retrieval.rs (Budget derives)
+  - crates/ck-app/src/context.rs (new; ContextRequirement/ContextAccess/resolve_context)
+  - crates/ck-app/src/context_effect.rs (new; settlement-backed Context Effect ledger)
+  - crates/ck-app/src/lib.rs (adapter-by-kind, visibility-preserving ingest, effect store)
+  - crates/ck-app/Cargo.toml (serde)
+  - crates/ck-storage-sqlite/src/lib.rs (UPSERT upsert_source/upsert_corpus)
+  - crates/ck-search-fts/src/lib.rs (empty query = bounded browse)
+  - crates/ck-ranker/src/lib.rs (component-preserving score_breakdown)
+  - crates/ck-mcp/src/{agentic_capability_loop,cep_bundle,lib}.rs
+  - crates/ck-mcp/tests/{acl_context_agent,e2e_world_loop,context_pipeline,context_bundle_conformance,context_calibration,common/mod}.rs
+  - crates/ck-mcp/Cargo.toml (dev-deps)
+  - crates/ck-bin/src/main.rs (LearningProposalsAdapter, CK_CONTEXT_EFFECT_LEDGER)
+  - crates/ck-bin/tests/cli.rs
+  - docs/mcp-contracts.md
+  - integration/agentic_capability_loop/{adapters,__init__}.py
+completed_work:
+  - Typed ContextRequirement + AppServices::resolve_context (real query_reference pipeline; POL-ACL-002 strict; budgets; freshness; concepts; calibration)
+  - GodSpeed agent rewired through resolve_context; ad hoc substring retrieval deleted; traversal still a hard refusal
+  - CEP godspeed.context_bundle projector with integrity (float-normalized canonical JSON) + structural validator + verify_envelope_integrity
+  - complete/partial/none truthful; access semantics (accessible/inaccessible/requires_scope) replace authorization language
+  - Settlement-backed Context Effect ledger + ingest_context_effects MCP tool + prospective demotion
+  - SWE_SEED-cep: bundle adjudication (dual-read), context_bundle_ref on E4/E7, persistent-service client + negotiation
+  - SEA-Forge worktree branch cep-bundle-lineage: GovernedWorkIntent.context_bundle_ref (world-checked, content-addressed)
+  - sxr: context_bundle_ref carried E7 -> E8
+verification:
+  - CK cargo test --workspace: 265 passed / 0 failed (baseline 237)
+  - SWE_SEED cargo test -p swe-seed-core: 437 passed / 0 failed (baseline 428)
+  - "sxr cargo test --workspace: all green (one load-flaky writer_lock test passes in isolation/quiet rerun)"
+  - sea-forge-server cargo test: green after cargo build -p sea-forge-cli (pre-existing test prerequisite)
+  - live CK binary <-> SWE_SEED client test: green (bundle verified + identity bound)
+  - "scripts/e2e-world-loop.sh (SEA worktree driver, all repos, CEP_REPO set): EXIT=0"
+  - "hops 1/0/2/3/4/5/6 all green; CEP reference validator green;"
+  - "refusals: E4 in another world, unregistered world, denied request all held"
+  - CEP_REPO-gated conformance test (complete/partial/none) green
+remaining_steps:
+  - Commit (code+tests first, .agents memory files second) on each modified repo
+  - Push intended branches after validation (validation passed 2026-10-07)
+blockers: none
+decisions:
+  - CEP godspeed.context_bundle v1.0.0 is THE canonical cross-system context artifact; legacy ContextPacketCreated dual-read window is deprecated
+  - Bundle hashes normalize floats to 6 decimals (serde_json 1-ULP float parse drift) -- MUST for any consumer
+  - Context access != action authority (SEA-Forge alone owns allow/deny)
+  - Retrieval contract = ranked excerpts + resolvable locators (truncation = reference limitation, not omission)
+  - UPSERT (not INSERT OR REPLACE) for FK-parented rows; ingest preserves registered corpus visibility
+  - Calibration: settlement-backed Context Effect ledger only; self-reports rejected; prospective only
+deps:
+  - SWE_SEED-cep branch e2e/world-loop (bundle consumption + lineage)
+  - SEA-Forge worktree .tmp/ref/SEA-Forge branch cep-bundle-lineage (intent.context_bundle_ref)
+  - sxr branch migration/cep-world-evidence (E8 bundle ref)
+  - cep branch profiles/context-bundle (read-only validator, CEP_REPO)

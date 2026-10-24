@@ -22,13 +22,13 @@ The project is deployable only when all items below are true:
 - Source scope filtering protects private corpora in resolve/query flows.
 - OTEL traces and metrics can be exported to a local collector.
 - Install, config, operations, and release docs match code behavior.
-- `.agent/project_state.md` and `.agent/evidence.md` contain code/test evidence for every completed claim.
+- `.agents/project_state.md` and `.agents/evidence.md` contain code/test evidence for every completed claim.
 
 ## Task 1: Add Project Instructions File
 
 **Files:**
 - Create: `.github/copilot-instructions.md`
-- Modify: `.agent/open_questions.md`
+- Modify: `.agents/open_questions.md`
 - Test: static inspection
 
 **Step 1: Write the file**
@@ -39,11 +39,11 @@ Create `.github/copilot-instructions.md` with repository rules copied from `AGEN
 # Context Kernel Agent Instructions
 
 - Trust repository code and tests over docs.
-- Read `.agent/` memory files before work.
+- Read `.agents/` memory files before work.
 - Preserve ports-and-adapters boundaries.
 - Keep `ck-core` free of SQL, HTTP, and transport details.
 - Use test-first changes for behavior.
-- Update `.agent/project_state.md`, `.agent/work_log.md`, and `.agent/evidence.md` after meaningful work.
+- Update `.agents/project_state.md`, `.agents/work_log.md`, and `.agents/evidence.md` after meaningful work.
 ```
 
 **Step 2: Verify**
@@ -58,7 +58,7 @@ Expected: exit 0.
 
 **Step 3: Update memory**
 
-Remove the missing-copilot-instructions entry from `.agent/open_questions.md`.
+Remove the missing-copilot-instructions entry from `.agents/open_questions.md`.
 
 ## Task 2: Create `ck-observability` Crate
 
@@ -672,7 +672,7 @@ Expected: all pass.
 - Option A Create: `crates/ck-adapter-context7-dataset/Cargo.toml`
 - Option A Create: `crates/ck-adapter-context7-dataset/src/lib.rs`
 - Option A Modify: `Cargo.toml`, `crates/ck-bin/src/main.rs`
-- Option B Modify: `.agent/project_state.md`, docs
+- Option B Modify: `.agents/project_state.md`, docs
 - Test: adapter unit tests or docs evidence
 
 **Step 1: Make release decision**
@@ -689,7 +689,7 @@ Write tests for local JSON/JSONL dataset loading, normalization, and source adap
 
 **Step 2B: If removing**
 
-Update docs and `.agent/open_questions.md` to say Context7 dataset adapter is not part of v1 deployment.
+Update docs and `.agents/open_questions.md` to say Context7 dataset adapter is not part of v1 deployment.
 
 **Step 3: Verify**
 
@@ -706,7 +706,7 @@ Expected: all pass.
 **Files:**
 - Option A Create: `crates/ck-adapter-pdf/Cargo.toml`
 - Option A Create: `crates/ck-adapter-pdf/src/lib.rs`
-- Option B Modify: docs and `.agent/project_state.md`
+- Option B Modify: docs and `.agents/project_state.md`
 - Test: adapter tests or docs evidence
 
 **Step 1: Make release decision**
@@ -723,7 +723,7 @@ Use a proven PDF extraction crate. Tests must cover:
 
 **Step 2B: If removing**
 
-Update docs and `.agent/open_questions.md` to list PDF as future work, not a release blocker.
+Update docs and `.agents/open_questions.md` to list PDF as future work, not a release blocker.
 
 **Step 3: Verify**
 
@@ -918,11 +918,11 @@ Expected: binary builds and checksum prints.
 ## Task 18: Final Release Gate And Memory Update
 
 **Files:**
-- Modify: `.agent/project_state.md`
-- Modify: `.agent/work_log.md`
-- Modify: `.agent/evidence.md`
-- Modify: `.agent/open_questions.md`
-- Modify: `.agent/decisions.md` if architecture changed
+- Modify: `.agents/project_state.md`
+- Modify: `.agents/work_log.md`
+- Modify: `.agents/evidence.md`
+- Modify: `.agents/open_questions.md`
+- Modify: `.agents/decisions.md` if architecture changed
 
 **Step 1: Run final verification**
 
@@ -961,4 +961,4 @@ Record:
 
 **Step 4: Completion rule**
 
-Do not call the project deployment-ready unless `.agent/evidence.md` contains code/test/config evidence for every release standard at the top of this plan.
+Do not call the project deployment-ready unless `.agents/evidence.md` contains code/test/config evidence for every release standard at the top of this plan.

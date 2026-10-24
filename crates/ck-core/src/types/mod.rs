@@ -1,8 +1,10 @@
+pub mod context;
 pub mod status;
 
 use serde::{Deserialize, Serialize};
 
 // Re-export status types at types level
+pub use context::*;
 pub use status::*;
 
 // Enums

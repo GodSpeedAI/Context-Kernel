@@ -6,6 +6,12 @@ use ck_core::types::*;
 use serde_json::json;
 use ulid::Ulid;
 
+pub mod context;
+pub mod context_effect;
+
+pub use context::*;
+pub use context_effect::*;
+
 pub use ck_memory::{
     classify_event_kind, EventRetentionClass, SessionRetentionPolicy as MemoryRetentionPolicy,
 };
@@ -23,6 +29,12 @@ pub struct AppServices {
     chunker: Box<dyn Chunker>,
     embedding: Option<Box<dyn EmbeddingPort>>,
     vector_search: Option<Box<dyn VectorSearchPort>>,
+    /// Additional source adapters selected by `SourceAdapter::kind()` during
+    /// ingestion (e.g. the learning-proposals JSONL ledger adapter).
+    kind_adapters: Vec<(String, Box<dyn SourceAdapter>)>,
+    /// Settlement-backed context-effect ledger for prospective retrieval
+    /// calibration. Absent = calibration disabled (never faked).
+    context_effects: Option<std::sync::Arc<context_effect::ContextEffectStore>>,
 }
 
 // --- retention GC ---
@@ -118,6 +130,8 @@ impl AppServices {
             chunker,
             embedding: None,
             vector_search: None,
+            kind_adapters: Vec::new(),
+            context_effects: None,
         }
     }
 
@@ -132,9 +146,36 @@ impl AppServices {
         self
     }
 
+    /// Register an additional source adapter by kind. Ingestion selects the
+    /// adapter whose `SourceAdapter::kind()` matches `IngestSourceRequest::source_kind`;
+    /// unregistered kinds fall back to the default adapter.
+    pub fn with_source_adapter_kind(
+        mut self,
+        kind: impl Into<String>,
+        adapter: Box<dyn SourceAdapter>,
+    ) -> Self {
+        self.kind_adapters.push((kind.into(), adapter));
+        self
+    }
+
+    /// Attach the settlement-backed context-effect ledger so prospective
+    /// retrieval calibration is enabled.
+    pub fn with_context_effect_store(mut self, store: context_effect::ContextEffectStore) -> Self {
+        self.context_effects = Some(std::sync::Arc::new(store));
+        self
+    }
+
     /// Whether semantic retrieval is available.
     pub fn semantic_available(&self) -> bool {
         self.embedding.as_ref().is_some_and(|e| e.is_available())
+    }
+
+    fn adapter_for_kind(&self, kind: &str) -> &dyn SourceAdapter {
+        self.kind_adapters
+            .iter()
+            .find(|(k, _)| k == kind)
+            .map(|(_, a)| a.as_ref())
+            .unwrap_or(self.source_adapter.as_ref())
     }
 }
 
@@ -180,7 +221,12 @@ impl AppServices {
                 content,
             )?;
 
-            self.storage.upsert_artifact(&artifact)?;
+            if let Err(e) = self.storage.upsert_artifact(&artifact) {
+                let _ = self
+                    .artifact_store
+                    .delete_artifact_payload(&artifact.artifact_id);
+                return Err(e);
+            }
 
             let text = req.text.as_deref().unwrap_or_default();
             let display_text = if text.is_empty() {
@@ -219,7 +265,12 @@ impl AppServices {
                     text.as_bytes(),
                 )?;
 
-                self.storage.upsert_artifact(&artifact)?;
+                if let Err(e) = self.storage.upsert_artifact(&artifact) {
+                    let _ = self
+                        .artifact_store
+                        .delete_artifact_payload(&artifact.artifact_id);
+                    return Err(e);
+                }
 
                 let summary: String = text.chars().take(500).collect();
                 let event = self.session_memory.add_event(
@@ -312,6 +363,16 @@ impl AppServices {
 
 // --- ingest_source ---
 
+fn stable_document_id(source_id: &str, external_id: &str, uri: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    source_id.hash(&mut hasher);
+    external_id.hash(&mut hasher);
+    uri.hash(&mut hasher);
+    format!("doc_{:016x}", hasher.finish())
+}
+
 #[derive(Debug, Clone)]
 pub struct IngestSourceRequest {
     pub source_id: String,
@@ -352,72 +413,105 @@ impl AppServices {
         self.storage.upsert_source(&source)?;
 
         let ingest_result: Result<(i64, i64)> = (|| {
-            // Ensure corpus exists
+            // Ensure corpus exists. An existing corpus KEEPS its registered
+            // visibility: re-ingestion must never open a private corpus.
+            let existing = self.storage.get_corpus(&corpus_id)?;
             let corpus = Corpus {
                 corpus_id: corpus_id.clone(),
-                name: req.source_id.clone(),
+                name: existing
+                    .as_ref()
+                    .map(|c| c.name.clone())
+                    .unwrap_or_else(|| req.source_id.clone()),
                 kind: "library_docs".to_string(),
-                visibility: "local".to_string(),
-                created_at: now.clone(),
+                visibility: existing
+                    .as_ref()
+                    .map(|c| c.visibility.clone())
+                    .unwrap_or_else(|| "local".to_string()),
+                created_at: existing
+                    .as_ref()
+                    .map(|c| c.created_at.clone())
+                    .unwrap_or_else(|| now.clone()),
                 updated_at: now.clone(),
             };
             self.storage.upsert_corpus(&corpus)?;
             self.storage
                 .link_source_to_corpus(&corpus_id, &req.source_id)?;
 
-            // Discover and fetch units
-            let units = self
-                .source_adapter
-                .discover_units(&req.source_id, &req.adapter_config_json)?;
+            // Discover and fetch the entire snapshot BEFORE mutating previous
+            // rows. An adapter/fetch failure leaves the old snapshot untouched.
+            let adapter = self.adapter_for_kind(&req.source_kind);
+            let units = adapter.discover_units(&req.source_id, &req.adapter_config_json)?;
 
-            let mut docs_indexed: i64 = 0;
-            let mut chunks_indexed: i64 = 0;
+            // Fetch + normalize + chunk all units into memory first.
+            struct PreparedDoc {
+                document: Document,
+                chunks: Vec<Chunk>,
+            }
+            let mut prepared: Vec<PreparedDoc> = Vec::new();
 
             for unit in &units {
-                let raw = self.source_adapter.fetch_content(
-                    &req.source_id,
-                    unit,
-                    &req.adapter_config_json,
-                )?;
+                let raw = adapter.fetch_content(&req.source_id, unit, &req.adapter_config_json)?;
 
                 let documents = self
                     .normalizer
                     .normalize(&raw, &req.source_id, &corpus_id)?;
 
-                for doc in &documents {
-                    // Upsert document
-                    self.storage.upsert_document(doc)?;
+                let stable_documents: Vec<Document> = documents
+                    .into_iter()
+                    .map(|mut doc| {
+                        doc.document_id = stable_document_id(
+                            &req.source_id,
+                            doc.external_id.as_deref().unwrap_or(&raw.external_id),
+                            doc.uri.as_deref().unwrap_or(&raw.external_id),
+                        );
+                        doc
+                    })
+                    .collect();
 
-                    // Chunk the document
+                for doc in &stable_documents {
                     let chunks = self.chunker.chunk(
                         &doc.document_id,
                         &corpus_id,
                         &doc.content_text,
                         &doc.title,
                     )?;
-
-                    // Remove old FTS entries for this document
-                    self.search.remove_chunks_by_document(&doc.document_id)?;
-
-                    // Replace chunks in storage
-                    self.storage.replace_chunks(&doc.document_id, &chunks)?;
-
-                    // Index chunks in FTS
-                    for chunk in &chunks {
-                        self.search.index_chunk(
-                            &chunk.chunk_id,
-                            &chunk.document_id,
-                            &chunk.corpus_id,
-                            doc.library_id.as_deref(),
-                            &doc.title,
-                            chunk.heading.as_deref().unwrap_or(""),
-                            &chunk.text,
-                        )?;
-                    }
-
-                    docs_indexed += 1;
-                    chunks_indexed += chunks.len() as i64;
+                    prepared.push(PreparedDoc {
+                        document: doc.clone(),
+                        chunks,
+                    });
                 }
+            }
+
+            // Snapshot prepared — now it's safe to replace previous rows.
+            // Delete old documents + FTS entries.
+            for doc in self.storage.list_documents_by_source(&req.source_id)? {
+                self.search.remove_chunks_by_document(&doc.document_id)?;
+                self.storage.delete_document(&doc.document_id)?;
+            }
+
+            let mut docs_indexed: i64 = 0;
+            let mut chunks_indexed: i64 = 0;
+
+            for prepared_doc in &prepared {
+                self.storage.upsert_document(&prepared_doc.document)?;
+
+                self.storage
+                    .replace_chunks(&prepared_doc.document.document_id, &prepared_doc.chunks)?;
+
+                for chunk in &prepared_doc.chunks {
+                    self.search.index_chunk(
+                        &chunk.chunk_id,
+                        &chunk.document_id,
+                        &chunk.corpus_id,
+                        prepared_doc.document.library_id.as_deref(),
+                        &prepared_doc.document.title,
+                        chunk.heading.as_deref().unwrap_or(""),
+                        &chunk.text,
+                    )?;
+                }
+
+                docs_indexed += 1;
+                chunks_indexed += prepared_doc.chunks.len() as i64;
             }
             Ok((docs_indexed, chunks_indexed))
         })();
@@ -510,6 +604,8 @@ impl AppServices {
         if let Some(cid) = &corpus_id {
             if let Some(corpus) = self.storage.get_corpus(cid)? {
                 if corpus.visibility == "private" {
+                    // POL-ACL-002: a private corpus requires EXPLICIT scope.
+                    // A missing or empty source_scope never grants access.
                     let allowed_scopes: Vec<String> = req
                         .filters
                         .get("source_scope")
@@ -521,7 +617,7 @@ impl AppServices {
                         })
                         .unwrap_or_default();
 
-                    if !allowed_scopes.is_empty() && !allowed_scopes.contains(&cid.to_string()) {
+                    if !allowed_scopes.contains(&cid.to_string()) {
                         anyhow::bail!(
                             "unauthorized corpus: {} is private and not in source_scope",
                             cid
@@ -691,21 +787,25 @@ fn build_citation(doc: &Document, anchor: Option<&str>) -> serde_json::Value {
     serde_json::Value::Object(citation)
 }
 
-/// Compute a freshness score (0.0 to 1.0) based on last refresh time.
-fn compute_freshness(last_success: Option<&str>, _ttl_secs: Option<i64>) -> f64 {
-    match last_success {
-        None => 0.0,
-        Some(ts) => {
-            // Simple heuristic: if we can parse the timestamp, give a score
-            // based on how recent it is. For now, just return a fixed value
-            // since we don't have a full datetime parser.
-            if ts.is_empty() {
-                0.0
-            } else {
-                0.5 // Default freshness for any source that has been refreshed
-            }
-        }
-    }
+/// Compute a freshness score (0.0 to 1.0). 1.0 = just refreshed; 0.0 = older
+/// than the TTL window. When no TTL is configured, a 30-day default decay is
+/// used. Malformed/empty timestamps score 0.5 (uncertain) or 0.0 (absent).
+fn compute_freshness(last_success: Option<&str>, ttl_secs: Option<i64>) -> f64 {
+    let Some(ts) = last_success.filter(|s| !s.is_empty()) else {
+        return 0.0;
+    };
+    let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(ts) else {
+        return 0.5;
+    };
+    let age_secs = (Utc::now()
+        .signed_duration_since(parsed.with_timezone(&Utc))
+        .num_seconds()
+        .max(0)) as f64;
+    let ttl = ttl_secs
+        .filter(|t| *t > 0)
+        .map(|t| t as f64)
+        .unwrap_or(30.0 * 24.0 * 3600.0);
+    (1.0 - (age_secs / ttl)).clamp(0.0, 1.0)
 }
 
 #[cfg(test)]
@@ -724,6 +824,8 @@ mod tests {
         normalized_corpora: Vec<String>,
         fetch_should_fail: bool,
         retention_calls: Vec<String>,
+        fail_upsert_artifact: bool,
+        artifact_upsert_calls: Vec<String>,
     }
 
     #[derive(Clone)]
@@ -844,12 +946,23 @@ mod tests {
             Ok(None)
         }
 
-        fn delete_document(&self, _document_id: &str) -> Result<()> {
+        fn delete_document(&self, document_id: &str) -> Result<()> {
+            let mut state = self.state.0.lock().unwrap();
+            state.documents.retain(|d| d.document_id != document_id);
             Ok(())
         }
 
-        fn list_documents_by_source(&self, _source_id: &str) -> Result<Vec<Document>> {
-            Ok(self.state.0.lock().unwrap().documents.clone())
+        fn list_documents_by_source(&self, source_id: &str) -> Result<Vec<Document>> {
+            Ok(self
+                .state
+                .0
+                .lock()
+                .unwrap()
+                .documents
+                .iter()
+                .filter(|d| d.source_id == source_id)
+                .cloned()
+                .collect())
         }
 
         fn list_documents_by_corpus(&self, _corpus_id: &str) -> Result<Vec<Document>> {
@@ -979,7 +1092,14 @@ mod tests {
             Ok(vec![])
         }
 
-        fn upsert_artifact(&self, _artifact: &Artifact) -> Result<()> {
+        fn upsert_artifact(&self, artifact: &Artifact) -> Result<()> {
+            let mut state = self.state.0.lock().unwrap();
+            state
+                .artifact_upsert_calls
+                .push(artifact.artifact_id.clone());
+            if state.fail_upsert_artifact {
+                anyhow::bail!("injected upsert_artifact failure");
+            }
             Ok(())
         }
     }
@@ -1415,6 +1535,284 @@ mod tests {
             err.to_string().contains("unauthorized corpus"),
             "got: {}",
             err
+        );
+    }
+
+    #[test]
+    fn refresh_does_not_accumulate_duplicate_documents() {
+        let state = SharedState::new();
+        let app = test_app(state.clone());
+
+        let req = IngestSourceRequest {
+            source_id: "src1".to_string(),
+            source_kind: "test".to_string(),
+            adapter_config_json: "{}".to_string(),
+            corpus_id: Some("corp1".to_string()),
+        };
+        app.ingest_source(req.clone()).unwrap();
+
+        let docs_after_ingest = state
+            .0
+            .lock()
+            .unwrap()
+            .documents
+            .iter()
+            .filter(|d| d.source_id == "src1")
+            .count();
+        assert_eq!(docs_after_ingest, 1);
+
+        app.refresh_source(RefreshSourceRequest {
+            source_id: "src1".to_string(),
+        })
+        .unwrap();
+
+        let docs_after_refresh = state
+            .0
+            .lock()
+            .unwrap()
+            .documents
+            .iter()
+            .filter(|d| d.source_id == "src1")
+            .count();
+        assert_eq!(
+            docs_after_refresh, 1,
+            "refresh should replace, not accumulate, documents"
+        );
+    }
+
+    #[test]
+    fn compute_freshness_reflects_age_and_ttl() {
+        let recent = Utc::now().to_rfc3339();
+
+        // ~now with ttl 3600 → near 1.0
+        assert!(
+            compute_freshness(Some(&recent), Some(3600)) > 0.99,
+            "recent timestamp should be near-fresh"
+        );
+
+        // Far in the past with ttl 3600 → 0.0
+        assert_eq!(
+            compute_freshness(Some("2020-01-01T00:00:00Z"), Some(3600)),
+            0.0
+        );
+
+        // Absent → 0.0
+        assert_eq!(compute_freshness(None, Some(3600)), 0.0);
+
+        // Malformed → 0.5 (uncertain)
+        assert_eq!(compute_freshness(Some("not-a-date"), Some(3600)), 0.5);
+
+        // No ttl configured, recent timestamp → uses 30-day default, near 1.0
+        assert!(
+            compute_freshness(Some(&recent), None) > 0.99,
+            "recent timestamp with default ttl should be near-fresh"
+        );
+    }
+
+    #[test]
+    fn compute_freshness_table() {
+        let now = Utc::now();
+        let rfc = |secs_ago: i64| -> String {
+            now.checked_sub_signed(chrono::Duration::seconds(secs_ago))
+                .unwrap()
+                .to_rfc3339()
+        };
+        let ttl = 3600i64;
+
+        // Half TTL: age = ttl/2 → freshness 0.5.
+        let half = compute_freshness(Some(&rfc(ttl / 2)), Some(ttl));
+        assert!(
+            (half - 0.5).abs() < 0.02,
+            "half-TTL age should be ~0.5, got {half}"
+        );
+
+        // Exact TTL: age = ttl → freshness 0.0 (boundary).
+        let exact = compute_freshness(Some(&rfc(ttl)), Some(ttl));
+        assert!(
+            (exact - 0.0).abs() < 0.02,
+            "exact-TTL age should be ~0.0, got {exact}"
+        );
+
+        // Past TTL: age > ttl → clamped to 0.0.
+        let past = compute_freshness(Some(&rfc(ttl * 2)), Some(ttl));
+        assert_eq!(past, 0.0, "past-TTL age must clamp to 0.0, got {past}");
+
+        // Future timestamp: age < 0 → clamp(0.0, 1.0) gives 1.0.
+        let future_rfc = (now + chrono::Duration::seconds(60)).to_rfc3339();
+        let future = compute_freshness(Some(&future_rfc), Some(ttl));
+        assert_eq!(
+            future, 1.0,
+            "future timestamp must clamp to 1.0, got {future}"
+        );
+
+        // Zero TTL configured: filtered to default (30 days), so a recent
+        // timestamp is near-fresh, not 1.0-from-zero (which would divide by
+        // zero). Confirms the `*t > 0` guard.
+        let zero_ttl = compute_freshness(Some(&rfc(60)), Some(0));
+        assert!(
+            zero_ttl > 0.99,
+            "zero TTL must fall back to default TTL, got {zero_ttl}"
+        );
+
+        // Negative TTL: also filtered to default.
+        let neg_ttl = compute_freshness(Some(&rfc(60)), Some(-1));
+        assert!(
+            neg_ttl > 0.99,
+            "negative TTL must fall back to default TTL, got {neg_ttl}"
+        );
+    }
+
+    struct WorkingSessionMemory;
+
+    impl SessionMemoryPort for WorkingSessionMemory {
+        fn create_session(
+            &self,
+            session_id: &str,
+            transport: SessionTransport,
+            continuation_mode: ContinuationMode,
+        ) -> Result<Session> {
+            let now = chrono::Utc::now().to_rfc3339();
+            Ok(Session {
+                session_id: session_id.to_string(),
+                client_id: None,
+                transport,
+                continuation_mode,
+                status: SessionStatus::Active,
+                created_at: now.clone(),
+                updated_at: now,
+            })
+        }
+
+        fn get_session(&self, _session_id: &str) -> Result<Option<Session>> {
+            Ok(None)
+        }
+
+        fn add_event(
+            &self,
+            _session_id: &str,
+            _kind: &str,
+            _text: &str,
+            _artifact_id: Option<&str>,
+            _metadata_json: &str,
+            _pinned: bool,
+        ) -> Result<StoredContext> {
+            unimplemented!()
+        }
+
+        fn get_event(&self, _event_id: &str) -> Result<Option<SessionEvent>> {
+            Ok(None)
+        }
+
+        fn list_events_by_session(&self, _session_id: &str) -> Result<Vec<SessionEvent>> {
+            Ok(vec![])
+        }
+
+        fn count_active_sessions(&self) -> Result<u64> {
+            Ok(0)
+        }
+    }
+
+    fn test_app_with_artifact_store(
+        state: SharedState,
+        artifact_dir: &std::path::Path,
+    ) -> AppServices {
+        AppServices::new(
+            Box::new(TestStorage {
+                state: state.clone(),
+            }),
+            Box::new(WorkingSessionMemory),
+            Box::new(ck_artifacts::FileArtifactStore::new(
+                artifact_dir.to_path_buf(),
+            )),
+            Box::new(NoopSearch),
+            Box::new(NoopRanker),
+            Box::new(TestSourceAdapter {
+                state: state.clone(),
+            }),
+            Box::new(TestNormalizer {
+                state: state.clone(),
+            }),
+            Box::new(TestChunker),
+        )
+    }
+
+    #[test]
+    fn artifact_payload_is_compensated_on_metadata_failure() {
+        let state = SharedState::new();
+        {
+            let mut s = state.0.lock().unwrap();
+            s.fail_upsert_artifact = true;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let app = test_app_with_artifact_store(state.clone(), tmp.path());
+
+        let req = StoreContextRequest {
+            session_id: "sess-comp".to_string(),
+            kind: "decision".to_string(),
+            text: None,
+            artifact_content: Some(vec![1u8, 2, 3, 4, 5]),
+            artifact_content_type: Some("application/octet-stream".to_string()),
+            metadata: serde_json::json!({}),
+        };
+        let err = app.store_context(req).unwrap_err();
+        assert!(
+            err.to_string().contains("injected upsert_artifact failure"),
+            "store_context must surface the metadata failure; got: {err}"
+        );
+
+        let calls = state.0.lock().unwrap().artifact_upsert_calls.clone();
+        assert_eq!(
+            calls.len(),
+            1,
+            "upsert_artifact must be called exactly once on the failure path"
+        );
+        let artifact_id = calls[0].clone();
+
+        let artifacts_subdir = tmp.path().join("artifacts");
+        let dir_listing = std::fs::read_dir(&artifacts_subdir).unwrap().count();
+        assert_eq!(
+            dir_listing, 0,
+            "artifact payload + sidecar must be deleted on metadata failure"
+        );
+        let _ = artifact_id;
+    }
+
+    #[test]
+    fn stable_document_id_is_deterministic() {
+        let id1 = stable_document_id("src-a", "ext-1", "/path/doc.md");
+        let id2 = stable_document_id("src-a", "ext-1", "/path/doc.md");
+        assert_eq!(id1, id2, "same inputs must produce same ID");
+
+        let id3 = stable_document_id("src-b", "ext-1", "/path/doc.md");
+        assert_ne!(id1, id3, "different source must produce different ID");
+
+        let id4 = stable_document_id("src-a", "ext-2", "/path/doc.md");
+        assert_ne!(id1, id4, "different external_id must produce different ID");
+
+        assert!(id1.starts_with("doc_"));
+    }
+
+    #[test]
+    fn document_identity_survives_discovery_reorder_and_insertion() {
+        let src = "src-reorder";
+        let doc_a = stable_document_id(src, "file-a.md", "/path/file-a.md");
+        let doc_b = stable_document_id(src, "file-b.md", "/path/file-b.md");
+        let doc_c = stable_document_id(src, "file-c.md", "/path/file-c.md");
+
+        // Reorder: B, C, A — IDs must be the same as original order A, B, C.
+        let reordered_a = stable_document_id(src, "file-a.md", "/path/file-a.md");
+        let reordered_b = stable_document_id(src, "file-b.md", "/path/file-b.md");
+        let reordered_c = stable_document_id(src, "file-c.md", "/path/file-c.md");
+        assert_eq!(doc_a, reordered_a);
+        assert_eq!(doc_b, reordered_b);
+        assert_eq!(doc_c, reordered_c);
+
+        // Insertion: a new file D doesn't change existing IDs.
+        let _doc_d = stable_document_id(src, "file-d.md", "/path/file-d.md");
+        assert_eq!(
+            stable_document_id(src, "file-a.md", "/path/file-a.md"),
+            doc_a,
+            "new file must not shift existing IDs"
         );
     }
 }

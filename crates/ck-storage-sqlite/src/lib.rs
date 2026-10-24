@@ -68,6 +68,44 @@ impl SqliteStore {
             fts5_enabled,
         })
     }
+
+    /// Clears all FTS tables and repopulates them from canonical rows.
+    /// Returns (chunks_reindexed, session_events_reindexed, aliases_reindexed).
+    pub fn rebuild_fts_index(&self) -> Result<(u64, u64, u64)> {
+        // One transaction: a failure part-way leaves the existing index intact
+        // rather than cleared or half-populated.
+        let mut conn = self.conn()?;
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM chunks_fts", [])?;
+        tx.execute("DELETE FROM session_events_fts", [])?;
+        tx.execute("DELETE FROM library_aliases_fts", [])?;
+
+        let chunks = tx.execute(
+            "INSERT INTO chunks_fts (chunk_id, document_id, corpus_id, library_id, title, heading, text)
+             SELECT c.chunk_id, c.document_id, c.corpus_id,
+                    COALESCE(d.library_id, ''), COALESCE(d.title, ''),
+                    COALESCE(c.heading, ''), c.text
+             FROM chunks c LEFT JOIN documents d ON c.document_id = d.document_id",
+            [],
+        )? as u64;
+
+        let events = tx.execute(
+            "INSERT INTO session_events_fts (event_id, session_id, kind, text)
+             SELECT event_id, session_id, kind, text FROM session_events",
+            [],
+        )? as u64;
+
+        let aliases = tx.execute(
+            "INSERT INTO library_aliases_fts (alias, library_id, name, provider)
+             SELECT la.alias, la.library_id, COALESCE(li.name, ''), COALESCE(li.provider, '')
+             FROM library_aliases la
+             LEFT JOIN library_identities li ON la.library_id = li.library_id",
+            [],
+        )? as u64;
+
+        tx.commit()?;
+        Ok((chunks, events, aliases))
+    }
 }
 
 fn transport_str(t: SessionTransport) -> &'static str {
@@ -80,6 +118,7 @@ fn transport_str(t: SessionTransport) -> &'static str {
 fn transport_from(s: &str) -> Result<SessionTransport> {
     match s {
         "stdio" => Ok(SessionTransport::Stdio),
+        "sse" => Ok(SessionTransport::Sse),
         other => Err(anyhow::anyhow!("unknown transport: {}", other)),
     }
 }
@@ -96,6 +135,7 @@ fn cont_mode_from(s: &str) -> Result<ContinuationMode> {
     match s {
         "ephemeral" => Ok(ContinuationMode::Ephemeral),
         "resumeable" => Ok(ContinuationMode::Resumeable),
+        "pinned" => Ok(ContinuationMode::Pinned),
         other => Err(anyhow::anyhow!("unknown continuation_mode: {}", other)),
     }
 }
@@ -112,6 +152,7 @@ fn sess_status_from(s: &str) -> Result<SessionStatus> {
     match s {
         "active" => Ok(SessionStatus::Active),
         "closed" => Ok(SessionStatus::Closed),
+        "compacted" => Ok(SessionStatus::Compacted),
         other => Err(anyhow::anyhow!("unknown session_status: {}", other)),
     }
 }
@@ -132,6 +173,7 @@ fn trigger_from(s: &str) -> Result<JobTrigger> {
         "manual" => Ok(JobTrigger::Manual),
         "scheduled" => Ok(JobTrigger::Scheduled),
         "webhook" => Ok(JobTrigger::Webhook),
+        "dependency_change" => Ok(JobTrigger::DependencyChange),
         other => Err(anyhow::anyhow!("unknown trigger: {}", other)),
     }
 }
@@ -152,6 +194,7 @@ fn job_status_from(s: &str) -> Result<JobStatus> {
         "running" => Ok(JobStatus::Running),
         "completed" => Ok(JobStatus::Completed),
         "failed" => Ok(JobStatus::Failed),
+        "cancelled" => Ok(JobStatus::Cancelled),
         other => Err(anyhow::anyhow!("unknown job_status: {}", other)),
     }
 }
@@ -346,12 +389,24 @@ fn row_to_session_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionEven
 impl StoragePort for SqliteStore {
     fn upsert_source(&self, source: &Source) -> Result<()> {
         let conn = self.conn()?;
+        // UPSERT (not INSERT OR REPLACE): a replace deletes the old row and
+        // cascades away every document/chunk of the source.
         conn.execute(
-            "INSERT OR REPLACE INTO sources \
+            "INSERT INTO sources \
              (source_id, kind, display_name, enabled, adapter_config_json, auth_ref, \
               first_indexed_at, last_refresh_attempt_at, last_refresh_success_at, \
               last_refresh_error, freshness_ttl_secs, upstream_revision, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) \
+             ON CONFLICT(source_id) DO UPDATE SET \
+              kind = excluded.kind, display_name = excluded.display_name, \
+              enabled = excluded.enabled, adapter_config_json = excluded.adapter_config_json, \
+              auth_ref = excluded.auth_ref, first_indexed_at = excluded.first_indexed_at, \
+              last_refresh_attempt_at = excluded.last_refresh_attempt_at, \
+              last_refresh_success_at = excluded.last_refresh_success_at, \
+              last_refresh_error = excluded.last_refresh_error, \
+              freshness_ttl_secs = excluded.freshness_ttl_secs, \
+              upstream_revision = excluded.upstream_revision, \
+              updated_at = excluded.updated_at",
             rusqlite::params![
                 source.source_id,
                 source.kind,
@@ -398,10 +453,15 @@ impl StoragePort for SqliteStore {
 
     fn upsert_corpus(&self, corpus: &Corpus) -> Result<()> {
         let conn = self.conn()?;
+        // UPSERT (not INSERT OR REPLACE): a replace deletes the old row and
+        // cascades away every document/chunk of the corpus.
         conn.execute(
-            "INSERT OR REPLACE INTO corpora \
+            "INSERT INTO corpora \
              (corpus_id, name, kind, visibility, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+             ON CONFLICT(corpus_id) DO UPDATE SET \
+              name = excluded.name, kind = excluded.kind, \
+              visibility = excluded.visibility, updated_at = excluded.updated_at",
             rusqlite::params![
                 corpus.corpus_id,
                 corpus.name,
@@ -862,7 +922,9 @@ impl StoragePort for SqliteStore {
         let conn = self.conn()?;
         let deleted = conn.execute(
             "DELETE FROM sessions \
-             WHERE status IN ('closed', 'compacted') AND updated_at < ?1",
+             WHERE status IN ('closed', 'compacted') AND updated_at < ?1 \
+             AND NOT EXISTS (SELECT 1 FROM session_events e \
+                 WHERE e.session_id = sessions.session_id AND e.pinned = 1)",
             rusqlite::params![cutoff_rfc3339],
         )?;
         Ok(deleted as u64)
@@ -891,7 +953,9 @@ impl StoragePort for SqliteStore {
     fn delete_artifacts_older_than(&self, cutoff_rfc3339: &str) -> Result<u64> {
         let conn = self.conn()?;
         let deleted = conn.execute(
-            "DELETE FROM artifacts WHERE created_at < ?1",
+            "DELETE FROM artifacts WHERE created_at < ?1 \
+             AND NOT EXISTS (SELECT 1 FROM session_events e \
+                 WHERE e.artifact_id = artifacts.artifact_id AND e.pinned = 1)",
             rusqlite::params![cutoff_rfc3339],
         )?;
         Ok(deleted as u64)
@@ -920,7 +984,13 @@ impl StoragePort for SqliteStore {
 
     fn list_artifacts_older_than(&self, cutoff_rfc3339: &str) -> Result<Vec<String>> {
         let conn = self.conn()?;
-        let mut stmt = conn.prepare("SELECT artifact_id FROM artifacts WHERE created_at < ?1")?;
+        // Artifacts referenced by a pinned event are retained: their payloads
+        // must not be deleted either, so this list gates payload removal too.
+        let mut stmt = conn.prepare(
+            "SELECT artifact_id FROM artifacts WHERE created_at < ?1 \
+             AND NOT EXISTS (SELECT 1 FROM session_events e \
+                 WHERE e.artifact_id = artifacts.artifact_id AND e.pinned = 1)",
+        )?;
         let rows = stmt.query_map(rusqlite::params![cutoff_rfc3339], |row| row.get(0))?;
         let mut ids = Vec::new();
         for r in rows {
@@ -1339,6 +1409,179 @@ mod tests {
     }
 
     #[test]
+    fn persisted_enums_roundtrip_every_domain_variant() {
+        // Persist every domain enum variant through real tables and read the
+        // typed values back. This exercises the Sse/Pinned/Compacted/
+        // DependencyChange/Cancelled decoder arms that the audit fixed; a
+        // reverted decoder makes one of these `get_*` calls return a
+        // FromSqlConversionFailure instead of the typed enum.
+        let (store, _dir) = test_store();
+        let t = now();
+
+        store
+            .upsert_source(&Source {
+                source_id: "src-persist".into(),
+                kind: "local".into(),
+                display_name: "S".into(),
+                enabled: true,
+                adapter_config_json: "{}".into(),
+                auth_ref: None,
+                first_indexed_at: None,
+                last_refresh_attempt_at: None,
+                last_refresh_success_at: None,
+                last_refresh_error: None,
+                freshness_ttl_secs: None,
+                upstream_revision: None,
+                created_at: t.clone(),
+                updated_at: t.clone(),
+            })
+            .unwrap();
+
+        // 1. Sessions: every transport × continuation_mode through create_session.
+        let session_specs = [
+            (
+                "sess-stdio-eph",
+                SessionTransport::Stdio,
+                ContinuationMode::Ephemeral,
+            ),
+            (
+                "sess-stdio-res",
+                SessionTransport::Stdio,
+                ContinuationMode::Resumeable,
+            ),
+            (
+                "sess-stdio-pin",
+                SessionTransport::Stdio,
+                ContinuationMode::Pinned,
+            ),
+            (
+                "sess-sse-eph",
+                SessionTransport::Sse,
+                ContinuationMode::Ephemeral,
+            ),
+            (
+                "sess-sse-res",
+                SessionTransport::Sse,
+                ContinuationMode::Resumeable,
+            ),
+            (
+                "sess-sse-pin",
+                SessionTransport::Sse,
+                ContinuationMode::Pinned,
+            ),
+        ];
+        for (id, transport, cont) in session_specs {
+            let created = store.create_session(id, transport, cont).unwrap();
+            assert_eq!(created.transport, transport);
+            assert_eq!(created.continuation_mode, cont);
+            assert_eq!(created.status, SessionStatus::Active);
+
+            let fetched = store.get_session(id).unwrap().unwrap();
+            assert_eq!(fetched.transport, transport, "transport lost for {id}");
+            assert_eq!(fetched.continuation_mode, cont, "cont_mode lost for {id}");
+            assert_eq!(
+                fetched.status,
+                SessionStatus::Active,
+                "status lost for {id}"
+            );
+        }
+
+        // 2. SessionStatus: Active is exercised above; Closed/Compacted require a
+        // status update through SQL (create_session only writes Active), then a
+        // fresh get_session to prove the decoder accepts the persisted string.
+        {
+            let conn = store.conn().unwrap();
+            conn.execute(
+                "UPDATE sessions SET status = 'closed', updated_at = ?1 \
+                 WHERE session_id = 'sess-stdio-eph'",
+                rusqlite::params![t],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE sessions SET status = 'compacted', updated_at = ?1 \
+                 WHERE session_id = 'sess-stdio-res'",
+                rusqlite::params![t],
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            store.get_session("sess-stdio-eph").unwrap().unwrap().status,
+            SessionStatus::Closed
+        );
+        assert_eq!(
+            store.get_session("sess-stdio-res").unwrap().unwrap().status,
+            SessionStatus::Compacted
+        );
+
+        // 3. Refresh jobs: every JobTrigger × JobStatus through upsert_refresh_job.
+        let trigger_status_specs: [(JobTrigger, JobStatus); 6] = [
+            (JobTrigger::Manual, JobStatus::Queued),
+            (JobTrigger::Manual, JobStatus::Running),
+            (JobTrigger::Manual, JobStatus::Completed),
+            (JobTrigger::Manual, JobStatus::Failed),
+            (JobTrigger::Manual, JobStatus::Cancelled),
+            (JobTrigger::DependencyChange, JobStatus::Completed),
+        ];
+        let triggers = [
+            JobTrigger::Startup,
+            JobTrigger::Manual,
+            JobTrigger::Scheduled,
+            JobTrigger::Webhook,
+            JobTrigger::DependencyChange,
+        ];
+        for (i, trigger) in triggers.iter().enumerate() {
+            store
+                .upsert_refresh_job(&RefreshJob {
+                    job_id: format!("job-tr-{i}"),
+                    source_id: "src-persist".into(),
+                    trigger_kind: *trigger,
+                    status: JobStatus::Queued,
+                    started_at: None,
+                    finished_at: None,
+                    error: None,
+                    stats_json: "{}".into(),
+                    created_at: t.clone(),
+                    updated_at: t.clone(),
+                })
+                .unwrap();
+            let fetched = store
+                .get_refresh_job(&format!("job-tr-{i}"))
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                fetched.trigger_kind, *trigger,
+                "trigger lost for job-tr-{i}"
+            );
+        }
+
+        // Status transitions: queue → run → each terminal, asserting the
+        // decoder accepts the persisted status string on each read.
+        for (i, (_trigger, status)) in trigger_status_specs.iter().enumerate() {
+            let job_id = format!("job-st-{i}");
+            store
+                .upsert_refresh_job(&RefreshJob {
+                    job_id: job_id.clone(),
+                    source_id: "src-persist".into(),
+                    trigger_kind: JobTrigger::Manual,
+                    status: *status,
+                    started_at: Some(t.clone()),
+                    finished_at: matches!(
+                        *status,
+                        JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled
+                    )
+                    .then(|| t.clone()),
+                    error: matches!(*status, JobStatus::Failed).then(|| "boom".into()),
+                    stats_json: "{}".into(),
+                    created_at: t.clone(),
+                    updated_at: t.clone(),
+                })
+                .unwrap();
+            let fetched = store.get_refresh_job(&job_id).unwrap().unwrap();
+            assert_eq!(fetched.status, *status, "status lost for {job_id}");
+        }
+    }
+
+    #[test]
     fn retention_deletes_only_eligible_rows() {
         let (store, _dir) = test_store();
         let old = "2026-01-01T00:00:00Z";
@@ -1391,11 +1634,14 @@ mod tests {
         assert!(store.get_event(&pinned_event.event_id).unwrap().is_some());
         assert!(store.get_event(&recent_event.event_id).unwrap().is_some());
 
+        // The session still holds a pinned event, so it is retained: deleting
+        // it would cascade-delete the pinned event.
         assert_eq!(
             store.delete_inactive_sessions_older_than(cutoff).unwrap(),
-            1
+            0
         );
-        assert!(store.get_session("sess-old").unwrap().is_none());
+        assert!(store.get_session("sess-old").unwrap().is_some());
+        assert!(store.get_event(&pinned_event.event_id).unwrap().is_some());
 
         store
             .upsert_source(&Source {
@@ -1453,6 +1699,116 @@ mod tests {
         );
         assert!(store.get_refresh_job("job-old").unwrap().is_none());
         assert!(store.get_refresh_job("job-active").unwrap().is_some());
+    }
+
+    #[test]
+    fn rebuild_fts_index_is_atomic_on_failure() {
+        let (store, _dir) = test_store();
+        {
+            let conn = store.conn().unwrap();
+            conn.execute(
+                "INSERT INTO chunks_fts (chunk_id, document_id, corpus_id, library_id, title, heading, text) \
+                 VALUES ('chunk-keep', 'doc-1', 'corp-1', '', 't', '', 'still indexed')",
+                [],
+            )
+            .unwrap();
+            // Force the last INSERT to fail after the earlier DELETEs ran.
+            conn.execute("DROP TABLE library_aliases_fts", []).unwrap();
+        }
+
+        assert!(store.rebuild_fts_index().is_err());
+
+        let conn = store.conn().unwrap();
+        let kept: i64 = conn
+            .query_row("SELECT COUNT(*) FROM chunks_fts", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(kept, 1, "failed rebuild must roll back the chunk DELETE");
+    }
+
+    fn artifact_row(artifact_id: &str, created_at: &str) -> Artifact {
+        Artifact {
+            artifact_id: artifact_id.into(),
+            session_id: None,
+            kind: "blob".into(),
+            mime_type: None,
+            storage_uri: format!("file:///{artifact_id}"),
+            size_bytes: 1,
+            summary: None,
+            checksum: "sha256:00".into(),
+            created_at: created_at.into(),
+        }
+    }
+
+    #[test]
+    fn retention_keeps_artifacts_referenced_by_pinned_events() {
+        let (store, _dir) = test_store();
+        let old = "2026-01-01T00:00:00Z";
+        let cutoff = "2026-02-01T00:00:00Z";
+        store
+            .create_session(
+                "sess-art",
+                SessionTransport::Stdio,
+                ContinuationMode::Ephemeral,
+            )
+            .unwrap();
+        store
+            .upsert_artifact(&artifact_row("art-pinned", old))
+            .unwrap();
+        store
+            .upsert_artifact(&artifact_row("art-plain", old))
+            .unwrap();
+        store
+            .add_event("sess-art", "note", "pinned", Some("art-pinned"), "{}", true)
+            .unwrap();
+
+        // Only the unreferenced artifact is eligible; the payload list gates
+        // payload deletion too, so the pinned artifact is never offered.
+        assert_eq!(
+            store.list_artifacts_older_than(cutoff).unwrap(),
+            vec!["art-plain".to_string()]
+        );
+        assert_eq!(store.delete_artifacts_older_than(cutoff).unwrap(), 1);
+        let conn = store.conn().unwrap();
+        let remaining: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM artifacts WHERE artifact_id = 'art-pinned'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 1, "pinned-event artifact must survive retention");
+    }
+
+    #[test]
+    fn retention_keeps_sessions_with_pinned_events_and_their_events() {
+        let (store, _dir) = test_store();
+        let old = "2026-01-01T00:00:00Z";
+        let cutoff = "2026-02-01T00:00:00Z";
+        store
+            .create_session(
+                "sess-pinned",
+                SessionTransport::Stdio,
+                ContinuationMode::Ephemeral,
+            )
+            .unwrap();
+        let pinned = store
+            .add_event("sess-pinned", "decision", "keep me", None, "{}", true)
+            .unwrap();
+        {
+            let conn = store.conn().unwrap();
+            conn.execute(
+                "UPDATE sessions SET status = 'closed', updated_at = ?1 WHERE session_id = 'sess-pinned'",
+                rusqlite::params![old],
+            )
+            .unwrap();
+        }
+
+        assert_eq!(
+            store.delete_inactive_sessions_older_than(cutoff).unwrap(),
+            0
+        );
+        assert!(store.get_session("sess-pinned").unwrap().is_some());
+        assert!(store.get_event(&pinned.event_id).unwrap().is_some());
     }
 
     #[test]
@@ -1834,5 +2190,44 @@ mod tests {
         assert!(sess_status_from("active").is_ok());
         assert!(trigger_from("manual").is_ok());
         assert!(job_status_from("completed").is_ok());
+    }
+
+    #[test]
+    fn enum_roundtrips_all_writable_variants() {
+        for v in [SessionTransport::Stdio, SessionTransport::Sse] {
+            assert_eq!(transport_from(transport_str(v)).unwrap(), v);
+        }
+        for v in [
+            ContinuationMode::Ephemeral,
+            ContinuationMode::Resumeable,
+            ContinuationMode::Pinned,
+        ] {
+            assert_eq!(cont_mode_from(cont_mode_str(v)).unwrap(), v);
+        }
+        for v in [
+            SessionStatus::Active,
+            SessionStatus::Closed,
+            SessionStatus::Compacted,
+        ] {
+            assert_eq!(sess_status_from(sess_status_str(v)).unwrap(), v);
+        }
+        for v in [
+            JobTrigger::Startup,
+            JobTrigger::Manual,
+            JobTrigger::Scheduled,
+            JobTrigger::Webhook,
+            JobTrigger::DependencyChange,
+        ] {
+            assert_eq!(trigger_from(trigger_str(v)).unwrap(), v);
+        }
+        for v in [
+            JobStatus::Queued,
+            JobStatus::Running,
+            JobStatus::Completed,
+            JobStatus::Failed,
+            JobStatus::Cancelled,
+        ] {
+            assert_eq!(job_status_from(job_status_str(v)).unwrap(), v);
+        }
     }
 }

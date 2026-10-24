@@ -15,9 +15,7 @@ impl ObservabilityRuntimeConfig {
     }
 }
 
-pub struct ObservabilityGuard {
-    _inner: tracing::subscriber::DefaultGuard,
-}
+pub struct ObservabilityGuard;
 
 pub fn init_observability(config: ObservabilityRuntimeConfig) -> Result<ObservabilityGuard> {
     if config.otel_enabled() {
@@ -41,9 +39,11 @@ pub fn init_observability(config: ObservabilityRuntimeConfig) -> Result<Observab
             Box::new(subscriber.finish())
         };
 
-    let guard = tracing::subscriber::set_default(subscriber);
+    // Install process-wide so spawned threads (SSE, refresh) emit logs too.
+    // A failed install (e.g. double-init) is non-fatal for a CLI.
+    let _ = tracing::subscriber::set_global_default(subscriber);
 
-    Ok(ObservabilityGuard { _inner: guard })
+    Ok(ObservabilityGuard)
 }
 
 #[cfg(test)]

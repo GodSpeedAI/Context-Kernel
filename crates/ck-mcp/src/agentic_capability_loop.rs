@@ -1,39 +1,75 @@
-//! agentic_capability_loop — Context Kernel MCP adapter stub
+//! agentic_capability_loop — Context Kernel MCP adapter
 //!
-//! Defines Rust types for the events defined in the agentic_capability_loop
-//! SEA domain model:
-//!   docs/specs/domains/agentic_capability_loop/agentic_capability_loop.manifest.json (SEA-Forge)
-//!
-//! This module provides:
-//! - Serde-serializable event structs for all relevant events
-//! - A ContextAgent trait for implementing the Context Kernel's role in the loop
-//!
-//! The Python integration adapter at:
-//!   integration/agentic_capability_loop/adapters.py
-//! provides a Python-level stub for use in integration tests.
-//!
-//! # Events this module handles
+//! Context Kernel's role in the loop is retrieval only: it resolves
+//! citations and emits a `ContextPacketCreated` packet. It does NOT create
+//! authority decisions — SEA-Forge owns `AuthorityChecked`. The packet
+//! carries authority *references* (decision ID + reference string) that
+//! link the cited context to a prior verified SEA allow, but CK does not
+//! compute the decision itself.
 //!
 //! Consumed:
 //! - `ContextRequired`      — emitted by SWE_SEED
 //!
 //! Emitted:
 //! - `ContextPacketCreated` — after resolving citations
-//! - `ContextAuthorized`    — after checking POL-ACL-002
-//!
-//! # Policy
-//!
-//! POL-ACL-002: PrivateCorpusRequiresExplicitScope
-//! Context Kernel only retrieves private corpus documents when explicitly
-//! scoped and authorized.
 
 use serde::{Deserialize, Serialize};
 
-// ---------------------------------------------------------------------------
-// Shared envelope
-// ---------------------------------------------------------------------------
+/// The namespace-derived standalone pseudo-hash (sha256 of
+/// "agentic_capability_loop") that the frozen convergence preregistration
+/// forbids masquerading as canonical domain identity (ENV-I2).
+pub const FALLBACK_PSEUDO_HASH: &str =
+    "dc144cbd71a483431301ca1bf32e95c014af4edba8dbcc525f505310e30a107e";
 
-/// Canonical event envelope for all agentic_capability_loop events.
+/// Why a candidate `domain_model_hash` cannot enter the canonical boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DomainIdentityError {
+    /// Not a 64-character lowercase hex digest.
+    Malformed,
+    /// A known pseudo-identity (standalone fallback constant / all-zero).
+    Placeholder,
+}
+
+impl std::fmt::Display for DomainIdentityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Malformed => write!(
+                f,
+                "domain_model_hash is not a 64-char lowercase sha256 digest"
+            ),
+            Self::Placeholder => write!(
+                f,
+                "fallback/placeholder pseudo-hash rejected as domain identity"
+            ),
+        }
+    }
+}
+
+/// Canonical identity ingress gate (convergence T02 adopting frozen ENV-I1/I2):
+/// a digest is admissible only when it is a real SHA-256 hex form AND not a
+/// known pseudo-identity. CK never manufactures an identity.
+pub fn verify_domain_identity(hash: &str) -> Result<(), DomainIdentityError> {
+    let well_formed = hash.len() == 64
+        && hash
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    if !well_formed {
+        return Err(DomainIdentityError::Malformed);
+    }
+    if hash == FALLBACK_PSEUDO_HASH || hash.bytes().all(|b| b == b'0') {
+        return Err(DomainIdentityError::Placeholder);
+    }
+    Ok(())
+}
+
+/// The immutable semantic-world gate and retrieval-completeness vocabulary
+/// live in `ck-core` (shared across the kernel). Re-exported here so the
+/// boundary module keeps its public paths.
+pub use ck_core::types::{
+    verify_world_ref, NoContextReason, RetrievalCompleteness, WorldRefError,
+    OMISSION_CONTENT_TRUNCATED, OMISSION_MAX_RESULTS,
+};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventEnvelope {
     pub event_id: String,
@@ -43,123 +79,142 @@ pub struct EventEnvelope {
     pub payload: serde_json::Value,
 }
 
-// ---------------------------------------------------------------------------
-// ContextRequired (consumed from SWE_SEED)
-// ---------------------------------------------------------------------------
-
-/// Payload for the `ContextRequired` event emitted by SWE_SEED.
-///
-/// This event requests that Context Kernel fetch relevant documents
-/// from the specified corpus and emit a `ContextPacketCreated` event.
+/// The E2 `ContextRequired` wire payload. This is the *wire* shape; the
+/// native Context Kernel input model is `ck_app::ContextRequirement`
+/// (built by [`ContextRequiredPayload::to_requirement`]).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextRequiredPayload {
-    /// Hash of the SEA domain model used for traceability.
     pub domain_model_hash: String,
-    /// ID of the originating work request.
+    /// Immutable semantic-world reference the request is pinned to.
+    /// `#[serde(default)]` so a missing field reaches the fail-closed world
+    /// gate (""), rather than a bare decode error.
+    #[serde(default)]
+    pub world_ref: String,
     pub work_request_id: String,
-    /// Unique ID for this context requirement.
     pub context_requirement_id: String,
-    /// ID of the knowledge corpus to query.
     pub corpus_id: String,
-    /// Optional natural-language query string.
     pub query: Option<String>,
-    /// Maximum number of citations to return.
     #[serde(default = "default_max_results")]
     pub max_results: u32,
-    /// True if the corpus is private-scoped.
+    // --- typed requirement extensions (all optional on the wire) ---------
+    /// Retrieval mode: `lexical`, `semantic`, `hybrid`.
+    #[serde(default)]
+    pub mode: Option<String>,
+    /// Purpose / retrieval intent.
+    #[serde(default)]
+    pub purpose: Option<String>,
+    /// Semantic concepts the requirement must represent.
+    #[serde(default)]
+    pub required_concepts: Vec<String>,
+    /// Caller-declared scope claim (POL-ACL-002: required for private corpora).
+    #[serde(default)]
+    pub scope_claim: Option<String>,
+    /// Caller assertion that the corpus is private (storage is authoritative).
     #[serde(default)]
     pub is_private: bool,
-    /// Required if `is_private` is true; authorization scope token.
-    pub scope_claim: Option<String>,
+    /// Corpora/sources excluded from this retrieval.
+    #[serde(default)]
+    pub exclusions: Vec<String>,
+    /// Maximum accepted source age (seconds).
+    #[serde(default)]
+    pub freshness_max_age_secs: Option<u64>,
+    /// Token ceiling for the retrieved context.
+    #[serde(default)]
+    pub token_budget: Option<i64>,
+    /// Task/route identity.
+    #[serde(default)]
+    pub task_id: Option<String>,
+    #[serde(default)]
+    pub route_id: Option<String>,
+    /// Expected artifact/proof references.
+    #[serde(default)]
+    pub expected_refs: Vec<String>,
+    /// Caller-supplied risk classification (informational; SEA-Forge decides
+    /// consequential-action authority).
+    #[serde(default)]
+    pub risk_classification: Option<String>,
+    #[serde(default)]
+    pub correlation_id: Option<String>,
+    #[serde(default)]
+    pub causation_id: Option<String>,
+}
+
+impl ContextRequiredPayload {
+    /// Project the wire payload onto the native typed context requirement.
+    pub fn to_requirement(&self) -> ck_app::ContextRequirement {
+        ck_app::ContextRequirement {
+            identity: ck_app::RequirementIdentity {
+                work_request_ref: self.work_request_id.clone(),
+                context_requirement_id: self.context_requirement_id.clone(),
+                task_ref: self.task_id.clone(),
+                route_ref: self.route_id.clone(),
+            },
+            world_ref: self.world_ref.clone(),
+            purpose: self.purpose.clone(),
+            query: self.query.clone(),
+            mode: self.mode.clone(),
+            required_concepts: self.required_concepts.clone(),
+            corpora: if self.corpus_id.is_empty() {
+                Vec::new()
+            } else {
+                vec![self.corpus_id.clone()]
+            },
+            constraints: ck_app::SourceConstraints {
+                caller_scope: self.scope_claim.iter().map(|s| s.to_string()).collect(),
+                exclusions: self.exclusions.clone(),
+            },
+            freshness: ck_app::FreshnessRequirement {
+                max_age_secs: self.freshness_max_age_secs,
+            },
+            max_results: self.max_results,
+            budget: self
+                .token_budget
+                .map(|max_tokens| ck_core::entities::Budget {
+                    max_tokens,
+                    max_chunks: i64::from(self.max_results.max(1)),
+                }),
+            expected_refs: self.expected_refs.clone(),
+            risk_classification: self.risk_classification.clone(),
+            trace: ck_app::TraceRefs {
+                correlation_id: self.correlation_id.clone(),
+                causation_id: self.causation_id.clone(),
+            },
+        }
+    }
 }
 
 fn default_max_results() -> u32 {
     10
 }
 
-// ---------------------------------------------------------------------------
-// Citation
-// ---------------------------------------------------------------------------
-
-/// A single citation in a context packet.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Citation {
     pub citation_id: String,
     pub source: String,
     pub content: String,
     pub fetched_at: String,
+    /// True when `content` is a prefix of the source rather than all of it.
+    #[serde(default)]
+    pub truncated: bool,
 }
 
-// ---------------------------------------------------------------------------
-// ContextPacketCreated (emitted by Context Kernel)
-// ---------------------------------------------------------------------------
-
-/// Payload for the `ContextPacketCreated` event.
-///
-/// Emitted after Context Kernel resolves citations from the requested corpus.
-/// If the corpus requires authorization and it was denied, `citations` will
-/// be empty and `authorized` will be false.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextPacketCreatedPayload {
     pub domain_model_hash: String,
+    /// Echo of the request's `world_ref`, unchanged.
+    pub world_ref: String,
+    pub retrieval_completeness: RetrievalCompleteness,
+    #[serde(default)]
+    pub omissions: Vec<String>,
     pub context_packet_id: String,
     pub context_requirement_id: String,
     pub work_request_id: String,
     pub corpus_id: String,
     pub citations: Vec<Citation>,
-    pub authorized: bool,
-}
-
-// ---------------------------------------------------------------------------
-// ContextAuthorized (emitted by Context Kernel)
-// ---------------------------------------------------------------------------
-
-/// Result of the POL-ACL-002 authorization check.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AuthorizationResult {
-    Allow,
-    Deny,
-    Escalate,
-}
-
-/// Payload for the `ContextAuthorized` event.
-///
-/// Emitted alongside `ContextPacketCreated` to communicate the authorization
-/// decision to the SEA-Forge authority layer.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContextAuthorizedPayload {
-    pub domain_model_hash: String,
-    pub context_requirement_id: String,
-    pub work_request_id: String,
-    pub corpus_id: String,
-    pub result: AuthorizationResult,
-    pub reason: String,
-    pub policy_code: String,
-    pub scope_claim: Option<String>,
-    pub evaluated_at: String,
-}
-
-// ---------------------------------------------------------------------------
-// ContextAgent trait
-// ---------------------------------------------------------------------------
-
-/// Trait for the Context Kernel's role in the agentic capability loop.
-///
-/// Implementors should resolve citations from the requested corpus,
-/// check POL-ACL-002, and emit the appropriate events.
-pub trait ContextAgent {
-    type Error: std::fmt::Debug;
-
-    /// Handle a `ContextRequired` event.
-    ///
-    /// Returns a tuple of:
-    /// - `ContextPacketCreated` envelope
-    /// - `ContextAuthorized` envelope
-    fn handle_context_required(
-        &self,
-        event: &EventEnvelope,
-    ) -> Result<(EventEnvelope, EventEnvelope), Self::Error>;
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authority_decision_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authority_reference: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -169,196 +224,418 @@ pub trait ContextAgent {
 use std::path::PathBuf;
 
 use chrono::Utc;
-use ck_core::ports::SourceAdapter;
 use ulid::Ulid;
 
-/// Concrete implementation of ContextAgent backed by ck-adapter-filesystem.
+/// The GodSpeed-facing context acquisition adapter. Thin by design: it
+/// validates the boundary, resolves requested corpora into the real kernel
+/// (auto-ingesting operator-configured corpus sources on first use), and
+/// delegates ALL retrieval to `AppServices::resolve_context` — the same
+/// application pipeline as normal Context Kernel operation. There is no
+/// degraded, integration-only retrieval path.
 ///
-/// For the `learning-proposals` corpus, reads from a JSONL ledger written by GodSpeed-Agent.
-/// For all other corpora, uses FilesystemSourceAdapter to resolve citations from a local path.
-///
-/// # Policy
-///
-/// Enforces POL-ACL-002: private corpora require an explicit scope_claim.
+/// Context Kernel does NOT decide authority — SEA-Forge owns that. This agent
+/// only resolves context and returns a packet carrying authority *references*
+/// (passed through from the caller, not computed locally).
 pub struct AclContextAgent {
-    /// Root directory containing corpus subdirectories.
-    /// Each corpus_id maps to a subdirectory: `<corpus_root>/<corpus_id>/`
+    /// Operator-configured filesystem corpus root used for auto-ingest.
     pub corpus_root: PathBuf,
-    /// Optional path to the GodSpeed-Agent learning proposals JSONL ledger.
+    /// GodSpeed-Agent learning-proposals JSONL ledger (auto-ingested through
+    /// the real `LearningProposalsAdapter` source adapter).
     pub learning_proposals_ledger: Option<PathBuf>,
 }
 
-impl ContextAgent for AclContextAgent {
-    type Error = anyhow::Error;
+/// The outcome of one context acquisition: the legacy packet (dual-read
+/// compatibility) plus the full native resolution the CEP projection is
+/// built from.
+#[derive(Debug)]
+pub struct ContextAcquisitionResult {
+    pub packet: ContextPacketCreatedPayload,
+    pub resolution: ck_app::ContextResolution,
+    pub no_context: Option<NoContextReason>,
+}
 
-    fn handle_context_required(
+impl ContextAcquisitionResult {
+    /// Frozen E3 outcome naming: only `cited` is a successful acquisition;
+    /// zero citations are explicit and governed, never silently successful.
+    pub fn outcome(&self, required: bool) -> &'static str {
+        if self.no_context.is_none() {
+            "cited"
+        } else if required {
+            "no_context_governed"
+        } else {
+            "empty_optional"
+        }
+    }
+
+    pub fn reason(&self) -> Option<&'static str> {
+        self.no_context.map(|r| r.as_str())
+    }
+}
+
+/// Why a corpus could not be made retrievable.
+enum EnsureOutcome {
+    Ready,
+    Blocked(NoContextReason),
+}
+
+impl AclContextAgent {
+    /// Acquire context with an EXPLICIT outcome: cited success or governed
+    /// no-context with a machine-readable reason.
+    pub fn acquire_context(
         &self,
-        event: &EventEnvelope,
-    ) -> Result<(EventEnvelope, EventEnvelope), Self::Error> {
-        let payload: ContextRequiredPayload = serde_json::from_value(event.payload.clone())?;
+        app: &ck_app::AppServices,
+        payload: &ContextRequiredPayload,
+        authority_decision_id: Option<&str>,
+        authority_reference: Option<&str>,
+    ) -> Result<ContextAcquisitionResult, anyhow::Error> {
+        verify_world_ref(&payload.world_ref)
+            .map_err(|e| anyhow::anyhow!("world_ref rejected: {e}"))?;
+        let requirement = payload.to_requirement();
 
-        // POL-ACL-002: private corpus requires explicit scope_claim
-        let (authorized, auth_reason) = if payload.is_private {
-            match &payload.scope_claim {
-                Some(claim) if !claim.is_empty() => (
-                    AuthorizationResult::Allow,
-                    format!("scope claim present: {}", claim),
-                ),
-                _ => (
-                    AuthorizationResult::Deny,
-                    "POL-ACL-002: private corpus requires explicit scope_claim".to_string(),
-                ),
+        // Resolve requested corpora into the kernel BEFORE retrieval. An
+        // operator-configured corpus is auto-ingested exactly once; anything
+        // else resolves to an explicit no-context reason, never to fabricated
+        // context.
+        for corpus_id in &requirement.corpora {
+            if app.corpus(corpus_id)?.is_some() {
+                continue;
             }
-        } else {
-            (AuthorizationResult::Allow, "public corpus".to_string())
-        };
+            if payload.is_private {
+                // A caller-declared private corpus must already be registered
+                // with its visibility — it is never auto-ingested open.
+                return self.no_context_result(
+                    payload,
+                    NoContextReason::CorpusNotFound,
+                    authority_decision_id,
+                    authority_reference,
+                );
+            }
+            match self.ensure_corpus_ingested(app, corpus_id) {
+                Ok(EnsureOutcome::Ready) => {}
+                Ok(EnsureOutcome::Blocked(reason)) => {
+                    return self.no_context_result(
+                        payload,
+                        reason,
+                        authority_decision_id,
+                        authority_reference,
+                    );
+                }
+                Err(e) => return Err(e),
+            }
+        }
 
-        let citations = if authorized == AuthorizationResult::Allow {
-            self.resolve_citations(&payload)?
-        } else {
-            vec![]
-        };
+        // The real retrieval pipeline: lexical + semantic-when-configured,
+        // corpus filtering, scope enforcement, ranking, trust/freshness,
+        // budgets, completeness accounting, calibration.
+        let resolution = app.resolve_context(&requirement)?;
 
+        let citations: Vec<Citation> = resolution.results.iter().map(result_to_citation).collect();
+        let omissions: Vec<String> = resolution
+            .omissions
+            .iter()
+            .map(|o| o.code.clone())
+            .collect();
+        let mut packet = self.packet_for(
+            payload,
+            citations,
+            authority_decision_id,
+            authority_reference,
+        )?;
+        packet.retrieval_completeness = resolution.completeness;
+        packet.omissions = omissions;
+        let no_context = resolution.no_context_reason;
+        if no_context.is_some() {
+            packet.citations.clear();
+        }
+        Ok(ContextAcquisitionResult {
+            packet,
+            resolution,
+            no_context,
+        })
+    }
+
+    /// Explicit no-context outcome with an empty packet and a blocked
+    /// resolution — absence is stated, never fabricated.
+    fn no_context_result(
+        &self,
+        payload: &ContextRequiredPayload,
+        reason: NoContextReason,
+        authority_decision_id: Option<&str>,
+        authority_reference: Option<&str>,
+    ) -> Result<ContextAcquisitionResult, anyhow::Error> {
+        let requirement = payload.to_requirement();
+        let mut packet = self.packet_for(
+            payload,
+            Vec::new(),
+            authority_decision_id,
+            authority_reference,
+        )?;
+        packet.retrieval_completeness = RetrievalCompleteness::None;
+        packet.omissions = vec![reason.as_str().to_string()];
+        let resolution = ck_app::ContextResolution::blocked(
+            format!("qry_{}", Ulid::new()),
+            requirement
+                .mode
+                .clone()
+                .unwrap_or_else(|| "hybrid".to_string()),
+            ck_app::ContextAccess::Accessible,
+            reason,
+            requirement.corpora.clone(),
+            requirement.effective_result_cap(),
+            requirement.budget.as_ref().map(|b| b.max_tokens),
+        );
+        Ok(ContextAcquisitionResult {
+            packet,
+            resolution,
+            no_context: Some(reason),
+        })
+    }
+
+    fn packet_for(
+        &self,
+        payload: &ContextRequiredPayload,
+        citations: Vec<Citation>,
+        authority_decision_id: Option<&str>,
+        authority_reference: Option<&str>,
+    ) -> Result<ContextPacketCreatedPayload, anyhow::Error> {
         let context_packet_id = format!("ctx_{}", Ulid::new());
-        let now = Utc::now().to_rfc3339();
-
-        let packet_payload = ContextPacketCreatedPayload {
+        Ok(ContextPacketCreatedPayload {
             domain_model_hash: payload.domain_model_hash.clone(),
-            context_packet_id: context_packet_id.clone(),
+            world_ref: payload.world_ref.clone(),
+            retrieval_completeness: RetrievalCompleteness::None,
+            omissions: Vec::new(),
+            context_packet_id,
             context_requirement_id: payload.context_requirement_id.clone(),
             work_request_id: payload.work_request_id.clone(),
             corpus_id: payload.corpus_id.clone(),
             citations,
-            authorized: authorized == AuthorizationResult::Allow,
-        };
+            authority_decision_id: authority_decision_id.map(str::to_string),
+            authority_reference: authority_reference.map(str::to_string),
+        })
+    }
 
-        let auth_payload = ContextAuthorizedPayload {
-            domain_model_hash: payload.domain_model_hash,
-            context_requirement_id: payload.context_requirement_id,
-            work_request_id: payload.work_request_id,
-            corpus_id: payload.corpus_id,
-            result: authorized,
-            reason: auth_reason,
-            policy_code: "POL-ACL-002".to_string(),
-            scope_claim: payload.scope_claim,
-            evaluated_at: now.clone(),
-        };
+    /// Make one requested corpus retrievable through the real kernel:
+    /// auto-ingest the operator-configured source (filesystem tree under
+    /// `corpus_root`, or the learning-proposals ledger) exactly once.
+    ///
+    /// A corpus_id that escapes `corpus_root` via traversal is a hard refusal,
+    /// not a quiet no-context.
+    fn ensure_corpus_ingested(
+        &self,
+        app: &ck_app::AppServices,
+        corpus_id: &str,
+    ) -> Result<EnsureOutcome, anyhow::Error> {
+        if corpus_id.starts_with("learning-proposals") {
+            let Some(ledger) = &self.learning_proposals_ledger else {
+                return Ok(EnsureOutcome::Blocked(
+                    NoContextReason::CorpusRootUnconfigured,
+                ));
+            };
+            if !ledger.exists() {
+                return Ok(EnsureOutcome::Blocked(NoContextReason::CorpusNotFound));
+            }
+            let config = serde_json::json!({ "path": ledger.to_str().unwrap_or("") }).to_string();
+            return match app.ingest_source(ck_app::IngestSourceRequest {
+                source_id: format!("learning-proposals:{corpus_id}"),
+                source_kind: "learning_proposals_jsonl".to_string(),
+                adapter_config_json: config,
+                corpus_id: Some(corpus_id.to_string()),
+            }) {
+                Ok(_) => Ok(EnsureOutcome::Ready),
+                Err(_) => Ok(EnsureOutcome::Blocked(NoContextReason::CorpusUnavailable)),
+            };
+        }
 
-        let packet_envelope = EventEnvelope {
-            event_id: format!("evt_{}", Ulid::new()),
-            event_type: "ContextPacketCreated".to_string(),
-            namespace: "agentic_capability_loop".to_string(),
-            occurred_at: now.clone(),
-            payload: serde_json::to_value(packet_payload)?,
+        let Ok(canonical_root) = self.corpus_root.canonicalize() else {
+            // corpus root not configured / missing — explicit, never silent
+            return Ok(EnsureOutcome::Blocked(
+                NoContextReason::CorpusRootUnconfigured,
+            ));
         };
-        let auth_envelope = EventEnvelope {
-            event_id: format!("evt_{}", Ulid::new()),
-            event_type: "ContextAuthorized".to_string(),
-            namespace: "agentic_capability_loop".to_string(),
-            occurred_at: now,
-            payload: serde_json::to_value(auth_payload)?,
+        let corpus_dir = self.corpus_root.join(corpus_id);
+        if !corpus_dir.is_dir() {
+            return Ok(EnsureOutcome::Blocked(NoContextReason::CorpusNotFound));
+        }
+        let Ok(canonical_dir) = corpus_dir.canonicalize() else {
+            return Ok(EnsureOutcome::Blocked(NoContextReason::CorpusNotFound));
         };
-
-        Ok((packet_envelope, auth_envelope))
+        if !canonical_dir.starts_with(&canonical_root) {
+            anyhow::bail!(
+                "corpus_id '{}' escapes the configured corpus root",
+                corpus_id
+            );
+        }
+        let config =
+            serde_json::json!({ "path": canonical_dir.to_str().unwrap_or("") }).to_string();
+        match app.ingest_source(ck_app::IngestSourceRequest {
+            source_id: format!("ctxfs:{corpus_id}"),
+            source_kind: "filesystem_tree".to_string(),
+            adapter_config_json: config,
+            corpus_id: Some(corpus_id.to_string()),
+        }) {
+            Ok(_) => Ok(EnsureOutcome::Ready),
+            Err(_) => Ok(EnsureOutcome::Blocked(NoContextReason::CorpusUnavailable)),
+        }
     }
 }
 
-impl AclContextAgent {
-    fn resolve_citations(
-        &self,
-        payload: &ContextRequiredPayload,
-    ) -> Result<Vec<Citation>, anyhow::Error> {
-        // Route learning-proposals corpus to JSONL ledger
-        if payload.corpus_id.starts_with("learning-proposals") {
-            return self.resolve_from_learning_proposals(payload);
-        }
+/// Project one real retrieval result onto the legacy citation wire shape.
+/// The bounded representation is the ranked excerpt with a resolvable
+/// locator; full content lives at the cited source (see the retrieval
+/// contract recorded on the bundle projection).
+fn result_to_citation(result: &ck_core::entities::RetrievalResult) -> Citation {
+    let uri = result
+        .citation
+        .get("uri")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| result.result_id.clone());
+    let source = match result.citation.get("anchor").and_then(|v| v.as_str()) {
+        Some(anchor) => format!("{uri}#{anchor}"),
+        None => uri,
+    };
+    Citation {
+        citation_id: format!("cit_{}", Ulid::new()),
+        source,
+        content: result.excerpt.clone(),
+        fetched_at: Utc::now().to_rfc3339(),
+        truncated: result.excerpt.ends_with('…'),
+    }
+}
 
-        // Resolve from filesystem corpus directory
-        let corpus_dir = self.corpus_root.join(&payload.corpus_id);
-        if !corpus_dir.is_dir() {
-            return Ok(vec![]);
-        }
-        let config = serde_json::json!({ "path": corpus_dir.to_str().unwrap_or("") }).to_string();
-        let adapter = ck_adapter_filesystem::FilesystemSourceAdapter;
-        let units = adapter.discover_units(&payload.corpus_id, &config)?;
+// ---------------------------------------------------------------------------
+// Canonical E3 envelope construction (convergence T02)
+// ---------------------------------------------------------------------------
 
-        let query = payload.query.as_deref().unwrap_or("");
-        let max = payload.max_results as usize;
-        let now = Utc::now().to_rfc3339();
+/// The v1 wire schema version label shared with the canonical envelope family.
+pub const SCHEMA_VERSION_V1: &str = "v1";
+/// CK's canonical producer stamp (exclusive authoritative producer of
+/// `ContextPacketCreated` per the frozen edge topology).
+pub const CONTEXT_KERNEL_AGENT: &str = "context-kernel";
+/// Provenance-chain entry prefix marking a causal parent envelope id.
+pub const CAUSALITY_PREFIX: &str = "caused_by:";
 
-        let mut citations = Vec::new();
-        for unit in units.iter() {
-            if citations.len() >= max {
-                break;
+fn sorted_without_signature(value: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    match value {
+        Value::Object(obj) => {
+            let mut keys: Vec<_> = obj.keys().collect();
+            keys.sort();
+            let mut sorted = serde_json::Map::new();
+            for key in keys {
+                if key == "signature" {
+                    continue;
+                }
+                sorted.insert(key.clone(), sorted_without_signature(&obj[key]));
             }
-            let raw = adapter.fetch_content(&payload.corpus_id, unit, &config)?;
-            let content = String::from_utf8_lossy(&raw.bytes).into_owned();
-            if query.is_empty() || content.to_lowercase().contains(&query.to_lowercase()) {
-                citations.push(Citation {
-                    citation_id: format!("cit_{}", Ulid::new()),
-                    source: unit.uri.clone().unwrap_or_else(|| unit.external_id.clone()),
-                    content: content.chars().take(500).collect(),
-                    fetched_at: now.clone(),
-                });
-            }
+            Value::Object(sorted)
         }
-        Ok(citations)
+        Value::Array(items) => Value::Array(items.iter().map(sorted_without_signature).collect()),
+        other => other.clone(),
+    }
+}
+
+/// Content-derived dedup key matching the canonical family:
+/// sha256("{correlation_id}|{event_type}|{canonical_payload_json}").
+fn idempotency_key(
+    event_type: &str,
+    payload: &serde_json::Value,
+    correlation_id: Option<&str>,
+) -> String {
+    use sha2::{Digest, Sha256};
+    let payload_json =
+        serde_json::to_string(&sorted_without_signature(payload)).unwrap_or_default();
+    let content = format!(
+        "{}|{}|{}",
+        correlation_id.unwrap_or(""),
+        event_type,
+        payload_json
+    );
+    format!("{:x}", Sha256::digest(content.as_bytes()))
+}
+
+/// Build the canonical v1 `ContextPacketCreated` ENVELOPE (not just the
+/// payload) so the consumer can run its composed boundary gates — producer
+/// authority, identity, drift, causality — on the real E3 wire object.
+///
+/// `request_event_id`, when supplied, is recorded as the causal parent
+/// (`caused_by:<event_id>`) of this packet envelope.
+pub fn context_packet_envelope(
+    request_event_id: Option<&str>,
+    packet: &ContextPacketCreatedPayload,
+) -> serde_json::Value {
+    let mut payload = serde_json::Map::new();
+    payload.insert(
+        "domain_model_hash".into(),
+        serde_json::Value::String(packet.domain_model_hash.clone()),
+    );
+    payload.insert(
+        "world_ref".into(),
+        serde_json::Value::String(packet.world_ref.clone()),
+    );
+    payload.insert(
+        "retrieval_completeness".into(),
+        serde_json::to_value(packet.retrieval_completeness).unwrap_or_default(),
+    );
+    payload.insert(
+        "omissions".into(),
+        serde_json::to_value(&packet.omissions).unwrap_or_default(),
+    );
+    payload.insert(
+        "namespace".into(),
+        serde_json::Value::String("agentic_capability_loop".into()),
+    );
+    payload.insert(
+        "work_request_id".into(),
+        serde_json::Value::String(packet.work_request_id.clone()),
+    );
+    payload.insert(
+        "context_requirement_id".into(),
+        serde_json::Value::String(packet.context_requirement_id.clone()),
+    );
+    payload.insert(
+        "context_packet_id".into(),
+        serde_json::Value::String(packet.context_packet_id.clone()),
+    );
+    payload.insert(
+        "corpus_id".into(),
+        serde_json::Value::String(packet.corpus_id.clone()),
+    );
+    payload.insert(
+        "citations".into(),
+        serde_json::to_value(&packet.citations).unwrap_or_default(),
+    );
+    if let Some(a) = &packet.authority_decision_id {
+        payload.insert(
+            "authority_decision_id".into(),
+            serde_json::Value::String(a.clone()),
+        );
+    }
+    if let Some(a) = &packet.authority_reference {
+        payload.insert(
+            "authority_reference".into(),
+            serde_json::Value::String(a.clone()),
+        );
+    }
+    let payload_value = serde_json::Value::Object(payload);
+
+    let mut chain = vec![format!("domain_model_hash:{}", packet.domain_model_hash)];
+    if let Some(parent) = request_event_id {
+        chain.push(format!("{CAUSALITY_PREFIX}{parent}"));
     }
 
-    fn resolve_from_learning_proposals(
-        &self,
-        payload: &ContextRequiredPayload,
-    ) -> Result<Vec<Citation>, anyhow::Error> {
-        use std::io::{BufRead, BufReader};
-
-        let ledger_path = match &self.learning_proposals_ledger {
-            Some(p) => p.clone(),
-            None => return Ok(vec![]),
-        };
-        if !ledger_path.exists() {
-            return Ok(vec![]);
-        }
-
-        let file = std::fs::File::open(&ledger_path)?;
-        let reader = BufReader::new(file);
-        let query = payload.query.as_deref().unwrap_or("").to_lowercase();
-        let max = payload.max_results as usize;
-        let now = Utc::now().to_rfc3339();
-
-        let mut citations = Vec::new();
-        for line in reader.lines() {
-            if citations.len() >= max {
-                break;
-            }
-            let line = line?;
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            let event: serde_json::Value = serde_json::from_str(line)?;
-            let proposal_text = event["payload"]["proposal"]
-                .as_str()
-                .unwrap_or("")
-                .to_string();
-            let domain_area = event["payload"]["domain_area"].as_str().unwrap_or("");
-
-            if query.is_empty()
-                || proposal_text.to_lowercase().contains(&query)
-                || domain_area.to_lowercase().contains(&query)
-            {
-                citations.push(Citation {
-                    citation_id: format!("cit_{}", Ulid::new()),
-                    source: format!(
-                        "learning-proposals://{}",
-                        event["payload"]["learning_proposal_id"]
-                            .as_str()
-                            .unwrap_or("unknown")
-                    ),
-                    content: proposal_text,
-                    fetched_at: now.clone(),
-                });
-            }
-        }
-        Ok(citations)
-    }
+    serde_json::json!({
+        "schema_version": SCHEMA_VERSION_V1,
+        "event_id": Ulid::new().to_string(),
+        "source_agent": CONTEXT_KERNEL_AGENT,
+        "event_type": "ContextPacketCreated",
+        "occurred_at": Utc::now().to_rfc3339(),
+        "idempotency_key": idempotency_key(
+            "ContextPacketCreated",
+            &payload_value,
+            Some(&packet.work_request_id)
+        ),
+        "payload": payload_value,
+        "provenance": { "origin": CONTEXT_KERNEL_AGENT, "chain": chain },
+    })
 }

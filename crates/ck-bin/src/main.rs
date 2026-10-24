@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use chrono::Utc;
-use ck_adapter_filesystem::{FilesystemSourceAdapter, HeadingChunker, MarkdownNormalizer};
+use ck_adapter_filesystem::{
+    FilesystemSourceAdapter, HeadingChunker, LearningProposalsAdapter, MarkdownNormalizer,
+};
 use ck_app::{AppServices, RetentionPolicy};
 use ck_artifacts::FileArtifactStore;
 use ck_auth::BearerAuth;
@@ -33,6 +35,7 @@ enum Commands {
     Migrate(RuntimeArgs),
     Doctor(RuntimeArgs),
     ExportSchema,
+    RebuildIndex(RuntimeArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -48,13 +51,6 @@ struct RuntimeArgs {
 }
 
 fn main() -> Result<()> {
-    ck_observability::init_observability(ck_observability::ObservabilityRuntimeConfig {
-        log_format: "text".to_string(),
-        otel_endpoint: None,
-        service_name: "context-kernal".to_string(),
-    })
-    .ok();
-
     let cli = Cli::parse();
     match cli.command {
         Commands::Serve(args) => serve(args),
@@ -64,11 +60,13 @@ fn main() -> Result<()> {
             println!("{}", SqliteStore::schema_sql());
             Ok(())
         }
+        Commands::RebuildIndex(args) => rebuild_index(args),
     }
 }
 
 fn serve(args: RuntimeArgs) -> Result<()> {
     let (store, config) = open_store(&args)?;
+    init_logging(&config);
     store.migrate()?;
 
     let data_dir = args.data_dir.clone().unwrap_or_else(|| {
@@ -132,8 +130,9 @@ fn serve(args: RuntimeArgs) -> Result<()> {
     // unconfigured, rather than disabling the whole server).
     let context_agent = build_context_agent();
     let mut service = Arc::new(match context_agent {
-        Some(agent) => McpService::with_app_and_auth(status, app, mcp_auth.clone())
-            .with_context_agent(agent),
+        Some(agent) => {
+            McpService::with_app_and_auth(status, app, mcp_auth.clone()).with_context_agent(agent)
+        }
         None => McpService::with_app_and_auth(status, app, mcp_auth.clone()),
     });
 
@@ -143,17 +142,34 @@ fn serve(args: RuntimeArgs) -> Result<()> {
 
     let sse_reload_state: Option<std::sync::Arc<ck_transport_sse::ReloadableSseState>> =
         if enable_sse {
+            // Bind the TCP listener on the main thread so a bind failure fails
+            // startup instead of being swallowed inside the spawned thread
+            // (which previously left a "started" log with no live endpoint).
+            let std_listener = std::net::TcpListener::bind(sse_bind)
+                .map_err(|e| anyhow::anyhow!("failed to bind SSE listener on {sse_bind}: {e}"))?;
+            // tokio's from_std requires a non-blocking socket; set it here
+            // (the property survives the move into the spawned runtime thread).
+            std_listener
+                .set_nonblocking(true)
+                .map_err(|e| anyhow::anyhow!("failed to set SSE listener non-blocking: {e}"))?;
+
             let state = std::sync::Arc::new(ck_transport_sse::ReloadableSseState::new(
                 service.clone(),
                 mcp_auth.clone(),
             ));
             let state_clone = state.clone();
-            let sse_bind_owned = sse_bind.to_string();
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-                rt.block_on(async {
-                    if let Err(e) = ck_transport_sse::serve_sse(state_clone, &sse_bind_owned).await
-                    {
+                rt.block_on(async move {
+                    // Convert inside the runtime: from_std registers with the reactor.
+                    let listener = match tokio::net::TcpListener::from_std(std_listener) {
+                        Ok(l) => l,
+                        Err(e) => {
+                            tracing::error!(error = %e, "failed to register SSE listener");
+                            return;
+                        }
+                    };
+                    if let Err(e) = ck_transport_sse::serve_sse(state_clone, listener).await {
                         tracing::error!(error = %e, "SSE server error");
                     }
                 });
@@ -252,20 +268,31 @@ fn serve(args: RuntimeArgs) -> Result<()> {
                         &reloaded.retrieval.default_mode,
                         reload_semantic_enabled,
                     )?;
-                    service = Arc::new(McpService::with_app(reload_status, reload_app));
+                    // Preserve auth policy + ACL context agent across reload.
+                    // Previously this used `with_app`, which set the service's
+                    // internal auth to None — so after the first reload SSE's
+                    // tool/corpus allowlist checks silently passed.
+                    let reload_mcp_auth: Arc<dyn AuthPort> = if reloaded.mcp.sse.require_auth {
+                        Arc::new(BearerAuth::with_policy(
+                            reloaded.auth.tokens.clone(),
+                            false,
+                            reloaded.authorization.allow_tools.clone(),
+                            reloaded.authorization.allow_corpora.clone(),
+                        ))
+                    } else {
+                        Arc::new(BearerAuth::no_auth())
+                    };
+                    let mut reloaded_service = McpService::with_app_and_auth(
+                        reload_status,
+                        reload_app,
+                        reload_mcp_auth.clone(),
+                    );
+                    if let Some(agent) = build_context_agent() {
+                        reloaded_service = reloaded_service.with_context_agent(agent);
+                    }
+                    service = Arc::new(reloaded_service);
                     active_config = reloaded;
                     if let Some(sse_state) = &sse_reload_state {
-                        let reload_mcp_auth: Arc<dyn AuthPort> =
-                            if active_config.mcp.sse.require_auth {
-                                Arc::new(BearerAuth::with_policy(
-                                    active_config.auth.tokens.clone(),
-                                    false,
-                                    active_config.authorization.allow_tools.clone(),
-                                    active_config.authorization.allow_corpora.clone(),
-                                ))
-                            } else {
-                                Arc::new(BearerAuth::no_auth())
-                            };
                         sse_state.replace_service(service.clone());
                         sse_state.replace_auth(reload_mcp_auth);
                         tracing::info!("SSE state reloaded with new config");
@@ -283,14 +310,28 @@ fn serve(args: RuntimeArgs) -> Result<()> {
 }
 
 fn migrate(args: RuntimeArgs) -> Result<()> {
-    let (store, _) = open_store(&args)?;
+    let (store, config) = open_store(&args)?;
+    init_logging(&config);
     store.migrate()?;
     println!("migrated {}", store.status()?.path);
     Ok(())
 }
 
+fn rebuild_index(args: RuntimeArgs) -> Result<()> {
+    let (store, config) = open_store(&args)?;
+    init_logging(&config);
+    store.migrate()?;
+    let (chunks, events, aliases) = store.rebuild_fts_index()?;
+    println!(
+        "rebuilt FTS index: {} chunks, {} session_events, {} aliases",
+        chunks, events, aliases
+    );
+    Ok(())
+}
+
 fn doctor(args: RuntimeArgs) -> Result<()> {
-    let (store, _) = open_store(&args)?;
+    let (store, config) = open_store(&args)?;
+    init_logging(&config);
     store.migrate()?;
     let status = store.status()?;
     println!(
@@ -298,6 +339,17 @@ fn doctor(args: RuntimeArgs) -> Result<()> {
         status.kind, status.path, status.fts5_enabled
     );
     Ok(())
+}
+
+/// Install the process-wide tracing subscriber from configuration so spawned
+/// threads (SSE, refresh) emit logs too. Called once per subcommand, after
+/// config load. `set_global_default` is idempotent for our purposes.
+fn init_logging(config: &ck_config::KernelConfig) {
+    let _ = ck_observability::init_observability(ck_observability::ObservabilityRuntimeConfig {
+        log_format: config.observability.log_format.clone(),
+        otel_endpoint: config.observability.otel_endpoint.clone(),
+        service_name: config.service.name.clone(),
+    });
 }
 
 fn open_store(args: &RuntimeArgs) -> Result<(SqliteStore, ck_config::KernelConfig)> {
@@ -330,6 +382,13 @@ fn wire_app(
         Box::new(FilesystemSourceAdapter),
         Box::new(MarkdownNormalizer),
         Box::new(HeadingChunker),
+    )
+    // Kind-selected ingestion: the learning-proposals ledger corpus goes
+    // through the real pipeline (discovery + fetch + normalization +
+    // chunking + FTS + ranking), not an ad hoc reader.
+    .with_source_adapter_kind(
+        "learning_proposals_jsonl",
+        Box::new(LearningProposalsAdapter),
     );
 
     // Wire semantic retrieval when configured
@@ -361,16 +420,30 @@ fn wire_app(
         );
     }
 
+    // Settlement-backed context-effect ledger (prospective retrieval
+    // calibration). CK_CONTEXT_EFFECT_LEDGER names the append-only JSONL
+    // ledger; unset = calibration disabled (never faked).
+    if let Some(ledger) = std::env::var("CK_CONTEXT_EFFECT_LEDGER")
+        .ok()
+        .filter(|s| !s.is_empty())
+    {
+        app = app.with_context_effect_store(ck_app::ContextEffectStore::new(ledger));
+    }
+
     Ok(app)
 }
 
 /// WP-5 (F-05): build the ACL context agent from env-configured paths.
-/// `CK_CONTEXT_CORPUS_ROOT` enables filesystem-corpus citation; the optional
+/// `CK_CONTEXT_CORPUS_ROOT` enables filesystem-corpus citation (auto-ingested
+/// into the real retrieval pipeline on first use); the optional
 /// `CK_LEARNING_PROPOSALS_LEDGER` adds the GodSpeed-Agent learning-proposals
-/// corpus. Returns None when neither is set (the `context_required` tool then
-/// reports itself as unconfigured).
+/// corpus through the real `LearningProposalsAdapter`. Returns None when
+/// neither is set (the `context_required` tool then reports itself as
+/// unconfigured).
 fn build_context_agent() -> Option<AclContextAgent> {
-    let corpus_root = std::env::var("CK_CONTEXT_CORPUS_ROOT").ok().filter(|s| !s.is_empty());
+    let corpus_root = std::env::var("CK_CONTEXT_CORPUS_ROOT")
+        .ok()
+        .filter(|s| !s.is_empty());
     let learning_ledger = std::env::var("CK_LEARNING_PROPOSALS_LEDGER")
         .ok()
         .filter(|s| !s.is_empty())

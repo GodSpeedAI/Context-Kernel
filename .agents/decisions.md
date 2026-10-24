@@ -1,5 +1,71 @@
 # Decisions
 
+## Decision: Technical Knowledge System Information Architecture
+- Date: 2026-09-02
+- Context: The repository required comprehensive documentation serving both newcomers (high-level mental models) and experienced engineers (subsystem depth, invariants, code traceability) without compromising either audience.
+- Decision: Adopt a unified information architecture combining Diátaxis (Tutorials, How-To, Reference, Explanation), DeepWiki (architecture-first, subsystem guides, execution traces, Mermaid diagrams), and Google Code Wiki (symbol-level source traceability in `docs/source-map.md`). Structure documentation across 9 progressive disclosure layers (Layers 0 to 8).
+- Alternatives considered:
+  - Single monolithic README or wiki page (rejected: overwhelms newcomers and lacks searchable precision for experts).
+  - Pure Diátaxis 4-folder dump (rejected: fails to capture architectural decomposition, subsystem boundaries, and execution traces).
+- Evidence in codebase: `docs/README.md`, `docs/documentation-map.md`, `docs/architecture.md`, `docs/source-map.md`, `docs/subsystems/*`, `docs/workflows/*`, `docs/explanation/*`, `docs/tutorials/*`, `docs/how-to/*`, `docs/reference/*`.
+- Consequences: All architectural claims are grounded in repository code; verified behavior is explicitly separated from unwired library crates (GitHub/Web adapters) and tracked debt; documentation is navigable by intent.
+
+## Decision: Adopt Workflow-and-Permissions governance in AGENTS.md
+- Date: 2026-08-24
+- Context: The prior six-step Agent Workflow prescribed generic inspect-plan-implement-verify-update steps without permission gates, handoff discipline, or build-resource rules.
+- Decision: Replace Agent Workflow with an explicit Workflow and Permissions section plus a Handoff section including build-lock and artifact discipline. Keep evidence-priority ordering under Implementation Verification Rules. Extend required memory files with `.agents/LESSONS.md` and `.agents/current_status.yml`; retire the empty CURRENT_STATUS.md template.
+- Alternatives considered: Appending the new sections alongside the old workflow (rejected: leaves two competing workflows); verbatim adoption of OPEN_QUESTIONS.md naming from the source approach (rejected: diverges from the established lowercase `open_questions.md` used throughout this repository).
+- Evidence in codebase: AGENTS.md sections "Workflow and Permissions" and "Handoff", required-files list, templates; `.agents/current_status.yml`; `.agents/LESSONS.md`.
+- Consequences: Agents must gate risky changes behind user approval, maintain resumable handoff state in current_status.yml, respect the single-writer Cargo build lock; `just context-check` is mandated before a justfile recipe for it exists.
+
+## Decision: Audit depth and focus
+- Date: 2026-07-29
+- Context: Repository-wide audit covers 19 crates, remote auth, persistent state, concurrency, and architectural claims.
+- Decision: Use Deep depth; trace SSE reload authorization, ACL corpus retrieval, and storage/FTS writes in detail.
+- Alternatives considered: shallow line-by-line scan; rejected (lower semantic tracing quality).
+- Evidence: `Cargo.toml:1-23`; depth triggers in `.agents/skills/neatcode/SKILL.md`.
+- Consequences: Report is explicit about examined and unexamined runtime properties.
+
+## Decision: Subagent-driven implementation on disjoint crates
+- Date: 2026-07-29
+- Context: Audit corrections span isolated crates plus interdependent ck-bin/ck-transport-sse lifecycle code.
+- Decision: Dispatch 5 implementer subagents in parallel ONLY on disjoint files (no shared-file conflicts); do the auth-reload + observability + SSE-bind work directly where full context and lowest risk are required. Skip per-task reviewer dispatch as disproportionate to surgical, fully-specified fixes; consolidate verification centrally.
+- Alternatives considered: full SDD ceremony (task-brief scripts, per-task review packages) — excessive overhead for surgical fixes; sequential manual edits — slower, more controller-context.
+- Evidence: git diff shows 9 disjoint files; each subagent ran its crate's tests green.
+- Consequences: faster, lower controller-context use; correctness hinges on consolidated verification (done: 206 tests, clippy, fmt green).
+
+## Decision: Defer lower-consequence / higher-risk findings
+- Date: 2026-07-29
+- Context: Several audit findings are feature-wiring or refactor work (GitHub/web adapter wiring, scheduler ownership, broad StoragePort split, full FTS transactional atomicity, graceful shutdown) with integration risk disproportionate to their severity.
+- Decision: Implement all S1 security/data-integrity fixes and the operational S2 fixes; DEFER the above as documented debt (named in OBSERVED_DEBT + harden report) rather than destabilize the working ingestion/runtime paths.
+- Alternatives considered: wire GitHub/web via kind-based adapter selection — requires `AppServices` to take multiple adapters (design change); rejected this pass.
+- Evidence: harden report "Open / deferred" section; `AppServices::new` signature takes a single `source_adapter`.
+- Consequences: README still overstates runtime adapter support; FTS can be partially inconsistent after a crash; these are tracked, not silent.
+
+## Decision: SSE bind in main thread; non-blocking + from_std in worker
+- Date: 2026-07-29
+- Context: Making SSE bind failure fail startup requires binding in the main thread, but `tokio::net::TcpListener::from_std` needs (a) a non-blocking socket and (b) a live tokio reactor.
+- Decision: bind `std::net::TcpListener` + `set_nonblocking(true)` in main; move it into the spawned runtime thread and call `from_std` there (reactor present). Convert `serve_sse` to accept a pre-bound listener.
+- Alternatives considered: bind inside `serve_sse` async (original — swallowable failure); bind+from_std both in main (panics: no reactor).
+- Evidence: repro showed `from_std` panics on blocking socket and on missing reactor; both resolved by split.
+- Consequences: bind collision now fails the process (non-zero); tested by `sse_bind_failure_fails_startup`.
+
+## Decision: Dependency order for deferred harden debt
+- Date: 2026-07-29
+- Context: The report listed eight items by risk, but current code shows shared trait, transaction, and composition boundaries.
+- Decision: Extract the ACL corpus port before server policy; define atomic index writes before splitting `StoragePort`; wire source pipelines before scheduler ownership; establish scheduler ownership before worker shutdown; honor/remove transport config only after shutdown/join exists.
+- Alternatives considered: preserve report order; rejected because it would implement validation on the adapter bypass, rewrite storage traits twice, and join a refresh loop that scheduler composition later replaces.
+- Evidence in codebase: `crates/ck-mcp/src/agentic_capability_loop.rs:191-380`, `crates/ck-app/src/lib.rs:338-434`, `crates/ck-core/src/ports/storage.rs:6-88`, `crates/ck-bin/src/main.rs:135-305`.
+- Consequences: Tasks 1 and 3 can begin independently, but core exports and binary composition are serialized; no deferred item is considered resolved until its failing-first gate passes.
+
+## Decision: Context Kernel enforces but does not create action authority
+- Date: 2026-07-29
+- Context: The audit proposed validating caller scope through `AuthPort`, while the controlling relationship documents assign protected-action authority exclusively to SEA-Forge.
+- Decision: Context Kernel keeps bearer/tool/corpus admission as defense in depth, derives corpus protection from canonical metadata, and permits protected reads only after cryptographically verifying a signed SEA `AuthorityChecked` envelope. It emits retrieval evidence, not an independent authority decision.
+- Alternatives considered: local scope-token policy or caller claims; rejected because both make Context Kernel a competing authority owner.
+- Evidence in codebase: current violation at `crates/ck-mcp/src/agentic_capability_loop.rs:191-263`; controlling boundary at `/home/sprime01/projects/godspeed_agent/docs/explanations/SEA_Forge_to_godspeed_agent.md:25-55`.
+- Consequences: SEA/SWE generated contracts must change before CK implementation; protected unscoped search excludes protected/unknown corpora before search.
+
 ## Decision: Implement Milestone 10 as hardening primitives without schema version bump
 - Date: 2026-06-02 10:05 EDT
 - Context: Milestone 10 requires config reload, retention GC, authz by corpus/tool, telemetry, release docs, install docs, and CI examples. Existing schema already has enough timestamp/status columns for retention deletion.
@@ -215,6 +281,43 @@
 - Alternatives considered: Joining through documents table at query time; rejected as slower for vector search. Separate index table; rejected as redundant.
 - Evidence in codebase: `crates/ck-vector/src/lib.rs`.
 - Consequences: Vector search respects data boundaries; remove_chunk_embeddings_by_document enables clean document deletion.
+
+## Decision: Context packets pin world_ref and state retrieval completeness
+- Date: 2026-10-05
+- Context: CEP-0008 world_ref migration Stage 9. Packets carried only a bare `domain_model_hash`, and a packet cut off at `max_results` looked identical to a complete one.
+- Decision: `ContextRequired` ingress requires a well-formed `world_ref` (syntax only; no digest recomputation). The packet echoes it unchanged and carries `retrieval_completeness` (complete/partial/none) plus machine-readable `omissions`. Hitting the cap with a further match, or truncating citation content, is `partial`.
+- Alternatives considered: deriving `world_ref` from `domain_model_hash` (rejected: different identity scheme, DomainForge owns it); making `world_ref` optional (rejected: fail-closed on consequential paths).
+- Evidence in codebase: `crates/ck-mcp/src/agentic_capability_loop.rs`, `crates/ck-mcp/tests/acl_context_agent.rs`, governing spec `.agents/specs/cep-world-ref-migration.spec.md` in the sea-rs migration worktree.
+
+## Decision: The CEP `godspeed.context_bundle` envelope is the ONE canonical cross-system context artifact (2026-10-07)
+- Context: CK crossed the GodSpeed boundary with a proprietary `ContextPacketCreated` payload; SWE_SEED/SEA-Forge consumed only that legacy wire. The task mandates CEP-0008 `godspeed.context_bundle` v1.0.0 as the boundary representation, dual-read/single-write migration, and no parallel packet protocol.
+- Decision: `context_required` emits the CEP envelope (integrity-stamped) as canonical and keeps the legacy `context_envelope`/`context_packet` as a deprecated dual-read window. SWE_SEED adjudicates the bundle first (kind/profile/world/correlation/completeness/integrity) and binds `context_bundle_ref` into E4/E7; SEA-Forge records it on `GovernedWorkIntent`; sxr carries it into E8. Legacy identity (`context_packet_ref`) stays as long as SEA-Forge's intake requires it.
+- Alternatives: a second CK wire schema (rejected — parallel protocol); dropping legacy immediately (rejected — breaks SEA-Forge intake + SWE_SEED tests mid-migration).
+- Evidence: `crates/ck-mcp/src/cep_bundle.rs`, `crates/swe-seed-core/src/federation/context_bundle.rs`, SEA-Forge `governed_work_ingress.rs` 4c gate, `scripts/e2e-world-loop.sh` EXIT=0.
+- Consequences: future consumers bind `envelope_id` (occurrence), `integrity.content_hash` (content), `scope.world_ref` (semantic world) as three separate identities.
+
+## Decision: Canonical bundle hashes normalize floats (2026-10-07)
+- Context: serde_json's fast float parser drifts 1 ULP on long float spellings, so a bundle's integrity hash did not recompute after any parse round-trip (e2e hop 2 `integrity mismatch`).
+- Decision: `canonical_json`/`bundle_content_hash` normalize every float to 6 decimals and flatten `-0.0` before hashing, identically on CK and SWE_SEED. Documented as a MUST for any consumer recomputing hashes.
+- Evidence: `ck-mcp::cep_bundle::canonical_json`, `context_bundle::bundle_content_hash`, `context_bundle_adjudication.rs` tamper tests.
+- Consequences: hash stability across languages/parsers; scores round to 1e-6 in hashed space.
+
+## Decision: Context access is not action authority (2026-10-07)
+- Context: legacy code/docs emitted `ContextAuthorized` with `allow`/`deny` (POL-ACL-002), colliding with SEA-Forge's authority vocabulary.
+- Decision: CK reports context ACCESS (`accessible`/`inaccessible`/`requires_scope`) only; the Python integration shim emits `ContextAccessEvaluated`; docs updated. SEA-Forge remains the only action-authority producer.
+- Consequences: no `allow/deny/escalate` semantics remain in CK; bundle `access` never implies capability.
+
+## Decision: Retrieval contract is ranked excerpts with resolvable locators (2026-10-07)
+- Context: the legacy packet carried raw file content with a 500-char truncation rule (`citation_content_truncated` omission); the real pipeline chunks/normalizes documents.
+- Decision: the bounded representation is ranked excerpts + locator (`target_uri_or_id` + anchor + `target_hash` + `target_version`); excerpt truncation is a per-reference `content_truncated` limitation, NOT a retrieval-completeness omission. Completeness covers retrieval coverage (results/budgets/freshness/concepts).
+- Evidence: `acl_context_agent.rs::excerpt_truncation_is_a_reference_limitation_not_a_retrieval_omission`.
+- Consequences: complete remains achievable for short and long documents; full text resolves at the cited locator.
+
+## Decision: Settlement-backed Context Effect ledger for retrieval calibration (2026-10-07)
+- Context: post-settlement feedback needed without building a second developmental-memory/capability system.
+- Decision: append-only JSONL `ContextEffectStore` (CK_CONTEXT_EFFECT_LEDGER), ingestion only with a settlement/evidence `evidence_ref` (self-reports rejected), world-scoped, idempotent by `effect_id`; only `source_contradicted`/`source_stale` demote future retrieval; historical bundles never rewritten.
+- Evidence: `ck-app/src/context_effect.rs`, `context_calibration.rs` tests, `ingest_context_effects` MCP tool.
+- Consequences: SWE_SEED must send `world_ref` (Stage 9, same migration). Legacy requests without it are refused.
 
 ## Decision: Reuse existing .agents/ for Devin
 - Date: 2026-10-13

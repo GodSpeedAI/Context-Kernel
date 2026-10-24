@@ -113,10 +113,54 @@ impl LexicalSearchPort for FtsSearch {
         limit: i64,
     ) -> Result<Vec<ScoredItem>> {
         let conn = self.conn()?;
+
+        // An empty/whitespace query is a browse request over the selected
+        // scope (bounded by `limit`), not a refusal: rank-neutral chunk
+        // enumeration with the same corpus/library filters. This is what a
+        // context requirement with no query text resolves against.
         let fts_expr = match Self::fts_query(query) {
-            Some(e) => e,
-            None => return Ok(Vec::new()),
+            Some(e) => Some(e),
+            None => {
+                let (sql, params): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) =
+                    match (corpus_id, library_id) {
+                        (Some(cid), Some(lid)) => (
+                            "SELECT c.chunk_id, 0.0 \
+                             FROM chunks c \
+                             JOIN documents d ON c.document_id = d.document_id \
+                             WHERE c.corpus_id = ? AND d.library_id = ? \
+                             ORDER BY c.chunk_id LIMIT ?",
+                            vec![
+                                Box::new(cid.to_string()),
+                                Box::new(lid.to_string()),
+                                Box::new(limit),
+                            ],
+                        ),
+                        (Some(cid), None) => (
+                            "SELECT chunk_id, 0.0 \
+                             FROM chunks \
+                             WHERE corpus_id = ? \
+                             ORDER BY chunk_id LIMIT ?",
+                            vec![Box::new(cid.to_string()), Box::new(limit)],
+                        ),
+                        (None, Some(lid)) => (
+                            "SELECT c.chunk_id, 0.0 \
+                             FROM chunks c \
+                             JOIN documents d ON c.document_id = d.document_id \
+                             WHERE d.library_id = ? \
+                             ORDER BY c.chunk_id LIMIT ?",
+                            vec![Box::new(lid.to_string()), Box::new(limit)],
+                        ),
+                        (None, None) => (
+                            "SELECT chunk_id, 0.0 FROM chunks ORDER BY chunk_id LIMIT ?",
+                            vec![Box::new(limit)],
+                        ),
+                    };
+                let items = Self::collect_scored(&conn, sql, params)?;
+                debug!(count = items.len(), "FTS chunk browse complete");
+                return Ok(items);
+            }
         };
+        let fts_expr = fts_expr.expect("Some branch handled above");
 
         let (sql, params): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) =
             match (corpus_id, library_id) {

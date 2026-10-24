@@ -240,6 +240,9 @@ pub fn validate_url_with_resolver(
     } else {
         match resolver.resolve(host) {
             Ok(ips) => {
+                if ips.is_empty() {
+                    bail!("host {} did not resolve to any IP address", host);
+                }
                 for ip in ips {
                     if is_private_ip(&ip) {
                         bail!(
@@ -251,7 +254,7 @@ pub fn validate_url_with_resolver(
                 }
             }
             Err(e) => {
-                tracing::warn!(host = host, error = %e, "DNS resolution failed for URL host");
+                bail!("DNS resolution failed for host {}: {}", host, e);
             }
         }
     }
@@ -541,21 +544,24 @@ mod tests {
     #[test]
     fn discover_units_returns_correct_units() {
         let adapter = WebSourceAdapter;
+        // Public IP-literal URL: avoids any DNS lookup so the test is offline
+        // and deterministic (the unit-construction behavior under test does not
+        // depend on resolution).
         let config = serde_json::json!({
-            "urls": ["https://docs.example.com/page1", "https://docs.example.com/page2"],
+            "urls": ["https://93.184.216.34/page1", "https://93.184.216.34/page2"],
             "max_depth": 1
         })
         .to_string();
 
         let units = adapter.discover_units("src1", &config).unwrap();
         assert_eq!(units.len(), 2);
-        assert_eq!(units[0].external_id, "https://docs.example.com/page1");
+        assert_eq!(units[0].external_id, "https://93.184.216.34/page1");
         assert_eq!(
             units[0].uri,
-            Some("https://docs.example.com/page1".to_string())
+            Some("https://93.184.216.34/page1".to_string())
         );
         assert_eq!(units[0].mime_type_hint, Some("text/html".to_string()));
-        assert_eq!(units[1].external_id, "https://docs.example.com/page2");
+        assert_eq!(units[1].external_id, "https://93.184.216.34/page2");
     }
 
     #[test]
@@ -648,7 +654,8 @@ mod tests {
 
     #[test]
     fn ssrf_allows_public_https() {
-        let result = validate_url("https://docs.example.com/page", &[]);
+        let resolver = StaticResolver::new("docs.example.com", "93.184.216.34");
+        let result = validate_url_with_resolver("https://docs.example.com/page", &[], &resolver);
         assert!(result.is_ok());
     }
 
@@ -661,14 +668,18 @@ mod tests {
     #[test]
     fn ssrf_respects_allowed_domains_match() {
         let allowed = vec!["docs.example.com".to_string()];
-        let result = validate_url("https://docs.example.com/page", &allowed);
+        let resolver = StaticResolver::new("docs.example.com", "93.184.216.34");
+        let result =
+            validate_url_with_resolver("https://docs.example.com/page", &allowed, &resolver);
         assert!(result.is_ok());
     }
 
     #[test]
     fn ssrf_respects_allowed_domains_subdomain() {
         let allowed = vec!["example.com".to_string()];
-        let result = validate_url("https://docs.example.com/page", &allowed);
+        let resolver = StaticResolver::new("docs.example.com", "93.184.216.34");
+        let result =
+            validate_url_with_resolver("https://docs.example.com/page", &allowed, &resolver);
         assert!(result.is_ok());
     }
 
@@ -823,7 +834,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_url_with_resolver_allows_unresolvable_host() {
+    fn validate_url_with_resolver_rejects_unresolvable_host() {
         struct EmptyResolver;
         impl DnsResolver for EmptyResolver {
             fn resolve(
@@ -838,7 +849,32 @@ mod tests {
             &[],
             &EmptyResolver,
         );
-        assert!(result.is_ok());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("did not resolve to any IP address"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn validate_url_with_resolver_fails_closed_on_resolver_error() {
+        struct FailingResolver;
+        impl DnsResolver for FailingResolver {
+            fn resolve(
+                &self,
+                host: &str,
+            ) -> Result<Vec<IpAddr>, Box<dyn std::error::Error + Send + Sync>> {
+                Err(format!("simulated resolution failure for {}", host).into())
+            }
+        }
+        let result = validate_url_with_resolver("https://example.com/", &[], &FailingResolver);
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("DNS resolution failed for host"),
+            "got: {}",
+            err
+        );
     }
 
     #[test]

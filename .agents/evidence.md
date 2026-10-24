@@ -1,5 +1,144 @@
 # Evidence Log
 
+## Technical Knowledge System (IMPLEMENTED)
+- Claim: The repository contains a self-contained, Diátaxis-structured, progressive-disclosure technical knowledge system with DeepWiki architecture guides and Google Code Wiki source traceability.
+- Status: implemented
+- Evidence type: documentation, code, config, schema, test
+- Files:
+  - Navigation & Index: `docs/README.md`, `docs/documentation-map.md`, `docs/architecture.md`, `docs/source-map.md`
+  - Foundations: `docs/mental-model.md`, `docs/concepts.md`
+  - Subsystems: `docs/subsystems/core-and-domain.md`, `docs/subsystems/storage-and-persistence.md`, `docs/subsystems/retrieval-and-ranking.md`, `docs/subsystems/source-adapters.md`, `docs/subsystems/application-orchestration.md`, `docs/subsystems/mcp-and-protocols.md`, `docs/subsystems/runtime-and-cli.md`
+  - Workflows: `docs/workflows/service-lifecycle-and-startup.md`, `docs/workflows/documentation-ingestion-and-refresh.md`, `docs/workflows/reference-query-and-resolution.md`, `docs/workflows/session-context-continuity.md`, `docs/workflows/agentic-capability-loop.md`
+  - Explanation: `docs/explanation/architectural-decisions.md`, `docs/explanation/retrieval-and-ranking-design.md`, `docs/explanation/retention-and-memory-model.md`, `docs/explanation/known-limits-and-debt.md`
+  - Tutorials: `docs/tutorials/01-first-steps.md`, `docs/tutorials/02-local-documentation-indexing.md`
+  - How-To Guides: `docs/how-to/configure-sse-with-auth.md`, `docs/how-to/manage-database-and-migrations.md`, `docs/how-to/configure-semantic-retrieval.md`, `docs/how-to/implement-a-source-adapter.md`
+  - Reference: `docs/reference/cli.md`, `docs/reference/configuration.md`, `docs/reference/mcp-tools.md`, `docs/reference/database-schema.md`, `docs/troubleshooting.md`
+- Notes: All documented traits, structs, tables, tools, and error codes are verified against crate implementations and tests; unwired adapters and residual debts are explicitly acknowledged rather than asserted as implemented.
+- Confidence: high
+
+## Architecture
+- Claim: Primary crate dependency direction mostly conforms to ports and adapters.
+- Status: partial (unchanged this pass)
+- Evidence type: code, config
+- Files: `crates/ck-core/Cargo.toml`, `crates/ck-app/Cargo.toml`, `crates/ck-bin/src/main.rs`, `crates/ck-mcp/Cargo.toml`
+- Notes: ACL context path still depends directly on `ck-adapter-filesystem` (deferred).
+- Confidence: high
+
+## SQLite enum round-trips (RESOLVED)
+- Claim: All domain enum variants now round-trip through SQLite.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-storage-sqlite/src/lib.rs`
+- Test: `enum_roundtrips_all_writable_variants` (added)
+- Confidence: high
+
+## Reload auth + context agent (RESOLVED)
+- Claim: Config reload now preserves tool/corpus authorization policy and the ACL context agent.
+- Status: implemented
+- Evidence type: code, integration test
+- Files: `crates/ck-bin/src/main.rs`
+- Test: `sse_reload_preserves_tool_authorization` — disallowed tool rejected after reload; allowed tool still succeeds.
+- Confidence: high
+
+## context_required auth + containment (RESOLVED)
+- Claim: `context_required` corpus id is checked against the allowlist; corpus paths are contained under corpus_root.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-mcp/src/lib.rs`, `crates/ck-mcp/src/agentic_capability_loop.rs`
+- Tests: `context_required_corpus_id_uses_authorization_arm`, `context_required_rejects_path_traversal_outside_corpus_root`
+- Residual: `is_private`/`scope_claim` still client-trusted (mitigated by allowlist + containment).
+- Confidence: high
+
+## Write consistency (MITIGATED)
+- Claim: Refresh no longer accumulates duplicates; payload compensated on metadata-write failure.
+- Status: partial
+- Evidence type: code, test
+- Files: `crates/ck-app/src/lib.rs`
+- Tests: `refresh_does_not_accumulate_duplicate_documents`; payload-compensation path in `store_context`.
+- Residual: FTS↔DB still non-transactional (separate connections).
+- Confidence: high
+
+## SSRF fail-closed (RESOLVED)
+- Claim: `validate_url_with_resolver` bails on resolver Err and empty resolution.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-adapter-web/src/lib.rs`
+- Tests: `validate_url_with_resolver_fails_closed_on_resolver_error`, `…rejects_unresolvable_host`; 4 bug-ratifying tests corrected.
+- Confidence: high
+
+## Observability (RESOLVED)
+- Claim: Subscriber installed process-wide; config-driven.
+- Status: implemented
+- Evidence type: code
+- Files: `crates/ck-observability/src/lib.rs`, `crates/ck-bin/src/main.rs` (`init_logging`)
+- Confidence: high
+
+## SSE lifecycle (MITIGATED)
+- Claim: SSE bind failure fails startup; readiness probes the live service.
+- Status: partial
+- Evidence type: code, test
+- Files: `crates/ck-bin/src/main.rs`, `crates/ck-transport-sse/src/lib.rs`
+- Tests: `sse_bind_failure_fails_startup`, `sse_healthz_endpoint_works`
+- Residual: graceful worker shutdown/join not implemented.
+- Confidence: high
+
+## Freshness (RESOLVED)
+- Claim: `compute_freshness` is age-vs-TTL.
+- Status: implemented
+- Evidence type: code, test
+- Files: `crates/ck-app/src/lib.rs`
+- Test: `compute_freshness_reflects_age_and_ttl`
+- Confidence: high
+
+## Verification gate
+- Claim: Full gate green.
+- Status: implemented
+- Evidence type: test, config
+- Commands: `cargo test --workspace` (213 passed, 0 failed); `cargo clippy --workspace --all-targets -- -D warnings` (clean); `cargo fmt --check` (clean).
+- Notes: baseline was 198 tests; +8 harden, +7 Task 0 evidence = 213. `cargo fmt` touched only edited files. No new runtime dependencies (ck-artifacts/tempfile are dev-only for ck-app).
+- Confidence: high
+
+## Task 0 baseline evidence (audit-corrections plan)
+- Claim: Every retained harden fix has a direct runtime/persistence regression test whose failure exposes the corrected branch.
+- Status: implemented
+- Evidence type: code, test
+- Files: `scripts/run-exact-test.sh`; `crates/ck-storage-sqlite/src/lib.rs`; `crates/ck-app/src/lib.rs`; `crates/ck-app/Cargo.toml`; `crates/ck-bin/tests/cli.rs`
+- Tests (12 gate exact-tests, all green):
+  - `tests::persisted_enums_roundtrip_every_domain_variant` (ck-storage-sqlite) — persists Sse/Pinned/Compacted/DependencyChange/Cancelled through real tables; RED proven by removing `pinned` decoder arm.
+  - `sse_reload_preserves_tool_and_corpus_authorization` (ck-bin cli) — tool deny + corpus deny + context-agent preservation + auth/service atomic swap + reject `require_auth=true` w/ no tokens at startup.
+  - `tests::artifact_payload_is_compensated_on_metadata_failure` (ck-app) — real FileArtifactStore + injectable upsert failure; asserts payload+sidecar deleted; RED proven by commenting out `delete_artifact_payload`.
+  - `json_logging_records_success_and_failure` (ck-bin cli) — JSON stderr for success+error tool telemetry.
+  - `json_logging_covers_sse_and_refresh_threads` (ck-bin cli) — JSON stderr from spawned SSE + refresh threads (proves `set_global_default`).
+  - `sse_readyz_reflects_live_service` (ck-bin cli) — real HTTP GET /readyz returns `{"ready":true}`; /healthz ok.
+  - `tests::compute_freshness_table` (ck-app) — half/exact/past/future/zero/negative TTL.
+  - `tests::context_required_corpus_id_uses_authorization_arm` (ck-mcp) — pre-existing, retained.
+  - `tests::context_required_rejects_path_traversal_outside_corpus_root` (ck-mcp) — pre-existing, retained.
+  - `tests::refresh_does_not_accumulate_duplicate_documents` (ck-app) — pre-existing, retained.
+  - `tests::validate_url_with_resolver_fails_closed_on_resolver_error` (ck-adapter-web) — pre-existing, retained.
+  - `sse_bind_failure_fails_startup` (ck-bin cli) — pre-existing, retained.
+- Notes: RED→GREEN mutation-verified for the two locally-mutable corrections (enum decoder, artifact compensation). Reload-preservation RED is covered by the pre-existing `sse_reload_preserves_tool_authorization` test (same invariant).
+- Confidence: high
+
+## Deferred-debt execution status
+- Claim: All eight items in the harden report's open/deferred section have an implementation stage with a failing-first gate, but none has been implemented by the planning change.
+- Status: not implemented
+- Evidence type: config
+- Files: `.agents/plans/DEV_PLAN_NEATCODE_DEFERRED_DEBT_2026-07-29.md`, `.agents/reports/neatcode-harden-2026-07-29.md:34-42`
+- Notes: Dependency order is ACL resolver port → server policy; atomic writes → storage-port split → adapter wiring → scheduler ownership → graceful shutdown → config semantics.
+- Confidence: high
+
+## Full audit-correction plan
+- Claim: Every correction in the NeatCode audit has a dependency-ordered implementation task constrained by SWE_SEED execution/proof ownership, SEA-Forge action authority, GodSpeed developmental authority, and Context Kernel retrieval ownership.
+- Status: not implemented
+- Evidence type: config
+- Files: `.agents/plans/DEV_PLAN_NEATCODE_AUDIT_CORRECTIONS_2026-07-29.md`, `.agents/reports/neatcode-audit-2026-07-29.md:28-196`, `/home/sprime01/projects/godspeed_agent/docs/explanations/SWE_SEED_to_godspeed_agent.md`, `/home/sprime01/projects/godspeed_agent/docs/explanations/SEA_Forge_to_godspeed_agent.md`
+- Notes: Plan includes RED/GREEN gates, generated-contract correction, signed SEA evidence verification, cross-repository CI, atomic writes, runtime wiring, lifecycle, config, and final conformance.
+- Confidence: high
+
+---
+
+## Historical Evidence (2026-06 deployment-readiness era)
+
 ## Claim: Repository-side Devin configuration
 - Claim: .devin/wiki.json and .devin/blueprint.yaml exist; generated DeepWiki and working Devin snapshot are not yet established.
 - Status: partially implemented
@@ -579,4 +718,34 @@
 - Timestamp/context: 2026-06-02 deployment readiness session
 - Proof classification: release-gate-proof
 - Notes: Binary supports `migrate`, `doctor`, `export-schema`, and `serve` commands. All 18 deployment readiness tasks complete.
+
+## Claim: The GodSpeed context path uses the real CK retrieval pipeline
+- Evidence type: code + test
+- Files: `crates/ck-app/src/context.rs` (`AppServices::resolve_context`), `crates/ck-mcp/src/agentic_capability_loop.rs` (`acquire_context` -> `resolve_context`; ad hoc substring retrieval deleted), `crates/ck-mcp/tests/context_pipeline.rs`
+- Confidence: high
+- Notes: lexical + semantic-when-configured, corpus filtering, private-scope enforcement, trust/freshness, ranking, budgets, deterministic refs all covered by tests through `query_reference`.
+
+## Claim: The cross-system context artifact is a valid CEP `godspeed.context_bundle` v1.0.0 with CEP integrity
+- Evidence type: code + test + snapshot
+- Files: `crates/ck-mcp/src/cep_bundle.rs` (projection, `content_hash`, `verify_envelope_integrity`, `validate_context_bundle`), `crates/ck-mcp/tests/context_bundle_conformance.rs`, `/tmp/e2e-smoke/e3_context_bundle.cep.json` shape, CEP reference validator via `CEP_REPO=/home/sprime01/projects/cep` (green)
+- Confidence: high
+- Notes: complete/partial/none truthful; wrong kind/profile/version, missing/malformed world_ref, falsely-complete, missing omissions, tampered integrity all refused (tests).
+
+## Claim: SWE_SEED consumes the bundle and binds its identity through SEA-Forge and RealityTrace into settlement lineage
+- Evidence type: test
+- Files: `swe-seed-core/src/federation/context_bundle.rs` (adjudication + integrity recompute), `governed_submission.rs` (`context_bundle_ref` on E4), `proof_completed.rs` (E7), SEA-Forge `governed_work_ingress.rs` 4c (`GovernedWorkIntent.context_bundle_ref`), sxr `evidence_emit.rs` (E8), `scripts/e2e-world-loop.sh` run 2026-10-07 EXIT=0
+- Confidence: high
+- Notes: e2e driver asserts bundle identity at hop 2/3; refusals (wrong world, unknown world, denied) all held.
+
+## Claim: Context access semantics no longer duplicate SEA-Forge action authority
+- Evidence type: code + config/docs
+- Files: `ck-app/src/context.rs` (`ContextAccess`), `ck-mcp/src/lib.rs` (response `access`), `docs/mcp-contracts.md`, `integration/agentic_capability_loop/adapters.py` (`ContextAccessEvaluated`)
+- Confidence: high
+- Notes: no allow/deny/escalate vocabulary remains in the CK Rust path.
+
+## Claim: Settlement-backed calibration has a clean prospective path
+- Evidence type: code + test
+- Files: `ck-app/src/context_effect.rs`, `ck-mcp/src/lib.rs` (`ingest_context_effects`), `crates/ck-mcp/tests/context_calibration.rs`
+- Confidence: high
+- Notes: evidence-gated ingestion (self-reports rejected), append-only world-scoped ledger, prospective demotion in `resolve_context`, historical bundles untouched.
 - Confidence: high
