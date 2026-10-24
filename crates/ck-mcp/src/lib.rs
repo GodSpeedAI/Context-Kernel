@@ -527,8 +527,12 @@ impl McpService {
             ));
         }
 
-        let authority_decision_id = payload_obj.get("authority_decision_id").and_then(Value::as_str);
-        let authority_reference = payload_obj.get("authority_reference").and_then(Value::as_str);
+        let authority_decision_id = payload_obj
+            .get("authority_decision_id")
+            .and_then(Value::as_str);
+        let authority_reference = payload_obj
+            .get("authority_reference")
+            .and_then(Value::as_str);
         // Frozen E3 semantics key off REQUIRED context; the tool name already
         // declares the caller's intent, but an explicit flag lets optional
         // acquisitions stay legitimate.
@@ -865,7 +869,9 @@ mod tests {
         let app = ck_app::AppServices::new(
             Box::new(store.clone()),
             Box::new(store.clone()),
-            Box::new(ck_artifacts::FileArtifactStore::new(state_root.join("data"))),
+            Box::new(ck_artifacts::FileArtifactStore::new(
+                state_root.join("data"),
+            )),
             Box::new(ck_search_fts::FtsSearch::open(db_path).unwrap()),
             Box::new(ck_ranker::LexicalRanker),
             Box::new(ck_adapter_filesystem::FilesystemSourceAdapter),

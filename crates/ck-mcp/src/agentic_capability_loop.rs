@@ -160,11 +160,7 @@ impl ContextRequiredPayload {
                 vec![self.corpus_id.clone()]
             },
             constraints: ck_app::SourceConstraints {
-                caller_scope: self
-                    .scope_claim
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect(),
+                caller_scope: self.scope_claim.iter().map(|s| s.to_string()).collect(),
                 exclusions: self.exclusions.clone(),
             },
             freshness: ck_app::FreshnessRequirement {
@@ -334,7 +330,11 @@ impl AclContextAgent {
         let resolution = app.resolve_context(&requirement)?;
 
         let citations: Vec<Citation> = resolution.results.iter().map(result_to_citation).collect();
-        let omissions: Vec<String> = resolution.omissions.iter().map(|o| o.code.clone()).collect();
+        let omissions: Vec<String> = resolution
+            .omissions
+            .iter()
+            .map(|o| o.code.clone())
+            .collect();
         let mut packet = self.packet_for(
             payload,
             citations,
@@ -374,7 +374,10 @@ impl AclContextAgent {
         packet.omissions = vec![reason.as_str().to_string()];
         let resolution = ck_app::ContextResolution::blocked(
             format!("qry_{}", Ulid::new()),
-            requirement.mode.clone().unwrap_or_else(|| "hybrid".to_string()),
+            requirement
+                .mode
+                .clone()
+                .unwrap_or_else(|| "hybrid".to_string()),
             ck_app::ContextAccess::Accessible,
             reason,
             requirement.corpora.clone(),
@@ -424,13 +427,14 @@ impl AclContextAgent {
     ) -> Result<EnsureOutcome, anyhow::Error> {
         if corpus_id.starts_with("learning-proposals") {
             let Some(ledger) = &self.learning_proposals_ledger else {
-                return Ok(EnsureOutcome::Blocked(NoContextReason::CorpusRootUnconfigured));
+                return Ok(EnsureOutcome::Blocked(
+                    NoContextReason::CorpusRootUnconfigured,
+                ));
             };
             if !ledger.exists() {
                 return Ok(EnsureOutcome::Blocked(NoContextReason::CorpusNotFound));
             }
-            let config =
-                serde_json::json!({ "path": ledger.to_str().unwrap_or("") }).to_string();
+            let config = serde_json::json!({ "path": ledger.to_str().unwrap_or("") }).to_string();
             return match app.ingest_source(ck_app::IngestSourceRequest {
                 source_id: format!("learning-proposals:{corpus_id}"),
                 source_kind: "learning_proposals_jsonl".to_string(),

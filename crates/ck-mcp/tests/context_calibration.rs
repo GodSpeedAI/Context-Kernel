@@ -52,8 +52,7 @@ fn seeded_kernel() -> (tempfile::TempDir, tempfile::TempDir, ck_app::AppServices
 }
 
 fn requirement_with_world() -> ck_app::ContextRequirement {
-    serde_json::from_value::<ck_app::ContextRequirement>(json!({}))
-        .ok();
+    serde_json::from_value::<ck_app::ContextRequirement>(json!({})).ok();
     ck_app::ContextRequirement {
         identity: ck_app::RequirementIdentity {
             work_request_ref: "wr_test".into(),
@@ -117,11 +116,15 @@ fn settlement_backed_effects_demote_future_retrieval_prospectively() {
 #[test]
 fn self_reports_are_never_evidence() {
     let (_corpus, kernel, app) = seeded_kernel();
-    let app = app.with_context_effect_store(ContextEffectStore::new(kernel.path().join("effects.jsonl")));
+    let app =
+        app.with_context_effect_store(ContextEffectStore::new(kernel.path().join("effects.jsonl")));
 
     let mut bare = effect(ContextEffectKind::ContextItemUnused, "ctxfs:docs");
     bare.evidence_ref = "".into(); // "this context was useful" is not evidence
-    let mut bogus = effect(ContextEffectKind::DistinctionMaterialToSettlement, "ctxfs:docs");
+    let mut bogus = effect(
+        ContextEffectKind::DistinctionMaterialToSettlement,
+        "ctxfs:docs",
+    );
     bogus.evidence_ref = "agent-self-report:useful".into();
 
     let report = app.ingest_context_effects(&[bare, bogus]).unwrap();
@@ -156,7 +159,8 @@ fn effects_never_cross_worlds_and_reingest_is_idempotent() {
 #[test]
 fn effect_ingestion_refuses_unverifiable_identities() {
     let (_corpus, kernel, app) = seeded_kernel();
-    let app = app.with_context_effect_store(ContextEffectStore::new(kernel.path().join("effects.jsonl")));
+    let app =
+        app.with_context_effect_store(ContextEffectStore::new(kernel.path().join("effects.jsonl")));
     let mut bad_world = effect(ContextEffectKind::SourceContradicted, "ctxfs:docs");
     bad_world.world_ref = "world:alias".into();
     let mut bad_hash = effect(ContextEffectKind::SourceContradicted, "ctxfs:docs");
@@ -174,7 +178,11 @@ fn tool_response_carries_the_canonical_bundle_and_access_semantics() {
     let kernel = tempfile::tempdir().unwrap();
     let docs = corpus.path().join("runbooks");
     fs::create_dir_all(&docs).unwrap();
-    fs::write(docs.join("blue.md"), "Blue-green rotation: canary, verify, promote.").unwrap();
+    fs::write(
+        docs.join("blue.md"),
+        "Blue-green rotation: canary, verify, promote.",
+    )
+    .unwrap();
     let app = test_kernel(kernel.path());
     let agent = AclContextAgent {
         corpus_root: corpus.path().to_path_buf(),

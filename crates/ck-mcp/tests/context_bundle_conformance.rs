@@ -6,7 +6,9 @@
 
 mod common;
 
-use ck_mcp::agentic_capability_loop::{ContextPacketCreatedPayload, NoContextReason, RetrievalCompleteness};
+use ck_mcp::agentic_capability_loop::{
+    ContextPacketCreatedPayload, NoContextReason, RetrievalCompleteness,
+};
 use ck_mcp::cep_bundle::{
     content_hash, to_cep_context_bundle, validate_context_bundle, verify_envelope_integrity,
 };
@@ -16,7 +18,11 @@ const WORLD: &str =
     "world:test@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const NOW: &str = "2026-10-07T12:00:00Z";
 
-fn packet(level: RetrievalCompleteness, citations: usize, omissions: &[&str]) -> ContextPacketCreatedPayload {
+fn packet(
+    level: RetrievalCompleteness,
+    citations: usize,
+    omissions: &[&str],
+) -> ContextPacketCreatedPayload {
     ContextPacketCreatedPayload {
         domain_model_hash: "a".repeat(64),
         world_ref: WORLD.into(),
@@ -76,9 +82,15 @@ fn the_three_states_are_valid_and_truthful() {
         assert_eq!(env["envelope_kind"], "context_bundle");
     }
     // partial and none keep visible what is missing
-    assert_eq!(partial()["omissions"][0]["omission_type"], "max_results_reached");
+    assert_eq!(
+        partial()["omissions"][0]["omission_type"],
+        "max_results_reached"
+    );
     assert_eq!(none()["questions"][0]["question_id"], "req-1");
-    assert!(none().get("references").is_none(), "absence is never dressed up");
+    assert!(
+        none().get("references").is_none(),
+        "absence is never dressed up"
+    );
 }
 
 #[test]
@@ -86,7 +98,10 @@ fn wrong_envelope_kind_is_refused() {
     let mut env = complete();
     env["envelope_kind"] = json!("evidence_packet");
     let errs = validate_context_bundle(&env).unwrap_err();
-    assert!(errs.iter().any(|e| e.contains("wrong envelope kind")), "{errs:?}");
+    assert!(
+        errs.iter().any(|e| e.contains("wrong envelope kind")),
+        "{errs:?}"
+    );
 }
 
 #[test]
@@ -94,12 +109,18 @@ fn wrong_profile_id_and_version_are_refused() {
     let mut env = complete();
     env["extensions"]["cep.profile"]["profile_id"] = json!("godspeed.authority_request");
     let errs = validate_context_bundle(&env).unwrap_err();
-    assert!(errs.iter().any(|e| e.contains("wrong profile id")), "{errs:?}");
+    assert!(
+        errs.iter().any(|e| e.contains("wrong profile id")),
+        "{errs:?}"
+    );
 
     let mut env = complete();
     env["extensions"]["cep.profile"]["profile_version"] = json!("2.0.0");
     let errs = validate_context_bundle(&env).unwrap_err();
-    assert!(errs.iter().any(|e| e.contains("wrong profile version")), "{errs:?}");
+    assert!(
+        errs.iter().any(|e| e.contains("wrong profile version")),
+        "{errs:?}"
+    );
 }
 
 #[test]
@@ -107,12 +128,18 @@ fn missing_or_malformed_world_ref_is_refused() {
     let mut env = complete();
     env["scope"].as_object_mut().unwrap().remove("world_ref");
     let errs = validate_context_bundle(&env).unwrap_err();
-    assert!(errs.iter().any(|e| e.contains("missing world_ref")), "{errs:?}");
+    assert!(
+        errs.iter().any(|e| e.contains("missing world_ref")),
+        "{errs:?}"
+    );
 
     let mut env = complete();
     env["scope"]["world_ref"] = json!("world:corporate"); // mutable alias, not identity
     let errs = validate_context_bundle(&env).unwrap_err();
-    assert!(errs.iter().any(|e| e.contains("malformed world_ref")), "{errs:?}");
+    assert!(
+        errs.iter().any(|e| e.contains("malformed world_ref")),
+        "{errs:?}"
+    );
 }
 
 #[test]
@@ -126,7 +153,8 @@ fn a_falsely_complete_bundle_is_refused() {
     env["integrity"]["content_hash"] = json!(content_hash(&env));
     let errs = validate_context_bundle(&env).unwrap_err();
     assert!(
-        errs.iter().any(|e| e.contains("complete retrieval must not carry omissions")),
+        errs.iter()
+            .any(|e| e.contains("complete retrieval must not carry omissions")),
         "{errs:?}"
     );
 }

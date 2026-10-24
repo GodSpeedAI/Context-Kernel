@@ -17,11 +17,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{AppServices, QueryReferenceRequest};
 use ck_core::entities::{Budget, RetrievalResult};
-use ulid::Ulid;
 use ck_core::types::{
     NoContextReason, RetrievalCompleteness, OMISSION_MAX_RESULTS, OMISSION_REQUIRED_CONCEPT,
     OMISSION_STALE_SOURCE, OMISSION_TOKEN_BUDGET,
 };
+use ulid::Ulid;
 
 /// Identity of one bounded context demand.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,7 +140,6 @@ impl ContextAccess {
     }
 }
 
-
 /// One machine-readable omission of a resolution (projected to CEP
 /// `omissions` at the boundary).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -225,7 +224,6 @@ impl ContextResolution {
         }
     }
 }
-
 
 impl AppServices {
     /// Corpus lookup — needed by boundary adapters for data-access decisions
@@ -342,7 +340,6 @@ impl AppServices {
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
         }
-
 
         // --- 3. Freshness gate (declared freshness requirement) ------------
         let mut omissions: Vec<RetrievalOmission> = Vec::new();
@@ -566,8 +563,7 @@ impl AppServices {
 /// Rough token cost of one retrieval result (whitespace word count).
 fn estimate_result_tokens(r: &RetrievalResult) -> i64 {
     (r.excerpt.split_whitespace().count()
-        + r.title.as_deref().unwrap_or("").split_whitespace().count())
-        as i64
+        + r.title.as_deref().unwrap_or("").split_whitespace().count()) as i64
 }
 
 impl AppServices {
@@ -594,4 +590,3 @@ impl AppServices {
         Ok(report)
     }
 }
-

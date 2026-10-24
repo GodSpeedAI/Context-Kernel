@@ -76,7 +76,6 @@ pub struct ContextEffect {
     pub detail: Option<String>,
 }
 
-
 /// Why an effect could not be ingested.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContextEffectError {
@@ -213,22 +212,18 @@ impl ContextEffectStore {
 
     /// Validate and append one effect. Existing `effect_id`s are skipped
     /// (idempotent); records are never rewritten.
-    pub fn append(
-        &self,
-        effect: &ContextEffect,
-    ) -> Result<bool, ContextEffectError> {
+    pub fn append(&self, effect: &ContextEffect) -> Result<bool, ContextEffectError> {
         effect.validate()?;
         let existing = self.load().unwrap_or_default();
         if existing.iter().any(|e| e.effect_id == effect.effect_id) {
             return Ok(false);
         }
-        let mut line = serde_json::to_string(effect)
-            .map_err(|e| ContextEffectError::Io(e.to_string()))?;
+        let mut line =
+            serde_json::to_string(effect).map_err(|e| ContextEffectError::Io(e.to_string()))?;
         line.push('\n');
         use std::io::Write;
         if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| ContextEffectError::Io(e.to_string()))?;
+            std::fs::create_dir_all(parent).map_err(|e| ContextEffectError::Io(e.to_string()))?;
         }
         let mut file = std::fs::OpenOptions::new()
             .create(true)
@@ -246,8 +241,8 @@ impl ContextEffectStore {
         if !self.path.exists() {
             return Ok(Vec::new());
         }
-        let text =
-            std::fs::read_to_string(&self.path).map_err(|e| ContextEffectError::Io(e.to_string()))?;
+        let text = std::fs::read_to_string(&self.path)
+            .map_err(|e| ContextEffectError::Io(e.to_string()))?;
         let mut out = Vec::new();
         for (i, line) in text.lines().enumerate() {
             if line.trim().is_empty() {

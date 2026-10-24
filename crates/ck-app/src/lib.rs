@@ -160,10 +160,7 @@ impl AppServices {
 
     /// Attach the settlement-backed context-effect ledger so prospective
     /// retrieval calibration is enabled.
-    pub fn with_context_effect_store(
-        mut self,
-        store: context_effect::ContextEffectStore,
-    ) -> Self {
+    pub fn with_context_effect_store(mut self, store: context_effect::ContextEffectStore) -> Self {
         self.context_effects = Some(std::sync::Arc::new(store));
         self
     }

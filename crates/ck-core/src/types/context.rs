@@ -101,23 +101,21 @@ pub fn verify_world_ref(world_ref: &str) -> Result<(), WorldRefError> {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
     // name: [a-z][a-z0-9]*(?:[._-][a-z0-9]+)*, at most 64 chars
     let mut chars = name.chars().peekable();
-    let name_ok = name.len() <= 64
-        && chars.next().is_some_and(|c| c.is_ascii_lowercase())
-        && {
-            let mut prev_sep = false;
-            let mut ok = true;
-            for c in chars.by_ref() {
-                if c.is_ascii_lowercase() || c.is_ascii_digit() {
-                    prev_sep = false;
-                } else if matches!(c, '.' | '_' | '-') && !prev_sep {
-                    prev_sep = true;
-                } else {
-                    ok = false;
-                    break;
-                }
+    let name_ok = name.len() <= 64 && chars.next().is_some_and(|c| c.is_ascii_lowercase()) && {
+        let mut prev_sep = false;
+        let mut ok = true;
+        for c in chars.by_ref() {
+            if c.is_ascii_lowercase() || c.is_ascii_digit() {
+                prev_sep = false;
+            } else if matches!(c, '.' | '_' | '-') && !prev_sep {
+                prev_sep = true;
+            } else {
+                ok = false;
+                break;
             }
-            ok && !prev_sep
-        };
+        }
+        ok && !prev_sep
+    };
     if digest_ok && name_ok {
         Ok(())
     } else {

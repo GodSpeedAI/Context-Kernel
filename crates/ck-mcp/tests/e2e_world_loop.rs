@@ -71,7 +71,10 @@ fn hop_0_context_packet_for_the_requested_work() {
         no_context,
     } = agent.acquire_context(&app, &required, None, None).unwrap();
     assert!(no_context.is_none(), "the corpus has a matching document");
-    assert_eq!(packet.retrieval_completeness, RetrievalCompleteness::Complete);
+    assert_eq!(
+        packet.retrieval_completeness,
+        RetrievalCompleteness::Complete
+    );
     assert_eq!(packet.world_ref, world);
 
     // Legacy E3 envelope (dual-read compatibility for existing consumers).

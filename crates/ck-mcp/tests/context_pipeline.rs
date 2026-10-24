@@ -42,7 +42,6 @@ fn requirement(corpus_id: &str, query: Option<&str>) -> ContextRequirement {
     }
 }
 
-
 /// Index a corpus through the real ingestion path (the GodSpeed agent
 /// auto-ingests before resolving; these tests call the pipeline directly).
 fn ingest(app: &ck_app::AppServices, root: &std::path::Path, corpus_id: &str) {
@@ -68,7 +67,11 @@ fn seed_corpus(root: &std::path::Path, corpus_id: &str, files: &[(&str, &str)]) 
 fn lexical_retrieval_preserves_identity_and_ranking_metadata() {
     let corpus = tempfile::tempdir().unwrap();
     let kernel = tempfile::tempdir().unwrap();
-    seed_corpus(corpus.path(), "docs", &[("policy.md", "# Policy\nBlue-green rotation policy")]);
+    seed_corpus(
+        corpus.path(),
+        "docs",
+        &[("policy.md", "# Policy\nBlue-green rotation policy")],
+    );
     let (app, _store) = test_kernel_with_store(kernel.path());
     ingest(&app, corpus.path(), "docs");
 
@@ -97,10 +100,16 @@ fn lexical_retrieval_preserves_identity_and_ranking_metadata() {
 fn semantic_retrieval_merges_when_configured() {
     let corpus = tempfile::tempdir().unwrap();
     let kernel = tempfile::tempdir().unwrap();
-    seed_corpus(corpus.path(), "docs", &[("a.md", "deploy rotation runbook")]);
+    seed_corpus(
+        corpus.path(),
+        "docs",
+        &[("a.md", "deploy rotation runbook")],
+    );
     let (app, store) = test_kernel_with_store(kernel.path());
     ingest(&app, corpus.path(), "docs");
-    let chunk_id = store.list_chunks_by_corpus("docs").unwrap()[0].chunk_id.clone();
+    let chunk_id = store.list_chunks_by_corpus("docs").unwrap()[0]
+        .chunk_id
+        .clone();
     let app = app.with_semantic(
         Box::new(StubEmbedding),
         Box::new(StubVectorSearch {
@@ -131,7 +140,11 @@ fn semantic_retrieval_merges_when_configured() {
 fn private_corpus_without_scope_is_requires_scope_and_retrieves_nothing() {
     let corpus = tempfile::tempdir().unwrap();
     let kernel = tempfile::tempdir().unwrap();
-    seed_corpus(corpus.path(), "private_docs", &[("s.md", "classified deployment notes")]);
+    seed_corpus(
+        corpus.path(),
+        "private_docs",
+        &[("s.md", "classified deployment notes")],
+    );
     let (app, store) = test_kernel_with_store(kernel.path());
     ingest(&app, corpus.path(), "private_docs");
     let mut c = store.get_corpus("private_docs").unwrap().unwrap();
@@ -159,7 +172,11 @@ fn private_corpus_without_scope_is_requires_scope_and_retrieves_nothing() {
 fn private_corpus_with_explicit_scope_retrieves() {
     let corpus = tempfile::tempdir().unwrap();
     let kernel = tempfile::tempdir().unwrap();
-    seed_corpus(corpus.path(), "private_docs", &[("s.md", "classified deployment notes")]);
+    seed_corpus(
+        corpus.path(),
+        "private_docs",
+        &[("s.md", "classified deployment notes")],
+    );
     let (app, store) = test_kernel_with_store(kernel.path());
     ingest(&app, corpus.path(), "private_docs");
     let mut c = store.get_corpus("private_docs").unwrap().unwrap();
@@ -178,13 +195,19 @@ fn query_reference_rejects_private_corpus_without_scope_too() {
     // POL-ACL-002 at the query_reference gate: a missing scope never grants.
     let corpus = tempfile::tempdir().unwrap();
     let kernel = tempfile::tempdir().unwrap();
-    seed_corpus(corpus.path(), "private_docs", &[("s.md", "classified notes")]);
+    seed_corpus(
+        corpus.path(),
+        "private_docs",
+        &[("s.md", "classified notes")],
+    );
     let (app, store) = test_kernel_with_store(kernel.path());
     ingest(&app, corpus.path(), "private_docs");
     let mut c = store.get_corpus("private_docs").unwrap().unwrap();
     c.visibility = "private".into();
     store.upsert_corpus(&c).unwrap();
-    assert!(matches!(store.get_corpus("private_docs").unwrap(), Some(Corpus { visibility, .. }) if visibility == "private"));
+    assert!(
+        matches!(store.get_corpus("private_docs").unwrap(), Some(Corpus { visibility, .. }) if visibility == "private")
+    );
 
     let err = app.query_reference(ck_app::QueryReferenceRequest {
         canonical_id: Some("private_docs".into()),
@@ -237,7 +260,10 @@ fn budgets_are_enforced_with_explicit_omissions() {
     seed_corpus(
         corpus.path(),
         "docs",
-        &[("a.md", "one two three four five shared"), ("b.md", "six seven eight nine ten shared")],
+        &[
+            ("a.md", "one two three four five shared"),
+            ("b.md", "six seven eight nine ten shared"),
+        ],
     );
     let (app, _store) = test_kernel_with_store(kernel.path());
     ingest(&app, corpus.path(), "docs");
@@ -266,7 +292,10 @@ fn budgets_are_enforced_with_explicit_omissions() {
     });
     let res = app.resolve_context(&req).unwrap();
     assert_eq!(res.completeness, RetrievalCompleteness::None);
-    assert_eq!(res.no_context_reason, Some(NoContextReason::BudgetExhausted));
+    assert_eq!(
+        res.no_context_reason,
+        Some(NoContextReason::BudgetExhausted)
+    );
 }
 
 #[test]
@@ -276,7 +305,11 @@ fn chunk_and_result_limits_cap_the_retrieval() {
     seed_corpus(
         corpus.path(),
         "docs",
-        &[("a.md", "alpha shared"), ("b.md", "beta shared"), ("c.md", "gamma shared")],
+        &[
+            ("a.md", "alpha shared"),
+            ("b.md", "beta shared"),
+            ("c.md", "gamma shared"),
+        ],
     );
     let (app, _store) = test_kernel_with_store(kernel.path());
     ingest(&app, corpus.path(), "docs");
@@ -286,14 +319,21 @@ fn chunk_and_result_limits_cap_the_retrieval() {
     assert_eq!(res.results.len(), 1);
     assert!(res.budget.more_available);
     assert_eq!(res.completeness, RetrievalCompleteness::Partial);
-    assert!(res.omissions.iter().any(|o| o.code == "max_results_reached"));
+    assert!(res
+        .omissions
+        .iter()
+        .any(|o| o.code == "max_results_reached"));
 }
 
 #[test]
 fn references_are_deterministic_for_identical_retrievals() {
     let corpus = tempfile::tempdir().unwrap();
     let kernel = tempfile::tempdir().unwrap();
-    seed_corpus(corpus.path(), "docs", &[("a.md", "alpha shared"), ("b.md", "beta shared")]);
+    seed_corpus(
+        corpus.path(),
+        "docs",
+        &[("a.md", "alpha shared"), ("b.md", "beta shared")],
+    );
     let (app, _store) = test_kernel_with_store(kernel.path());
     ingest(&app, corpus.path(), "docs");
 
@@ -307,14 +347,21 @@ fn references_are_deterministic_for_identical_retrievals() {
                 .collect()
         })
         .collect();
-    assert_eq!(ids[0], ids[1], "identical retrievals yield identical references");
+    assert_eq!(
+        ids[0], ids[1],
+        "identical retrievals yield identical references"
+    );
 }
 
 #[test]
 fn absent_required_concepts_become_omissions_never_silently_dropped() {
     let corpus = tempfile::tempdir().unwrap();
     let kernel = tempfile::tempdir().unwrap();
-    seed_corpus(corpus.path(), "docs", &[("a.md", "deploy rotation runbook")]);
+    seed_corpus(
+        corpus.path(),
+        "docs",
+        &[("a.md", "deploy rotation runbook")],
+    );
     let (app, _store) = test_kernel_with_store(kernel.path());
     ingest(&app, corpus.path(), "docs");
 
@@ -322,8 +369,11 @@ fn absent_required_concepts_become_omissions_never_silently_dropped() {
     req.required_concepts = vec!["rollback window".into()];
     let res = app.resolve_context(&req).unwrap();
     assert_eq!(res.completeness, RetrievalCompleteness::Partial);
-    assert!(res.omissions.iter().any(|o| o.code == "required_distinction_absent"
-        && o.detail.as_deref() == Some("rollback window")));
+    assert!(res
+        .omissions
+        .iter()
+        .any(|o| o.code == "required_distinction_absent"
+            && o.detail.as_deref() == Some("rollback window")));
 }
 
 #[test]
@@ -343,11 +393,22 @@ fn empty_retrieval_is_none_and_never_complete() {
 fn an_empty_query_browses_the_corpus_within_budget() {
     let corpus = tempfile::tempdir().unwrap();
     let kernel = tempfile::tempdir().unwrap();
-    seed_corpus(corpus.path(), "docs", &[("a.md", "alpha content here"), ("b.md", "beta content here")]);
+    seed_corpus(
+        corpus.path(),
+        "docs",
+        &[
+            ("a.md", "alpha content here"),
+            ("b.md", "beta content here"),
+        ],
+    );
     let (app, _store) = test_kernel_with_store(kernel.path());
     ingest(&app, corpus.path(), "docs");
 
     let res = app.resolve_context(&requirement("docs", None)).unwrap();
-    assert_eq!(res.results.len(), 2, "no query = the corpus, bounded by budget");
+    assert_eq!(
+        res.results.len(),
+        2,
+        "no query = the corpus, bounded by budget"
+    );
     assert_eq!(res.completeness, RetrievalCompleteness::Complete);
 }

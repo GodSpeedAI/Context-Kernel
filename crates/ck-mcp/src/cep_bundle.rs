@@ -104,7 +104,10 @@ pub fn content_hash(envelope: &Value) -> String {
     if let Some(obj) = bare.as_object_mut() {
         obj.remove("integrity");
     }
-    format!("sha256:{:x}", Sha256::digest(canonical_json(&bare).as_bytes()))
+    format!(
+        "sha256:{:x}",
+        Sha256::digest(canonical_json(&bare).as_bytes())
+    )
 }
 
 /// Why an envelope's integrity does not hold.
@@ -121,7 +124,10 @@ impl std::fmt::Display for IntegrityError {
             Self::Missing => write!(f, "envelope carries no integrity block"),
             Self::Malformed => write!(f, "integrity.content_hash is malformed"),
             Self::Mismatch { declared, computed } => {
-                write!(f, "integrity mismatch: declared {declared}, computed {computed}")
+                write!(
+                    f,
+                    "integrity mismatch: declared {declared}, computed {computed}"
+                )
             }
         }
     }
@@ -370,12 +376,15 @@ pub fn project_context_bundle(input: &BundleInput<'_>) -> Result<Value, BundleEr
         if let Some(anchor) = r.citation.get("anchor").and_then(Value::as_str) {
             target = format!("{target}#{anchor}");
         }
-        let checksum = r.metadata.get("checksum").and_then(Value::as_str).filter(|c| {
-            c.len() == 64
-                && c
-                    .bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        });
+        let checksum = r
+            .metadata
+            .get("checksum")
+            .and_then(Value::as_str)
+            .filter(|c| {
+                c.len() == 64
+                    && c.bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            });
         let mut reference = json!({
             "ref_id": ref_id,
             "ref_type": if r.chunk_id.is_some() { "chunk" } else { "document" },
@@ -524,20 +533,29 @@ pub fn validate_context_bundle(envelope: &Value) -> Result<(), Vec<String>> {
         "created_at",
         "created_by",
     ] {
-        if obj.get(field).and_then(Value::as_str).unwrap_or("").is_empty() {
+        if obj
+            .get(field)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .is_empty()
+        {
             errors.push(format!("missing {field}"));
         }
     }
     if obj.get("envelope_kind").and_then(Value::as_str) != Some("context_bundle") {
         errors.push("wrong envelope kind".to_string());
     }
-    let profile = obj
-        .get("extensions")
-        .and_then(|e| e.get("cep.profile"));
-    if profile.and_then(|p| p.get("profile_id")).and_then(Value::as_str) != Some(PROFILE_ID) {
+    let profile = obj.get("extensions").and_then(|e| e.get("cep.profile"));
+    if profile
+        .and_then(|p| p.get("profile_id"))
+        .and_then(Value::as_str)
+        != Some(PROFILE_ID)
+    {
         errors.push("wrong profile id".to_string());
     }
-    if profile.and_then(|p| p.get("profile_version")).and_then(Value::as_str)
+    if profile
+        .and_then(|p| p.get("profile_version"))
+        .and_then(Value::as_str)
         != Some(PROFILE_VERSION)
     {
         errors.push("wrong profile version".to_string());

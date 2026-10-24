@@ -53,7 +53,11 @@ fn acl_agent_resolves_citations_through_the_real_pipeline() {
         .acquire_context(&app, &payload("test-corpus"), None, None)
         .unwrap();
 
-    assert!(cited(&acq), "the corpus has matching content: {:?}", acq.no_context);
+    assert!(
+        cited(&acq),
+        "the corpus has matching content: {:?}",
+        acq.no_context
+    );
     assert_eq!(acq.packet.citations.len(), 1);
     assert!(acq.packet.citations[0].content.contains("Hello world"));
     // Real pipeline identity: the resolution carries chunk/document identity.
@@ -118,9 +122,15 @@ fn acl_agent_resolves_citations_from_learning_proposals_ledger() {
 
     let acq = agent.acquire_context(&app, &p, None, None).unwrap();
 
-    assert!(cited(&acq), "the ledger has a matching proposal: {:?}", acq.no_context);
     assert!(
-        acq.packet.citations[0].source.starts_with("learning-proposals://lp_001"),
+        cited(&acq),
+        "the ledger has a matching proposal: {:?}",
+        acq.no_context
+    );
+    assert!(
+        acq.packet.citations[0]
+            .source
+            .starts_with("learning-proposals://lp_001"),
         "citation keeps the ledger identity: {:?}",
         acq.packet.citations[0].source
     );
@@ -133,7 +143,11 @@ fn result_cap_marks_partial_with_a_machine_readable_omission() {
     corpus_with(
         corpus.path(),
         "c",
-        &[("a.md", "alpha shared"), ("b.md", "beta shared"), ("c.md", "gamma shared")],
+        &[
+            ("a.md", "alpha shared"),
+            ("b.md", "beta shared"),
+            ("c.md", "gamma shared"),
+        ],
     );
     let app = test_kernel(kernel.path());
     let mut p = payload("c");
@@ -204,7 +218,10 @@ fn no_citations_is_none_with_an_explicit_reason() {
     assert_eq!(acq.resolution.completeness, RetrievalCompleteness::None);
     assert!(acq.resolution.no_context_reason.is_some());
     assert_eq!(acq.packet.citations.len(), 0);
-    assert!(!acq.packet.omissions.is_empty(), "absence is always explained");
+    assert!(
+        !acq.packet.omissions.is_empty(),
+        "absence is always explained"
+    );
 }
 
 #[test]
@@ -261,5 +278,8 @@ fn a_declared_private_corpus_is_never_auto_ingested_open() {
         .acquire_context(&app, &p, None, None)
         .unwrap();
     assert!(!cited(&acq));
-    assert!(app.corpus("secrets").unwrap().is_none(), "must not be registered");
+    assert!(
+        app.corpus("secrets").unwrap().is_none(),
+        "must not be registered"
+    );
 }

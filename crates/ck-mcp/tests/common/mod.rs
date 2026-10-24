@@ -34,7 +34,10 @@ pub fn test_kernel_with_store(dir: &Path) -> (AppServices, SqliteStore) {
         Box::new(MarkdownNormalizer),
         Box::new(HeadingChunker),
     )
-    .with_source_adapter_kind("learning_proposals_jsonl", Box::new(LearningProposalsAdapter));
+    .with_source_adapter_kind(
+        "learning_proposals_jsonl",
+        Box::new(LearningProposalsAdapter),
+    );
     (app, store)
 }
 
