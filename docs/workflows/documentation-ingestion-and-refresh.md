@@ -99,7 +99,7 @@ sequenceDiagram
 
 ## 5. Failure Branches
 * **Directory Unreadable**: If `discover_units` fails due to permissions or missing paths, `AppServices` returns an error and sets `SourceHealth::Degraded`.
-* **Single File Read Failure**: If fetching one file fails, ingestion logs the failure and continues with remaining files, ensuring maximum availability.
+* **Single File Read Failure**: If fetching one file fails, `AppServices::ingest_source` propagates the error and aborts the ingestion; it does not continue with the remaining files. The snapshot is prepared before any existing rows are replaced, so the prior snapshot is preserved.
 * **FTS Insert Failure**: If an FTS write fails, an error is logged. Index consistency can be restored via `rebuild-index`.
 
 ---

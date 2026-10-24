@@ -10,6 +10,7 @@ duplicating them.
 - Evidence: file, test, command, or incident
 - Scope: where this lesson applies
 - Confidence: high | medium | low
+-->
 
 ## Lesson: Hashing raw JSON floats breaks across parse round-trips; normalize numbers in canonical hash forms
 - Observed: 2026-10-07
@@ -28,4 +29,3 @@ duplicating them.
 - Evidence: `AclContextAgent` previously did ad hoc substring matching over `corpus_root` plus a JSONL ledger reader, bypassing FTS, ranking, trust/freshness, scope enforcement, and budgets. Replaced with `AppServices::resolve_context` (auto-ingest + `query_reference`) and a kind-selected `LearningProposalsAdapter` ingestion path; `crates/ck-mcp/tests/context_pipeline.rs` covers the behaviors only the real pipeline proves.
 - Scope: any boundary adapter in `ck-mcp` or downstream integration crates.
 - Confidence: high
--->

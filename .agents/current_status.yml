@@ -35,12 +35,12 @@ completed_work:
 verification:
   - CK cargo test --workspace: 265 passed / 0 failed (baseline 237)
   - SWE_SEED cargo test -p swe-seed-core: 437 passed / 0 failed (baseline 428)
-  - sxr cargo test --workspace: all green (one load-flaky writer_lock test passes in isolation/quiet rerun)
+  - "sxr cargo test --workspace: all green (one load-flaky writer_lock test passes in isolation/quiet rerun)"
   - sea-forge-server cargo test: green after cargo build -p sea-forge-cli (pre-existing test prerequisite)
   - live CK binary <-> SWE_SEED client test: green (bundle verified + identity bound)
-  - scripts/e2e-world-loop.sh (SEA worktree driver, all repos, CEP_REPO set): EXIT=0
-    - hops 1/0/2/3/4/5/6 all green; CEP reference validator green;
-      refusals: E4 in another world, unregistered world, denied request all held
+  - "scripts/e2e-world-loop.sh (SEA worktree driver, all repos, CEP_REPO set): EXIT=0"
+  - "hops 1/0/2/3/4/5/6 all green; CEP reference validator green;"
+  - "refusals: E4 in another world, unregistered world, denied request all held"
   - CEP_REPO-gated conformance test (complete/partial/none) green
 remaining_steps:
   - Commit (code+tests first, .agents memory files second) on each modified repo

@@ -58,7 +58,7 @@ Export a cryptographically secure token and launch `context-kernal`:
 
 ```bash
 export CONTEXT_KERNEL_AUTH_TOKEN="$(openssl rand -hex 32)"
-echo "Configured Token: ${CONTEXT_KERNEL_AUTH_TOKEN}"
+echo "CONTEXT_KERNEL_AUTH_TOKEN is set (value not printed)"
 
 ./target/release/context-kernal serve --config context-kernal.sse.toml
 ```

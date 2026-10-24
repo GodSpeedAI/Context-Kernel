@@ -180,7 +180,7 @@ Executes intent-weighted hybrid retrieval over indexed documentation chunks.
   "query": "axum graceful shutdown",
   "intent": "query_docs",
   "top_k": 5,
-  "source_scope": ["core_docs"]
+  "filters": {"source_scope": ["core_docs"]}
 }
 ```
 * `intent`: `"query_docs"`, `"search_refs"`, `"resolve_library"`, `"general"`.
@@ -295,10 +295,14 @@ Must be a canonical v1 envelope stamped by `swe-seed` (or `swe_seed`). Identity 
     "provenance": {"origin": "context-kernel", "chain": ["domain_model_hash:...", "caused_by:evt_swe_01"]}
   },
   "context_packet": { "...": "the same payload fields" },
+  "context_bundle": { "...": "the CEP context bundle projection of the same resolution" },
+  "access": {"result": "accessible"},
   "outcome": "cited",
   "reason": null
 }
 ```
+`context_bundle` is the CEP bundle projection of the resolution. `access` reports data-access only: `{"result": "accessible"}`, `{"result": "inaccessible", "corpus_id": "...", "reason": "..."}` or `{"result": "requires_scope", "corpus_id": "..."}`.
+
 `outcome` is `cited`, `no_context_governed` (required, zero citations) or `empty_optional`. `retrieval_completeness` is `complete`, `partial` or `none`; `omissions` lists `max_results_reached` and/or `citation_content_truncated`.
 
 ---

@@ -25,7 +25,12 @@ pub trait SourceAdapter: Send + Sync {
     fn discover_units(&self, source_id: &str, config_json: &str) -> Result<Vec<SourceUnit>>;
 
     /// Fetches the raw text or binary content and revision tracking string for a unit.
-    fn fetch_content(&self, source_id: &str, unit: &SourceUnit) -> Result<RawContent>;
+    fn fetch_content(
+        &self,
+        source_id: &str,
+        unit: &SourceUnit,
+        config_json: &str,
+    ) -> Result<RawContent>;
 }
 ```
 
@@ -66,7 +71,12 @@ impl SourceAdapter for MemorySourceAdapter {
         Ok(units)
     }
 
-    fn fetch_content(&self, _source_id: &str, unit: &SourceUnit) -> Result<RawContent> {
+    fn fetch_content(
+        &self,
+        _source_id: &str,
+        unit: &SourceUnit,
+        _config_json: &str,
+    ) -> Result<RawContent> {
         let content_string = format!("# Documentation for {}\n\nThis is synthetic content.", unit.external_id);
         Ok(RawContent {
             content: content_string.into_bytes(),

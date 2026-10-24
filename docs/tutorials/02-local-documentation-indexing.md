@@ -14,7 +14,7 @@ In this tutorial, you will configure a local documentation corpus, ingest a dire
 
 Create a sample documentation folder containing two Markdown files:
 
-```bash
+````bash
 mkdir -p ./sample_docs/auth
 mkdir -p ./sample_docs/storage
 
@@ -45,7 +45,7 @@ All migrations are embedded within the binary in `SCHEMA_V1`.
 The database connection enables WAL mode by executing `PRAGMA journal_mode = WAL;`.
 This allows multiple readers to query full-text search indexes concurrently without blocking writers.
 EOF
-```
+````
 
 ---
 
