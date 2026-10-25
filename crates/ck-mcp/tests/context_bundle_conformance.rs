@@ -150,7 +150,7 @@ fn a_falsely_complete_bundle_is_refused() {
     env["completeness_status"] = json!("complete_for_context");
     env["extensions"]["godspeed.context_bundle"]["retrieval_completeness"] = json!("complete");
     // recompute integrity so ONLY the truthfulness violation remains
-    env["integrity"]["content_hash"] = json!(content_hash(&env));
+    env["integrity"]["content_hash"] = json!(content_hash(&env).expect("canonical"));
     let errs = validate_context_bundle(&env).unwrap_err();
     assert!(
         errs.iter()
@@ -165,7 +165,7 @@ fn missing_required_omissions_are_refused() {
     env.as_object_mut().unwrap().remove("omissions");
     env["boundary_record"]["known_omissions"] = json!([]);
     env["omission_status"] = json!("none_known");
-    env["integrity"]["content_hash"] = json!(content_hash(&env));
+    env["integrity"]["content_hash"] = json!(content_hash(&env).expect("canonical"));
     let errs = validate_context_bundle(&env).unwrap_err();
     assert!(
         errs.iter().any(|e| e.contains("must mark omissions")),

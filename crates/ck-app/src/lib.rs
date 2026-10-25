@@ -363,16 +363,6 @@ impl AppServices {
 
 // --- ingest_source ---
 
-fn stable_document_id(source_id: &str, external_id: &str, uri: &str) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    source_id.hash(&mut hasher);
-    external_id.hash(&mut hasher);
-    uri.hash(&mut hasher);
-    format!("doc_{:016x}", hasher.finish())
-}
-
 #[derive(Debug, Clone)]
 pub struct IngestSourceRequest {
     pub source_id: String,

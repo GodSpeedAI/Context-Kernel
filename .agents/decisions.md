@@ -326,3 +326,16 @@
 - Alternatives considered: Duplicate seven memory files under .agent/ (rejected: conflicting ledgers), retain stale instructions (rejected: repeatable agent misrouting).
 - Evidence: AGENTS.md, .github/copilot-instructions.md, .agents/current_plan.md, .agents/project_state.md, .agents/evidence.md.
 - Consequences: Future agents reuse existing memory; previous historical work-log references stay intact as provenance.
+
+## Decision: Persisted document IDs are SHA-256 with length-prefixed fields (2026-10-24)
+- Context: document IDs were `std::hash::DefaultHasher` output, whose algorithm Rust does not guarantee across releases, and they are persisted in `documents`, `chunks`, `chunks_fts`, `chunk_embeddings` and `documents.superseded_by_document_id`.
+- Decision: `ck_core::entities::stable_document_id` = `doc_` + first 32 hex digits (128 bits) of SHA-256 over each of `(source_id, external_id, uri)` written as 8-byte big-endian length + UTF-8 bytes. Store schema v2 re-keys v1 rows in one transaction when `external_id` and `uri` are non-NULL for every document; otherwise the store refuses to migrate with a "Re-ingest required" error. No IDs are invented.
+- Alternatives considered: full 64-hex digest (rejected: no need for the longer ID); recomputing IDs for NULL `external_id`/`uri` rows from the adapter fallback (rejected: the fallback input is not stored).
+- Evidence: `ck-core/src/entities/document.rs` golden test (value cross-checked with Python hashlib), `ck-storage-sqlite` tests `v1_store_is_rekeyed_to_stable_ids_by_migrate` and `v1_store_with_unrecoverable_document_is_refused_with_reingest_message`.
+- Consequences: Existing v1 stores with rows missing `uri` must be re-ingested into a new database. `uri`-NULL rows would be recoverable only by relying on the normalizer invariant `external_id = Some(raw.external_id)`; that was deliberately not assumed.
+
+## Decision: CEP bundle integers are bounded; float rounding kept pending cross-repo change (2026-10-24)
+- Context: `canonical_json` sent every number through f64 and rounded to 6 decimals, so integers above 2^53 lost precision. The CEP reference canonicalizer (`cep/src/cep/godspeed.py`, `contracts/rust`) and DomainForge/sea-forge do not round floats, but SWE_SEED `federation::context_bundle::bundle_content_hash` does round to 6 decimals, and bundles carry float scores.
+- Decision: integers are written exactly and canonicalization fails closed (`CanonicalError::UnsafeInteger`) outside ±(2^53-1). Floats keep the 6-decimal rounding, because it is the rule SWE_SEED recomputes with; dropping it in CK alone would break every float-bearing bundle at the boundary. `content_hash`/`canonical_json` return `Result`.
+- Open: distinct floats that differ below 1e-6 still collide by design. Removing the rounding requires changing CK and SWE_SEED together and re-hashing stored bundles; the CEP specification text does not mandate the rounding.
+- Evidence: `ck-mcp/src/cep_bundle.rs` tests (`canonical_json_matches_shared_cross_implementation_vector`, `canonical_json_refuses_integers_beyond_two_pow_53_minus_one`, `refused_integer_fails_the_bundle_hash_instead_of_changing_it`).
