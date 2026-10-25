@@ -1186,7 +1186,8 @@ fn migrate_to_v2(conn: &mut Connection) -> Result<()> {
         tx.execute_batch(&format!(
             "UPDATE documents SET superseded_by_document_id = {remap}documents.superseded_by_document_id)
                WHERE superseded_by_document_id IN (SELECT old_id FROM temp.doc_id_map);
-             UPDATE documents SET document_id = {remap}documents.document_id);
+             UPDATE documents SET document_id = {remap}documents.document_id)
+               WHERE document_id IN (SELECT old_id FROM temp.doc_id_map);
              UPDATE chunks SET document_id = {remap}chunks.document_id)
                WHERE document_id IN (SELECT old_id FROM temp.doc_id_map);
              UPDATE chunks_fts SET document_id = {remap}chunks_fts.document_id)
