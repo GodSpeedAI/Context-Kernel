@@ -29,3 +29,9 @@ duplicating them.
 - Evidence: `AclContextAgent` previously did ad hoc substring matching over `corpus_root` plus a JSONL ledger reader, bypassing FTS, ranking, trust/freshness, scope enforcement, and budgets. Replaced with `AppServices::resolve_context` (auto-ingest + `query_reference`) and a kind-selected `LearningProposalsAdapter` ingestion path; `crates/ck-mcp/tests/context_pipeline.rs` covers the behaviors only the real pipeline proves.
 - Scope: any boundary adapter in `ck-mcp` or downstream integration crates.
 - Confidence: high
+
+## Lesson: Persisted identifiers must not come from `std::hash::DefaultHasher`
+- Observed: 2026-10-24
+- Evidence: `ck-app::stable_document_id` used `DefaultHasher`; its algorithm is not guaranteed across Rust releases, so stored document IDs could change on a toolchain upgrade. Replaced with length-prefixed SHA-256 (`ck_core::entities::stable_document_id`) and a v2 storage migration.
+- Scope: any ID or hash written to disk or sent across a boundary.
+- Confidence: high

@@ -42,9 +42,9 @@ impl SqliteStore {
     }
 
     pub fn migrate(&self) -> Result<()> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
         conn.execute_batch(SCHEMA_V1)?;
-        Ok(())
+        migrate_to_v2(&mut conn)
     }
 
     pub fn schema_sql() -> &'static str {
@@ -1118,6 +1118,111 @@ impl SessionMemoryPort for SqliteStore {
         )?;
         Ok(count as u64)
     }
+}
+
+/// Version 2 re-keys document IDs from `std::hash::DefaultHasher` (not stable
+/// across Rust releases) to `ck_core::entities::stable_document_id`.
+///
+/// The v1 ID was a hash of `(source_id, external_id, uri)` and those inputs are
+/// recoverable only when the stored row carries the exact values that were hashed:
+/// `source_id` is always stored, and `external_id`/`uri` are stored when they were
+/// `Some` at ingest (ingest fell back to the raw external id otherwise, which is
+/// not stored). So a v1 store with any document whose `external_id` or `uri` is
+/// NULL is refused with a re-ingest message instead of guessing. Otherwise every
+/// document, its superseded reference, its chunks, the chunk FTS rows and any
+/// chunk embeddings are re-keyed in one transaction, and the foreign-key check
+/// must pass before commit.
+fn migrate_to_v2(conn: &mut Connection) -> Result<()> {
+    let recorded: i64 = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 2)",
+        [],
+        |row| row.get(0),
+    )?;
+    if recorded == 1 {
+        return Ok(());
+    }
+
+    let docs: Vec<(String, String, Option<String>, Option<String>)> = {
+        let mut stmt =
+            conn.prepare("SELECT document_id, source_id, external_id, uri FROM documents")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+
+    let unrecoverable = docs
+        .iter()
+        .filter(|(_, _, external_id, uri)| external_id.is_none() || uri.is_none())
+        .count();
+    if unrecoverable > 0 {
+        anyhow::bail!(
+            "store schema v1 holds {unrecoverable} document(s) whose external_id or uri is NULL; \
+             their v1 document IDs cannot be recomputed, so the store cannot be migrated to v2. \
+             Re-ingest required: move this database aside and re-ingest every source"
+        );
+    }
+
+    let tx = conn.transaction()?;
+    if !docs.is_empty() {
+        tx.execute_batch(
+            "DROP TABLE IF EXISTS temp.doc_id_map;
+             CREATE TEMP TABLE doc_id_map (old_id TEXT PRIMARY KEY, new_id TEXT NOT NULL);
+             PRAGMA defer_foreign_keys = ON;",
+        )?;
+        {
+            let mut insert =
+                tx.prepare("INSERT INTO temp.doc_id_map (old_id, new_id) VALUES (?1, ?2)")?;
+            for (old_id, source_id, external_id, uri) in &docs {
+                let new_id = ck_core::entities::stable_document_id(
+                    source_id,
+                    external_id.as_deref().unwrap_or_default(),
+                    uri.as_deref().unwrap_or_default(),
+                );
+                insert.execute(rusqlite::params![old_id, new_id])?;
+            }
+        }
+        let remap = "(SELECT new_id FROM temp.doc_id_map WHERE old_id = ";
+        tx.execute_batch(&format!(
+            "UPDATE documents SET superseded_by_document_id = {remap}documents.superseded_by_document_id)
+               WHERE superseded_by_document_id IN (SELECT old_id FROM temp.doc_id_map);
+             UPDATE documents SET document_id = {remap}documents.document_id)
+               WHERE document_id IN (SELECT old_id FROM temp.doc_id_map);
+             UPDATE chunks SET document_id = {remap}chunks.document_id)
+               WHERE document_id IN (SELECT old_id FROM temp.doc_id_map);
+             UPDATE chunks_fts SET document_id = {remap}chunks_fts.document_id)
+               WHERE document_id IN (SELECT old_id FROM temp.doc_id_map);"
+        ))?;
+        let has_embeddings: i64 = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chunk_embeddings')",
+            [],
+            |row| row.get(0),
+        )?;
+        if has_embeddings == 1 {
+            tx.execute_batch(&format!(
+                "UPDATE chunk_embeddings SET document_id = {remap}chunk_embeddings.document_id)
+                   WHERE document_id IN (SELECT old_id FROM temp.doc_id_map);"
+            ))?;
+        }
+        tx.execute_batch("DROP TABLE temp.doc_id_map;")?;
+
+        let violations: i64 =
+            tx.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })?;
+        if violations > 0 {
+            anyhow::bail!(
+                "v2 document re-keying left {violations} dangling foreign key(s); rolled back"
+            );
+        }
+    }
+    tx.execute(
+        "INSERT OR IGNORE INTO schema_migrations (version, applied_at)
+         VALUES (2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+        [],
+    )?;
+    tx.commit()?;
+    Ok(())
 }
 
 const SCHEMA_V1: &str = r#"
@@ -2229,5 +2334,195 @@ mod tests {
         ] {
             assert_eq!(job_status_from(job_status_str(v)).unwrap(), v);
         }
+    }
+
+    /// The v1 document ID exactly as the pre-v2 code computed it.
+    fn legacy_v1_document_id(source_id: &str, external_id: &str, uri: &str) -> String {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        source_id.hash(&mut hasher);
+        external_id.hash(&mut hasher);
+        uri.hash(&mut hasher);
+        format!("doc_{:016x}", hasher.finish())
+    }
+
+    /// Builds a v1 database with the pre-v2 code path: `SCHEMA_V1` only (what the
+    /// old `migrate()` ran), then rows keyed by the legacy IDs.
+    /// `docs` = (external_id, Option<uri>) under source "src-v1".
+    fn build_v1_store(path: &Path, docs: &[(&str, Option<&str>)]) -> Vec<String> {
+        let conn = Connection::open(path).unwrap();
+        conn.execute_batch(SCHEMA_V1).unwrap();
+        conn.execute_batch(
+            "INSERT INTO corpora (corpus_id, name, kind, visibility, created_at, updated_at)
+               VALUES ('c1', 'c1', 'docs', 'private', 'now', 'now');
+             INSERT INTO sources (source_id, kind, display_name, adapter_config_json, created_at, updated_at)
+               VALUES ('src-v1', 'filesystem', 'v1', '{}', 'now', 'now');",
+        )
+        .unwrap();
+        let mut ids = Vec::new();
+        for (external_id, uri) in docs {
+            let old_id = legacy_v1_document_id("src-v1", external_id, uri.unwrap_or(external_id));
+            conn.execute(
+                "INSERT INTO documents (document_id, corpus_id, source_id, external_id, uri, title,
+                   content_text, metadata_json, checksum, created_at, updated_at)
+                 VALUES (?1, 'c1', 'src-v1', ?2, ?3, 't', 'body', '{}', 'ck', 'now', 'now')",
+                rusqlite::params![old_id, external_id, uri],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO chunks (chunk_id, document_id, corpus_id, ordinal, text,
+                   token_count_estimate, checksum, created_at, updated_at)
+                 VALUES (?1, ?2, 'c1', 0, 'body text', 2, 'ck', 'now', 'now')",
+                rusqlite::params![format!("chunk-{external_id}"), old_id],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO chunks_fts (chunk_id, document_id, corpus_id, library_id, title, heading, text)
+                 VALUES (?1, ?2, 'c1', '', 't', '', 'body text')",
+                rusqlite::params![format!("chunk-{external_id}"), old_id],
+            )
+            .unwrap();
+            ids.push(old_id);
+        }
+        // Second document supersedes the first, so the reference must be re-keyed too.
+        if ids.len() >= 2 {
+            conn.execute(
+                "UPDATE documents SET superseded_by_document_id = ?1 WHERE document_id = ?2",
+                rusqlite::params![ids[1], ids[0]],
+            )
+            .unwrap();
+        }
+        ids
+    }
+
+    #[test]
+    fn v1_store_is_rekeyed_to_stable_ids_by_migrate() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v1.db");
+        let old = build_v1_store(
+            &path,
+            &[("a.md", Some("/docs/a.md")), ("b.md", Some("/docs/b.md"))],
+        );
+        let new_a = ck_core::entities::stable_document_id("src-v1", "a.md", "/docs/a.md");
+        let new_b = ck_core::entities::stable_document_id("src-v1", "b.md", "/docs/b.md");
+
+        SqliteStore::open(&path).unwrap().migrate().unwrap();
+
+        let conn = Connection::open(&path).unwrap();
+        let count = |sql: &str, id: &str| -> i64 {
+            conn.query_row(sql, rusqlite::params![id], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(
+            count(
+                "SELECT COUNT(*) FROM documents WHERE document_id = ?1",
+                &new_a
+            ),
+            1
+        );
+        assert_eq!(
+            count(
+                "SELECT COUNT(*) FROM documents WHERE document_id = ?1",
+                &old[0]
+            ),
+            0
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM chunks WHERE document_id = ?1", &new_a),
+            1
+        );
+        assert_eq!(
+            count(
+                "SELECT COUNT(*) FROM chunks WHERE document_id = ?1",
+                &old[0]
+            ),
+            0
+        );
+        assert_eq!(
+            count(
+                "SELECT COUNT(*) FROM chunks_fts WHERE document_id = ?1",
+                &new_a
+            ),
+            1
+        );
+        assert_eq!(
+            count(
+                "SELECT COUNT(*) FROM chunks_fts WHERE document_id = ?1",
+                &old[0]
+            ),
+            0
+        );
+        let superseded: String = conn
+            .query_row(
+                "SELECT superseded_by_document_id FROM documents WHERE document_id = ?1",
+                rusqlite::params![new_a],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(superseded, new_b);
+        let versions: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version = 2",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(versions, 1);
+
+        // Idempotent: a second open/migrate changes nothing and does not fail.
+        SqliteStore::open(&path).unwrap().migrate().unwrap();
+        let docs: i64 = conn
+            .query_row("SELECT COUNT(*) FROM documents", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(docs, 2);
+    }
+
+    #[test]
+    fn v1_store_with_unrecoverable_document_is_refused_with_reingest_message() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v1-null-uri.db");
+        let old = build_v1_store(&path, &[("c.md", None)]);
+
+        let err = SqliteStore::open(&path)
+            .unwrap()
+            .migrate()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Re-ingest required"), "got: {err}");
+
+        // Refused without rekeying anything or recording v2.
+        let conn = Connection::open(&path).unwrap();
+        let still_old: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM documents WHERE document_id = ?1",
+                rusqlite::params![old[0]],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(still_old, 1);
+        let v2: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version = 2",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(v2, 0);
+    }
+
+    #[test]
+    fn fresh_store_records_v1_and_v2() {
+        let (store, _dir) = test_store();
+        store.migrate().unwrap();
+        let conn = Connection::open(store.path()).unwrap();
+        let versions: Vec<i64> = conn
+            .prepare("SELECT version FROM schema_migrations ORDER BY version")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|v| v.unwrap())
+            .collect();
+        assert_eq!(versions, vec![1, 2]);
     }
 }

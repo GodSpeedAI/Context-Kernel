@@ -49,6 +49,7 @@ blockers: none
 decisions:
   - CEP godspeed.context_bundle v1.0.0 is THE canonical cross-system context artifact; legacy ContextPacketCreated dual-read window is deprecated
   - Bundle hashes normalize floats to 6 decimals (serde_json 1-ULP float parse drift) -- MUST for any consumer
+  - Bundle canonical JSON refuses integers outside ±(2^53-1) (fail closed); float rounding stays until CK and SWE_SEED change together (2026-10-24)
   - Context access != action authority (SEA-Forge alone owns allow/deny)
   - Retrieval contract = ranked excerpts + resolvable locators (truncation = reference limitation, not omission)
   - UPSERT (not INSERT OR REPLACE) for FK-parented rows; ingest preserves registered corpus visibility

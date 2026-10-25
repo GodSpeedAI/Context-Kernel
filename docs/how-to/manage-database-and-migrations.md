@@ -19,6 +19,10 @@ migrated ./data/kernel.db
 
 * **Idempotency**: Running `migrate` multiple times is completely safe. The DDL uses `CREATE TABLE IF NOT EXISTS` and `INSERT OR IGNORE INTO schema_migrations`.
 * **Foreign Keys**: Migrations enable SQLite foreign key constraints (`PRAGMA foreign_keys = ON;`).
+* **Version 2 (stable document IDs)**: a v1 database that holds documents with a NULL `external_id`
+  or `uri` cannot be migrated. `migrate` fails with "Re-ingest required". Move the database file
+  aside, run `migrate` on a new file, and re-ingest every source. Databases without such documents
+  are re-keyed automatically in one transaction.
 
 ---
 

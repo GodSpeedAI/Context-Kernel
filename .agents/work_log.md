@@ -347,3 +347,10 @@
   test green (real binary); `scripts/e2e-world-loop.sh` EXIT=0 (all 7 hops,
   CEP reference validator, 3 refusal paths); CEP_REPO-gated conformance green.
 - Notes: Fixed clippy warnings (option_map_unit_fn, unnecessary_lazy_evaluations). Used parallel subagent delegation for integration tests and periodic refresh implementation.
+
+## 2026-10-24 - Recorded limits: stable IDs, bounded canonical numbers, offline SSRF tests (branch fix/stable-ids-and-canonical-numbers)
+- `ck-core`: `stable_document_id` (SHA-256, length-prefixed, `doc_` + 32 hex) replaces the DefaultHasher version in `ck-app`; golden test.
+- `ck-storage-sqlite`: `migrate()` now also runs `migrate_to_v2` (re-keys documents, supersession, chunks, chunks_fts, chunk_embeddings in one transaction; refuses v1 stores with NULL external_id/uri). Tests: rekey, refusal, fresh store records 1 and 2.
+- `ck-mcp::cep_bundle`: `canonical_json`/`content_hash` return `Result`; integers beyond ±(2^53-1) are refused; 6-decimal float rule kept to match SWE_SEED (see decisions.md). Shared vector checked against the CEP reference canonicalizer.
+- `ck-adapter-web`: `ssrf_allows_public_http` and `ssrf_rejects_non_allowed_domain` use `StaticResolver` (no real DNS).
+- Docs: `docs/subsystems/storage-and-persistence.md`, `docs/how-to/manage-database-and-migrations.md`.

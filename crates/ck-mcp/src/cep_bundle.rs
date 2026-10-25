@@ -41,6 +41,8 @@ pub enum BundleError {
     /// The retrieval contradicts itself (complete with omissions, none with
     /// references, ...).
     Inconsistent(&'static str),
+    /// The envelope holds a number that cannot be canonicalized exactly.
+    Canonicalization(CanonicalError),
 }
 
 impl std::fmt::Display for BundleError {
@@ -50,64 +52,117 @@ impl std::fmt::Display for BundleError {
                 write!(f, "retrieval is {c:?} but names no omission or reason")
             }
             Self::Inconsistent(why) => write!(f, "inconsistent retrieval: {why}"),
+            Self::Canonicalization(e) => write!(f, "cannot canonicalize bundle: {e}"),
         }
     }
 }
 
 impl std::error::Error for BundleError {}
 
-/// Canonical JSON for hashing: recursively sorted keys, compact separators,
-/// UTF-8 unescaped (matches the CEP reference `identity_digest` convention),
-/// with every float normalized to 6 decimal places and negative zero
-/// flattened to `0.0`.
+/// Largest integer that every JSON consumer (including IEEE-754 double based
+/// ones such as JavaScript) represents exactly: 2^53 - 1.
+pub const MAX_SAFE_INTEGER: i64 = (1 << 53) - 1;
+
+/// Why a value cannot be canonicalized. Canonicalization fails closed rather
+/// than silently changing a number that a consumer would hash differently.
+#[derive(Debug, PartialEq, Eq)]
+pub enum CanonicalError {
+    /// An integer outside ±(2^53 - 1): not exactly representable in every
+    /// consumer's number type, so the same bundle would hash differently there.
+    UnsafeInteger(String),
+    /// NaN or infinity (not representable in JSON; defensive).
+    NonFiniteNumber,
+}
+
+impl std::fmt::Display for CanonicalError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsafeInteger(v) => write!(
+                f,
+                "integer {v} is outside ±(2^53-1) and cannot be canonicalized exactly"
+            ),
+            Self::NonFiniteNumber => write!(f, "non-finite number cannot be canonicalized"),
+        }
+    }
+}
+
+impl std::error::Error for CanonicalError {}
+
+/// Canonical JSON for hashing: recursively sorted object keys, compact
+/// separators, UTF-8 unescaped (the CEP reference `json.dumps(sort_keys=True,
+/// separators=(",", ":"), ensure_ascii=False)` convention). Numbers:
 ///
-/// Float normalization is MANDATORY for hash stability: JSON parsers are
-/// allowed 1-ULP float drift (serde_json's fast parser famously maps
-/// `0.44999999999999996` to `0.45`), so hashing raw floats makes the same
-/// envelope hash differently after any parse round-trip. Context Kernel and
-/// SWE_SEED apply this exact rule; consumers recomputing a bundle hash MUST
-/// too.
-pub fn canonical_json(value: &Value) -> String {
-    fn normalize(value: &Value) -> Value {
-        match value {
+/// - Integers are written exactly and MUST lie within ±(2^53 - 1); anything
+///   larger fails with [`CanonicalError::UnsafeInteger`] rather than being
+///   rounded or silently changed.
+/// - Floats are rounded to 6 decimal places and negative zero is written as
+///   `0.0`. This is the rule Context Kernel and SWE_SEED
+///   (`federation::context_bundle::bundle_content_hash`) both apply, so the
+///   two sides agree on float-bearing envelopes. The CEP specification text
+///   does not mandate this rounding (its reference canonicalizer does not
+///   round); changing it requires changing both implementations together.
+///
+/// Rounding is needed for hash stability: serde_json's default float parser
+/// can drift 1 ULP on long spellings (`0.44999999999999996` parses to `0.45`),
+/// so hashing raw floats would change after a parse round-trip.
+pub fn canonical_json(value: &Value) -> Result<String, CanonicalError> {
+    fn normalize(value: &Value) -> Result<Value, CanonicalError> {
+        Ok(match value {
             Value::Object(obj) => {
                 let mut keys: Vec<&String> = obj.keys().collect();
                 keys.sort();
                 let mut out = Map::new();
                 for k in keys {
-                    out.insert(k.clone(), normalize(&obj[k]));
+                    out.insert(k.clone(), normalize(&obj[k])?);
                 }
                 Value::Object(out)
             }
-            Value::Array(items) => Value::Array(items.iter().map(normalize).collect()),
-            Value::Number(n) => match n.as_f64() {
-                Some(f) => {
-                    let rounded = format!("{:.6}", f).parse::<f64>().unwrap_or(f);
-                    Value::Number(
-                        serde_json::Number::from_f64(if rounded == 0.0 { 0.0 } else { rounded })
-                            .unwrap_or_else(|| n.clone()),
-                    )
+            Value::Array(items) => {
+                Value::Array(items.iter().map(normalize).collect::<Result<Vec<_>, _>>()?)
+            }
+            Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    if i.unsigned_abs() > MAX_SAFE_INTEGER as u64 {
+                        return Err(CanonicalError::UnsafeInteger(i.to_string()));
+                    }
+                    value.clone()
+                } else if let Some(u) = n.as_u64() {
+                    if u > MAX_SAFE_INTEGER as u64 {
+                        return Err(CanonicalError::UnsafeInteger(u.to_string()));
+                    }
+                    value.clone()
+                } else {
+                    match n.as_f64() {
+                        Some(f) if f.is_finite() => {
+                            let rounded = format!("{:.6}", f).parse::<f64>().unwrap_or(f);
+                            let rounded = if rounded == 0.0 { 0.0 } else { rounded };
+                            Value::Number(
+                                serde_json::Number::from_f64(rounded)
+                                    .ok_or(CanonicalError::NonFiniteNumber)?,
+                            )
+                        }
+                        _ => return Err(CanonicalError::NonFiniteNumber),
+                    }
                 }
-                None => value.clone(),
-            },
+            }
             other => other.clone(),
-        }
+        })
     }
-    serde_json::to_string(&normalize(value)).unwrap_or_default()
+    Ok(normalize(value)?.to_string())
 }
 
 /// `integrity.content_hash` of an envelope: sha256 over the canonical JSON of
 /// the envelope with the `integrity` block removed.
-pub fn content_hash(envelope: &Value) -> String {
+pub fn content_hash(envelope: &Value) -> Result<String, CanonicalError> {
     use sha2::{Digest, Sha256};
     let mut bare = envelope.clone();
     if let Some(obj) = bare.as_object_mut() {
         obj.remove("integrity");
     }
-    format!(
+    Ok(format!(
         "sha256:{:x}",
-        Sha256::digest(canonical_json(&bare).as_bytes())
-    )
+        Sha256::digest(canonical_json(&bare)?.as_bytes())
+    ))
 }
 
 /// Why an envelope's integrity does not hold.
@@ -116,6 +171,7 @@ pub enum IntegrityError {
     Missing,
     Malformed,
     Mismatch { declared: String, computed: String },
+    Canonicalization(CanonicalError),
 }
 
 impl std::fmt::Display for IntegrityError {
@@ -123,6 +179,7 @@ impl std::fmt::Display for IntegrityError {
         match self {
             Self::Missing => write!(f, "envelope carries no integrity block"),
             Self::Malformed => write!(f, "integrity.content_hash is malformed"),
+            Self::Canonicalization(e) => write!(f, "cannot canonicalize envelope: {e}"),
             Self::Mismatch { declared, computed } => {
                 write!(
                     f,
@@ -147,7 +204,7 @@ pub fn verify_envelope_integrity(envelope: &Value) -> Result<(), IntegrityError>
     if !declared.starts_with("sha256:") {
         return Err(IntegrityError::Malformed);
     }
-    let computed = content_hash(envelope);
+    let computed = content_hash(envelope).map_err(IntegrityError::Canonicalization)?;
     if declared == computed {
         Ok(())
     } else {
@@ -326,7 +383,7 @@ fn assemble(core: BundleCore) -> Result<Value, BundleError> {
 
     // CEP integrity: exact content identity, separate from envelope_id
     // (occurrence) and world_ref (semantic world).
-    let hash = content_hash(&env);
+    let hash = content_hash(&env).map_err(BundleError::Canonicalization)?;
     env["integrity"] = json!({
         "content_hash": hash,
         "verification_method": "sha256-canonical-json-v1",
@@ -812,5 +869,78 @@ mod tests {
                 serde_json::from_slice(&out.stdout).expect("validator prints a JSON list");
             assert!(errs.is_empty(), "{}: {errs:?}", env["completeness_status"]);
         }
+    }
+
+    /// Shared cross-implementation vector. The expected canonical string and
+    /// digest were produced by the CEP reference canonicalizer
+    /// (`cep/src/cep/godspeed.py::_canonical_json` + sha256) from the same
+    /// input, so this pins Context Kernel to the same bytes.
+    const SHARED_VECTOR_INPUT: &str = r#"{"z": [3, 1.5, {"b": 2, "a": "é"}], "a": 9007199254740991, "m": -9007199254740991, "f": 1.25, "s": "x\"y", "n": null, "t": true}"#;
+    const SHARED_VECTOR_CANONICAL: &str = r#"{"a":9007199254740991,"f":1.25,"m":-9007199254740991,"n":null,"s":"x\"y","t":true,"z":[3,1.5,{"a":"é","b":2}]}"#;
+    const SHARED_VECTOR_DIGEST: &str =
+        "sha256:99582d94bc0cca2453e5057541bf23fc459f3ca10994e75513bc3af8cb5cfd4e";
+
+    #[test]
+    fn canonical_json_matches_shared_cross_implementation_vector() {
+        use sha2::{Digest, Sha256};
+        let value: Value = serde_json::from_str(SHARED_VECTOR_INPUT).unwrap();
+        let canonical = canonical_json(&value).unwrap();
+        assert_eq!(canonical, SHARED_VECTOR_CANONICAL);
+        let digest = format!("sha256:{:x}", Sha256::digest(canonical.as_bytes()));
+        assert_eq!(digest, SHARED_VECTOR_DIGEST);
+    }
+
+    #[test]
+    fn canonical_json_refuses_integers_beyond_two_pow_53_minus_one() {
+        let just_over = json!({ "n": 9_007_199_254_740_992_i64 });
+        assert_eq!(
+            canonical_json(&just_over),
+            Err(CanonicalError::UnsafeInteger("9007199254740992".into()))
+        );
+        let negative = json!({ "n": -9_007_199_254_740_992_i64 });
+        assert!(matches!(
+            canonical_json(&negative),
+            Err(CanonicalError::UnsafeInteger(_))
+        ));
+        let huge: Value = serde_json::from_str(r#"{"n": 18446744073709551615}"#).unwrap();
+        assert!(matches!(
+            canonical_json(&huge),
+            Err(CanonicalError::UnsafeInteger(_))
+        ));
+        // The boundary itself is exact and accepted.
+        let edge = json!({ "n": 9_007_199_254_740_991_i64 });
+        assert_eq!(canonical_json(&edge).unwrap(), r#"{"n":9007199254740991}"#);
+    }
+
+    #[test]
+    fn refused_integer_fails_the_bundle_hash_instead_of_changing_it() {
+        let env = json!({ "k": 9_007_199_254_740_993_i64 });
+        assert!(matches!(
+            content_hash(&env),
+            Err(CanonicalError::UnsafeInteger(_))
+        ));
+    }
+
+    #[test]
+    fn floats_round_to_six_decimals_as_the_cross_implementation_rule() {
+        assert_eq!(
+            canonical_json(&json!({ "x": 0.1234567 })).unwrap(),
+            r#"{"x":0.123457}"#
+        );
+        assert_eq!(
+            canonical_json(&json!({ "x": 1.0000004 })).unwrap(),
+            r#"{"x":1.0}"#
+        );
+        // Values that differ at the 6th decimal stay distinct.
+        assert_ne!(
+            canonical_json(&json!({ "x": 0.123456 })).unwrap(),
+            canonical_json(&json!({ "x": 0.123457 })).unwrap()
+        );
+    }
+
+    #[test]
+    fn negative_zero_is_written_as_zero() {
+        let v = json!({ "x": -0.0 });
+        assert_eq!(canonical_json(&v).unwrap(), r#"{"x":0.0}"#);
     }
 }

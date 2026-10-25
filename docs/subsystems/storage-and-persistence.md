@@ -74,7 +74,7 @@ graph TD
 ### Database Migration & Initialization
 When `SqliteStore::migrate()` runs, it executes `SCHEMA_V1`:
 1. Enables WAL mode (`PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;`).
-2. Creates the `schema_migrations` table and records version 1.
+2. Creates the `schema_migrations` table and records version 1 (version 2 follows; see below).
 3. Creates relational tables (`sources`, `corpora`, `documents`, `chunks`, `sessions`, `session_events`, `artifacts`, `refresh_jobs`).
 4. Creates virtual FTS5 tables (`chunks_fts`, `session_events_fts`, `library_aliases_fts`).
 5. Enforces unique active refresh jobs per source via a partial index:
@@ -83,6 +83,22 @@ When `SqliteStore::migrate()` runs, it executes `SCHEMA_V1`:
      ON refresh_jobs(source_id)
      WHERE status IN ('queued', 'running');
    ```
+
+#### Schema v2: stable document IDs
+
+Version 2 re-keys documents. Version 1 IDs came from `std::hash::DefaultHasher`, which
+Rust does not guarantee across releases. Version 2 IDs are `doc_` plus the first 32 hex
+digits (128 bits) of SHA-256 over `(source_id, external_id, uri)`, each field written as an
+8-byte big-endian length followed by its UTF-8 bytes (`ck_core::entities::stable_document_id`).
+
+`migrate()` applies v2 after `SCHEMA_V1`:
+- A fresh store, or a v1 store with no documents, records version 2 and nothing else.
+- A v1 store whose documents all have a non-NULL `external_id` and `uri` is re-keyed in one
+  transaction: `documents`, `documents.superseded_by_document_id`, `chunks`, `chunks_fts`,
+  and `chunk_embeddings` (when present). A foreign-key check must pass before commit.
+- A v1 store with any document whose `external_id` or `uri` is NULL is **refused** with a
+  "Re-ingest required" error. Those inputs were not stored, so the old IDs cannot be
+  recomputed and are not guessed. Move the database aside and re-ingest every source.
 
 ### Compensation on Artifact Write Failure
 When `AppServices::store_context` stores an artifact:
