@@ -29,3 +29,14 @@ duplicating them.
 - Evidence: `AclContextAgent` previously did ad hoc substring matching over `corpus_root` plus a JSONL ledger reader, bypassing FTS, ranking, trust/freshness, scope enforcement, and budgets. Replaced with `AppServices::resolve_context` (auto-ingest + `query_reference`) and a kind-selected `LearningProposalsAdapter` ingestion path; `crates/ck-mcp/tests/context_pipeline.rs` covers the behaviors only the real pipeline proves.
 - Scope: any boundary adapter in `ck-mcp` or downstream integration crates.
 - Confidence: high
+## Lesson: Documentation of a wire contract must be derived from the handler's response assembly, not the legacy schema
+- Observed: 2026-10-24
+- Evidence: `docs/workflows/agentic-capability-loop.md` and `docs/README.md` described `ContextPacketCreated` as the output while `ck-mcp/src/lib.rs:L562-L569` returned `context_bundle` first with the packet deprecated. Reading the handler's JSON construction exposed the drift; the schema docs alone did not.
+- Scope: any doc describing MCP tool responses or cross-system envelopes.
+- Confidence: high
+
+## Lesson: `file:///` links in repository docs resolve to the host filesystem root, not the repo
+- Observed: 2026-10-24
+- Evidence: 33 links across 9 pages used `file:///crates/...`; a link checker resolved them to `/crates/...` and failed. Rewriting to depth-correct relative paths (`../crates/` from `docs/`, `../../crates/` from `docs/<dir>/`) made every link resolve.
+- Scope: markdown documentation in any repository.
+- Confidence: high

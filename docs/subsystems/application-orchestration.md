@@ -48,7 +48,7 @@ graph TD
 
 ## 5. Core Abstractions
 
-### `AppServices` ([`crates/ck-app/src/lib.rs`](file:///crates/ck-app/src/lib.rs#L15-L26))
+### `AppServices` ([`crates/ck-app/src/lib.rs`](../../crates/ck-app/src/lib.rs#L15-L26))
 The struct holds boxed trait objects for all ports:
 ```rust
 pub struct AppServices {
@@ -62,6 +62,8 @@ pub struct AppServices {
     chunker: Box<dyn Chunker>,
     embedding: Option<Box<dyn EmbeddingPort>>,
     vector_search: Option<Box<dyn VectorSearchPort>>,
+    kind_adapters: Vec<(String, Box<dyn SourceAdapter>)>,
+    context_effects: Option<Arc<ContextEffectStore>>,
 }
 ```
 
@@ -73,6 +75,8 @@ Every use case is represented by explicit, strongly typed request and response p
 * `RefreshSourceRequest` / `RefreshSourceResponse`
 * `QueryReferenceRequest` / `QueryReferenceResponse`
 * `ResolveReferenceRequest` / `ResolveReferenceResponse`
+* `ContextRequirement` / `ContextResolution` (context pipeline)
+* `Vec<ContextEffect>` / `ContextEffectIngestReport` (calibration)
 * `RetentionPolicy` / `RetentionGcReport`
 
 ---
@@ -99,16 +103,31 @@ Every use case is represented by explicit, strongly typed request and response p
 
 ### Intent-Weighted Reference Retrieval (`query_reference`)
 1. Resolves target corpora from `source_scope`.
-2. Queries FTS5 for top lexical matches using SQLite BM25.
-3. If semantic embeddings are configured, queries SQLite vector store for cosine similarity.
-4. Calls `RankerPort::rank_results`, applying the intent's `WeightProfile`.
-5. De-duplicates results by `document_id`.
-6. Resolves parent document metadata to construct citations with line and heading anchors.
+2. Rejects a private corpus that is not covered by the caller scope.
+3. Queries FTS5 for top lexical matches using SQLite BM25.
+4. If semantic embeddings are configured, queries SQLite vector store for cosine similarity.
+5. Calls `RankerPort::rank_results`, applying the intent's `WeightProfile`.
+6. De-duplicates results by `document_id`.
+7. Resolves parent document metadata to construct citations with line and heading anchors.
+
+### Bounded Context Resolution (`resolve_context`, `crates/ck-app/src/context.rs`)
+The eight-stage pipeline used by `context_required`:
+1. **Data access**: exclusions and POL-ACL-002 scope enforcement run before retrieval. Refusal yields `requires_scope` or `inaccessible` with reason `corpus_scope_unresolved` or `corpus_excluded`.
+2. **Retrieval**: queries each requested corpus, merges candidates, sorts by score.
+3. **Freshness**: drops results older than `freshness.max_age_secs`; unknown age is never stale.
+4. **Budget**: enforces `max_results` and an optional token ceiling, recording `max_results_reached` or `token_budget_exhausted`.
+5. **Availability**: unregistered requested corpora become `corpus_not_found` omissions.
+6. **Required concepts**: absent concepts become `required_distinction_absent` omissions. An empty kept set selects the reason by fixed precedence: `budget_exhausted`, `no_fresh_content`, `corpus_not_found`, `no_matching_content`.
+7. **Calibration**: reads the per-world effect ledger, multiplies affected scores by `1 - penalty`, caps penalties at 0.50, and re-sorts.
+8. **Verdict**: no omissions means `Complete`; any omission means `Partial`; no references means `None`.
+
+### Effect Ingestion (`ingest_context_effects`)
+Validates each `ContextEffect` (pinned `world_ref`, `sha256:` bundle hash, settlement-backed `evidence_ref`) and appends it to the world's JSONL ledger. Re-ingest is idempotent by `effect_id`; rejected records are counted, never silently dropped.
 
 ---
 
 ## 7. State
-`AppServices` is internally stateless. It holds immutable trait objects (`Box<dyn Port>`). All mutable state is stored in SQLite or on the filesystem via the ports.
+`AppServices` holds no request-scoped mutable state. It owns immutable trait objects (`Box<dyn Port>`), a kind-indexed adapter list, and an optional `Arc<ContextEffectStore>`. Durable state lives in SQLite, the artifact directory, or the per-world effect ledger.
 
 ---
 
@@ -131,4 +150,6 @@ Constructed in `main.rs::wire_app` during service startup and wrapped in an `Arc
 ---
 
 ## 11. Source Trail
-* `crates/ck-app/src/lib.rs` — `AppServices` definition, `store_context` (L158), `recall_context` (L293), `ingest_source` (L348), `query_reference` (L536), `resolve_reference` (L1785), `refresh_source` (L1881), `run_retention_gc` (L50).
+* `crates/ck-app/src/lib.rs` — `AppServices` definition (L21), `adapter_for_kind` (L176), `run_retention_gc` (L62), `store_context` (L206), `recall_context` (L339), `ingest_source` (L393), `query_reference` (L590), `resolve_reference` (L1840), `refresh_source` (L1934), `get_status` (L1964).
+* `crates/ck-app/src/context.rs` — `ContextRequirement` (L69), `ContextAccess` (L120), `resolve_context` (L245), `ingest_context_effects` (L579).
+* `crates/ck-app/src/context_effect.rs` — effect validation, per-world summary, penalty cap.

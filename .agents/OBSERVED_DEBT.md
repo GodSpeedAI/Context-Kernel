@@ -15,15 +15,18 @@ Status legend: [OPEN] unresolved · [MITIGATED] addressed but residual · [RESOL
 - [MITIGATED] Web SSRF fails closed on DNS errors/empty resolution. RESIDUAL: DNS rebinding — validation and connection use separate resolutions (pinning validated IP into `ureq` not done; adapter still not wired into the binary).
 
 ## Architectural
-- [OPEN] GitHub/web adapters implemented + tested but not runtime-wired (`AppServices` takes a single `source_adapter`).
+- [OPEN] GitHub/web adapters implemented + tested but not registered. Multi-kind routing now exists (`AppServices::kind_adapters`, `adapter_for_kind`); `ck-bin` registers only `learning_proposals_jsonl`, and `ck-bin/Cargo.toml` declares no dependency on either crate. Next move: add deps and call `with_source_adapter_kind` in `wire_app` (evidence: `crates/ck-bin/src/main.rs:L376-L395`, `crates/ck-app/src/lib.rs:L34,L176`).
 - [OPEN] Scheduler crate tested but bypassed by a separate runtime loop.
-- [OPEN] ACL context retrieval introduces a concrete filesystem-adapter dependency into `ck-mcp`.
+- [MITIGATED] ACL context retrieval no longer constructs filesystem/ledger readers: it calls `AppServices::ingest_source` with `source_kind` and `resolve_context`. RESIDUAL: `ck-mcp/Cargo.toml` still declares `ck-adapter-filesystem` as a normal dependency, used only by test helpers (`crates/ck-mcp/src/lib.rs:L871`, inside `#[cfg(test)]`); move it to `[dev-dependencies]`.
 - [OPEN] `StoragePort` is broad enough to force large inert test implementations.
+- [OPEN] The settlement-backed `ContextEffectStore` (append-only JSONL, per-world) is implemented inside `ck-app` (`crates/ck-app/src/context_effect.rs`), so application logic owns a file-format detail with no port. Next move: extract a `ContextEffectPort` in `ck-core` and move JSONL IO to an adapter crate (evidence: `crates/ck-app/src/context_effect.rs:L201`, wired at `crates/ck-bin/src/main.rs:L430`).
+- [OPEN] Documentation had broken `file:///crates/...` links in 9 pages (they resolve to filesystem root `/crates`, not the repo). Fixed on 2026-10-24 by rewriting to depth-correct relative paths; a link-check should be part of any docs CI (evidence: `rg 'file:///' docs` now returns nothing).
+- [OPEN] Repo `AGENTS.md` mandates `just context-check` before handoff, but there is no justfile at the repo root, so the gate cannot run (evidence: `ls justfile Justfile` both absent).
 
 ## Product Contract
 - [OPEN] `retrieval.semantic_enabled`, `mcp.enable_stdio`, `mcp.sse.base_path`, `auth.trust_mode` parsed but ignored (observability fields now wired).
 - [RESOLVED] Freshness score ignores timestamp age and TTL.
-- [OPEN] README overstates runtime source-adapter support (GitHub/web).
+- [MITIGATED] Root README tool list and SWE_SEED section updated on 2026-10-24 to the bundle-first surface. RESIDUAL: the README does not state that GitHub/web adapters are unwired; consider an explicit status note (evidence: `README.md` core tool sections).
 
 ## Reports
 - Audit: `.agents/reports/neatcode-audit-2026-07-29.md`.

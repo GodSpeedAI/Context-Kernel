@@ -347,3 +347,13 @@
   test green (real binary); `scripts/e2e-world-loop.sh` EXIT=0 (all 7 hops,
   CEP reference validator, 3 refusal paths); CEP_REPO-gated conformance green.
 - Notes: Fixed clippy warnings (option_map_unit_fn, unnecessary_lazy_evaluations). Used parallel subagent delegation for integration tests and periodic refresh implementation.
+
+## 2026-10-24 — Documentation reconciliation for the context pipeline
+
+- Scope: `docs/**`, root `README.md`, `.agents/**`. No Rust, tests, config, deps, CI, or build changes.
+- Reconciled bundle-first wire semantics across `docs/README.md`, `concepts.md`, `mental-model.md`, `source-map.md`, `security.md`, `reference/mcp-tools.md`, `subsystems/{mcp-and-protocols,application-orchestration,retrieval-and-ranking}.md`, `explanation/{retrieval-and-ranking-design,known-limits-and-debt}.md`, `troubleshooting.md`, `workflows/agentic-capability-loop.md`, `mcp-contracts.md`, `documentation-map.md`, root `README.md`.
+- Added `docs/workflows/context-requirement-resolution.md` (stage-by-stage trace, reason/omission tables, calibration loop) and `docs/explainers/context-requirement-explorer.html` (offline, single file, in-page canonical-JSON SHA-256 + tamper detection, 11-stage stepper, presets for every terminal branch).
+- Fixed 33 broken `file:///crates/` links across 9 docs pages; scripted relative-link check now resolves every `docs/**/*.md` link and every root README link.
+- Corrected the stale single-adapter claim in `known-limits-and-debt.md`: kind routing exists; GitHub/Web registration is the remaining gap.
+- Verified: HTML JS passes `node --check`; SHA-256 matches node crypto on known vectors; headless Chromium screenshots at 1280x2000, 1280x4200, and 430x2600 plus DOM dump confirm layout and state transitions; behavior harness covers complete/budget/cap/scope/excluded/freshness/no-match/corpus-missing/ingress/calibration/concept-absent/optional branches (all passed).
+- Not run: `cargo test` (no code changed; last recorded 265 passed on 2026-10-07) and `just context-check` (no justfile exists; recorded in `open_questions.md`).

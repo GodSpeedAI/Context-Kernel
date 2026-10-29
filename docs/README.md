@@ -25,10 +25,11 @@ flowchart TD
     subgraph MCP["MCP Serving & Boundaries"]
         MCPService["ck-mcp::McpService\n(Tool Dispatch & Serialization)"]
         ACL["ck-mcp::AclContextAgent\n(E2/E3 Canonical Context Agent)"]
+        Bundle["ck-mcp::cep_bundle\n(Truthfulness Rules + Integrity Seal)"]
     end
 
     subgraph App["Application Core (ck-app)"]
-        AppServices["AppServices Orchestrator"]
+        AppServices["AppServices Orchestrator\n(resolve_context, ingest, recall)"]
     end
 
     subgraph Subsystems["Domain Ports & Adapters"]
@@ -38,6 +39,7 @@ flowchart TD
         Artifacts["ck-artifacts\n(FileArtifactStore: Content-Addressed Payloads)"]
         Vectors["ck-vector + ck-embeddings\n(SqliteVectorStore + OpenAI Provider)"]
         Adapters["Source Adapters\n(Filesystem [shipped], GitHub/Web [library])"]
+        Effects["Context Effect Store\n(Per-World JSONL Calibration Ledger)"]
     end
 
     Agent -->|JSON-RPC via Stdin/Stdout| Stdio
@@ -50,6 +52,11 @@ flowchart TD
     SSE --> MCPService
     MCPService -->|Canonical Tools| AppServices
     MCPService -->|context_required| ACL
+    MCPService -->|ingest_context_effects| AppServices
+
+    ACL -->|resolve_context| AppServices
+    ACL -->|ContextResolution| Bundle
+    Bundle -->|sealed context_bundle| MCPService
 
     AppServices --> Storage
     AppServices --> FTS
@@ -57,12 +64,12 @@ flowchart TD
     AppServices --> Artifacts
     AppServices --> Vectors
     AppServices --> Adapters
-    ACL -->|Filesystem Corpus & Ledger| Storage
+    AppServices --> Effects
 ```
 
 ---
 
-## The 8 Concepts You Need First
+## The 11 Concepts You Need First
 
 1. **Source**: An origin of external documentation (a local directory tree, a GitHub repository, or a web domain) associated with a freshness TTL and update revision tracking.
 2. **Corpus**: An administrative retrieval boundary grouping one or more sources. Corpora define authorization scopes (`allow_corpora`) and partition documents.
@@ -71,7 +78,10 @@ flowchart TD
 5. **Session & Session Event**: A durable agent interaction timeline. Events record agent decisions, requirements, constraints, and notes. Events are classified as `Pinnable`, `Permanent`, or `Ephemeral`.
 6. **Artifact Store**: A content-addressed filesystem storage area (`<data_dir>/artifacts/`) that stores large text or binary payloads offloaded from prompts. Session events reference artifacts by `artifact_id` and SHA-256 checksum.
 7. **Retention GC**: A startup maintenance sweep that purges unpinned session events, inactive sessions, completed refresh jobs, and stale artifact files while strictly preserving `pinned` events.
-8. **E2/E3 Boundary (`context_required`)**: The frozen convergence contract with the wider GodSpeed ecosystem (SWE_SEED and SEA-Forge). Context Kernel acts purely as contextual authority (resolving citations into a `ContextPacketCreated` payload) and never manufactures action authorization.
+8. **E2/E3 Boundary (`context_required`)**: The frozen convergence contract with the wider GodSpeed ecosystem (SWE_SEED and SEA-Forge). Context Kernel acts purely as contextual authority, resolving citations into a CEP `context_bundle` and never manufacturing action authorization.
+9. **Context Requirement**: The typed demand a caller makes (`ContextRequirement`): semantic world pin, query, corpora, required concepts, freshness, result cap, and token budget. `context_required` projects an E2 envelope onto this type before any retrieval runs.
+10. **Context Bundle**: The canonical artifact (`godspeed.context_bundle`) returned by `context_required`. It carries references, omissions, a completeness status, and a SHA-256 integrity block computed over canonical JSON. The legacy `ContextPacketCreated` envelope remains available for dual-read migration.
+11. **Context Effect**: A settlement-backed calibration record (`source_contradicted` or `source_stale`) that adjusts ranking for one pinned semantic world. Effects are append-only, capped at 0.50 per source, and never mutate stored chunks.
 
 ---
 
@@ -138,6 +148,7 @@ Choose your path based on what you need to achieve right now:
 * [Reference Query & Resolution](workflows/reference-query-and-resolution.md) — Lexical search, vector search, hybrid scoring, and citation building.
 * [Session Context Continuity](workflows/session-context-continuity.md) — Storing events, offloading payloads to artifacts, recalling history, and retention GC.
 * [Agentic Capability Loop](workflows/agentic-capability-loop.md) — The `context_required` tool and the frozen E2/E3 boundary with SWE_SEED and SEA-Forge.
+* [Context Requirement Resolution](workflows/context-requirement-resolution.md) — How one requirement passes ingress gates, eight resolution stages, calibration, and bundle projection, plus the interactive [Context Requirement Explorer](explainers/context-requirement-explorer.html).
 
 ### 💡 Understand Design Rationale & Trade-offs
 * [Architectural Decisions](explanation/architectural-decisions.md) — Why ports-and-adapters, why SQLite+FTS5, why single-binary delivery.

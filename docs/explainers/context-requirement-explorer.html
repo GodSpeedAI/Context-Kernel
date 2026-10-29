@@ -1,0 +1,1680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Context Requirement Explorer · Context Kernel</title>
+<meta name="description" content="Interactive walkthrough of one context_required call through ingress gates, eight resolution stages, and the integrity-sealed context bundle it returns.">
+<style>
+:root{
+  --paper: oklch(98.2% 0.005 85);
+  --panel: oklch(96.3% 0.008 85);
+  --panel-2: oklch(93.8% 0.011 85);
+  --ink: oklch(27% 0.021 255);
+  --ink-2: oklch(44% 0.018 255);
+  --ink-3: oklch(58% 0.014 255);
+  --line: oklch(87.5% 0.008 85);
+  --line-2: oklch(79% 0.011 85);
+  --accent: oklch(45% 0.115 252);
+  --accent-soft: oklch(93.5% 0.026 252);
+  --ok: oklch(47% 0.105 152);
+  --ok-soft: oklch(95% 0.032 152);
+  --warn: oklch(55% 0.118 68);
+  --warn-soft: oklch(96% 0.037 80);
+  --bad: oklch(49% 0.155 25);
+  --bad-soft: oklch(96% 0.028 25);
+  --serif: "Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;
+  --mono: ui-monospace,"SF Mono","Cascadia Mono","Cascadia Code",Menlo,Consolas,"Liberation Mono",monospace;
+  --radius: 4px;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;
+  background:var(--paper);
+  color:var(--ink);
+  font-family:var(--serif);
+  font-size:16px;
+  line-height:1.55;
+  text-rendering:optimizeLegibility;
+}
+code,pre,kbd,samp{font-family:var(--mono)}
+code{font-size:.9em}
+a{color:var(--accent);text-decoration-thickness:1px;text-underline-offset:2px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.wrap{max-width:1200px;margin:0 auto;padding:28px 24px 64px}
+.page-head{max-width:76ch}
+.kicker{
+  margin:0 0 10px;
+  font-family:var(--mono);
+  font-size:11px;
+  letter-spacing:.13em;
+  text-transform:uppercase;
+  color:var(--ink-3);
+}
+h1{
+  margin:0 0 12px;
+  font-size:clamp(27px,3.4vw,36px);
+  line-height:1.1;
+  font-weight:600;
+  letter-spacing:-.012em;
+}
+.lede{margin:0 0 10px;font-size:17px;line-height:1.5;color:var(--ink-2);max-width:72ch}
+.fidelity{
+  margin:0;
+  font-family:var(--mono);
+  font-size:11.5px;
+  line-height:1.6;
+  color:var(--ink-3);
+  border-left:2px solid var(--line-2);
+  padding-left:10px;
+}
+.presets{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:6px;
+  margin:22px 0 18px;
+  padding-bottom:16px;
+  border-bottom:1px solid var(--line);
+}
+.presets-label{
+  font-family:var(--mono);
+  font-size:10.5px;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+  color:var(--ink-3);
+  margin-right:6px;
+}
+button{
+  font-family:var(--mono);
+  font-size:12px;
+  color:var(--ink);
+  background:var(--paper);
+  border:1px solid var(--line-2);
+  border-radius:var(--radius);
+  padding:5px 10px;
+  cursor:pointer;
+  transition:background-color .12s ease,border-color .12s ease,color .12s ease;
+}
+button:hover{background:var(--panel-2);border-color:var(--ink-3)}
+button[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+button:disabled{opacity:.45;cursor:not-allowed}
+.answer{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  border:1px solid var(--line-2);
+  border-radius:var(--radius);
+  background:var(--panel);
+  margin-bottom:24px;
+  overflow:hidden;
+}
+.answer-cell{padding:12px 16px;border-left:1px solid var(--line)}
+.answer-cell:first-child{border-left:0}
+.answer-label{
+  display:block;
+  font-family:var(--mono);
+  font-size:10px;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+  color:var(--ink-3);
+  margin-bottom:3px;
+}
+.answer-value{
+  font-family:var(--mono);
+  font-size:15px;
+  font-weight:600;
+  word-break:break-word;
+}
+.v-ok{color:var(--ok)}
+.v-warn{color:var(--warn)}
+.v-bad{color:var(--bad)}
+.v-neutral{color:var(--ink-2)}
+.grid{
+  display:grid;
+  grid-template-columns:310px minmax(0,1fr);
+  gap:24px;
+  align-items:start;
+}
+@media (max-width:920px){
+  .grid{grid-template-columns:1fr}
+  .answer{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .answer-cell:nth-child(3){border-left:0;border-top:1px solid var(--line)}
+  .answer-cell:nth-child(4){border-top:1px solid var(--line)}
+}
+@media (max-width:520px){
+  .answer{grid-template-columns:1fr}
+  .answer-cell{border-left:0;border-top:1px solid var(--line)}
+  .answer-cell:first-child{border-top:0}
+}
+.panel{
+  background:var(--panel);
+  border:1px solid var(--line-2);
+  border-radius:var(--radius);
+  padding:16px 18px 18px;
+}
+.controls{padding:14px 16px 16px}
+.controls fieldset{
+  border:0;
+  border-top:1px solid var(--line);
+  margin:0;
+  padding:14px 0 2px;
+}
+.controls fieldset:first-of-type{border-top:0;padding-top:2px}
+legend{
+  font-family:var(--mono);
+  font-size:10.5px;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+  color:var(--ink-2);
+  padding:0 6px 0 0;
+}
+.field{display:flex;flex-direction:column;gap:3px;margin:0 0 10px}
+.field > label,.field-label{
+  font-family:var(--mono);
+  font-size:11px;
+  color:var(--ink-2);
+  letter-spacing:.01em;
+}
+input[type="text"],input[type="number"],select{
+  font-family:var(--mono);
+  font-size:12px;
+  color:var(--ink);
+  background:var(--paper);
+  border:1px solid var(--line-2);
+  border-radius:3px;
+  padding:5px 7px;
+  width:100%;
+  min-width:0;
+}
+input[type="number"]{max-width:110px}
+select{max-width:100%}
+input[type="checkbox"]{accent-color:var(--accent);width:14px;height:14px;margin:0 6px 0 0;vertical-align:-2px}
+.check{display:flex;align-items:flex-start;gap:0;margin:0 0 9px;font-size:13px;color:var(--ink-2);cursor:pointer}
+.check span{font-family:var(--mono);font-size:11.5px;line-height:1.45}
+.pair{display:grid;grid-template-columns:1fr 96px;gap:8px;align-items:end}
+.pair .field{margin-bottom:9px}
+.inline-btn{margin:0 0 10px;width:100%}
+.hint{
+  font-family:var(--mono);
+  font-size:10.5px;
+  color:var(--ink-3);
+  margin:-4px 0 10px;
+  line-height:1.5;
+}
+.panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+h2{
+  margin:0;
+  font-family:var(--mono);
+  font-size:11px;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+  color:var(--ink-2);
+  font-weight:600;
+}
+.stepper-controls{display:flex;gap:5px;flex-wrap:wrap}
+.stepper-controls button{padding:3px 8px;font-size:11px}
+.stages{list-style:none;margin:0;padding:0;position:relative}
+.stage{
+  display:grid;
+  grid-template-columns:26px minmax(0,1fr);
+  gap:11px;
+  padding:11px 8px 11px 0;
+  border-top:1px solid var(--line);
+  border-radius:3px;
+  transition:background-color .15s ease;
+}
+.stage:first-child{border-top:0}
+.stage.is-current{background:var(--accent-soft)}
+.stage-n{
+  font-family:var(--mono);
+  font-size:11px;
+  font-weight:600;
+  color:var(--ink-3);
+  border:1px solid var(--line-2);
+  border-radius:50%;
+  width:24px;
+  height:24px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  margin-top:1px;
+  background:var(--paper);
+}
+.stage.is-current .stage-n{border-color:var(--accent);color:var(--accent)}
+.stage-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.stage h3{margin:0;font-family:var(--mono);font-size:12.5px;font-weight:600;letter-spacing:.01em}
+.chip{
+  font-family:var(--mono);
+  font-size:10px;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+  border:1px solid currentColor;
+  border-radius:2px;
+  padding:0 5px;
+  line-height:1.6;
+  white-space:nowrap;
+}
+.chip--ok{color:var(--ok);background:var(--ok-soft)}
+.chip--warn{color:var(--warn);background:var(--warn-soft)}
+.chip--bad{color:var(--bad);background:var(--bad-soft)}
+.chip--accent{color:var(--accent);background:var(--accent-soft)}
+.chip--neutral{color:var(--ink-3);background:var(--panel-2)}
+.stage p{margin:3px 0 0;font-size:13.5px;line-height:1.5;color:var(--ink-2);max-width:70ch}
+.stage-loc{
+  margin-top:4px !important;
+  font-family:var(--mono) !important;
+  font-size:10.5px !important;
+  color:var(--ink-3) !important;
+  letter-spacing:.01em;
+}
+.output{display:flex;flex-direction:column;gap:24px;min-width:0}
+.verdict{
+  font-size:15px;
+  line-height:1.5;
+  padding:10px 12px;
+  border:1px solid var(--line-2);
+  border-radius:3px;
+  background:var(--paper);
+  margin:0 0 12px;
+}
+.verdict strong{font-weight:600}
+.verdict--ok{border-color:color-mix(in oklch,var(--ok) 45%,var(--line));background:var(--ok-soft)}
+.verdict--warn{border-color:color-mix(in oklch,var(--warn) 45%,var(--line));background:var(--warn-soft)}
+.verdict--bad{border-color:color-mix(in oklch,var(--bad) 45%,var(--line));background:var(--bad-soft)}
+.facts{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
+.fact{
+  font-family:var(--mono);
+  font-size:11px;
+  color:var(--ink-2);
+  background:var(--panel-2);
+  border:1px solid var(--line);
+  border-radius:2px;
+  padding:2px 6px;
+}
+.fact b{font-weight:600;color:var(--ink)}
+.omissions{margin:0 0 14px}
+.omissions:empty{display:none}
+.omissions h3,.bundle-bar h3,.request-preview h3,.projection-note h3{
+  margin:0 0 5px;
+  font-family:var(--mono);
+  font-size:10.5px;
+  letter-spacing:.11em;
+  text-transform:uppercase;
+  color:var(--ink-3);
+  font-weight:600;
+}
+table{border-collapse:collapse;width:100%;font-family:var(--mono);font-size:11.5px}
+th,td{text-align:left;padding:4px 8px 4px 0;border-top:1px solid var(--line);vertical-align:top}
+th{color:var(--ink-3);font-weight:500;letter-spacing:.04em;text-transform:uppercase;font-size:9.5px;border-top:0}
+td:first-child{white-space:nowrap;color:var(--ink)}
+.bundle-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:4px 0 6px}
+.bundle-bar h3{margin:0}
+.bundle-bar div{display:flex;gap:5px;flex-wrap:wrap}
+.bundle-bar button{padding:3px 8px;font-size:11px}
+.integrity-note{
+  font-family:var(--mono);
+  font-size:10.5px;
+  color:var(--ink-3);
+  margin:0 0 6px;
+  word-break:break-all;
+}
+pre{
+  margin:0;
+  padding:12px;
+  background:var(--paper);
+  border:1px solid var(--line);
+  border-radius:3px;
+  font-size:11.5px;
+  line-height:1.55;
+  overflow:auto;
+  max-height:440px;
+  tab-size:2;
+}
+pre:focus-visible{outline-offset:0}
+details{margin-top:14px}
+summary{
+  cursor:pointer;
+  font-family:var(--mono);
+  font-size:11px;
+  color:var(--ink-2);
+  padding:4px 0;
+}
+summary:hover{color:var(--ink)}
+.request-preview{margin-top:16px;border-top:1px solid var(--line);padding-top:12px}
+.request-preview pre{max-height:260px}
+footer{
+  margin-top:44px;
+  padding-top:16px;
+  border-top:1px solid var(--line);
+  font-family:var(--mono);
+  font-size:11px;
+  line-height:1.7;
+  color:var(--ink-3);
+  max-width:88ch;
+}
+footer p{margin:0 0 6px}
+footer a{color:var(--ink-2)}
+.legend{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
+.noscript{
+  margin:16px 0;
+  padding:10px 12px;
+  border:1px solid var(--bad);
+  background:var(--bad-soft);
+  color:var(--bad);
+  font-family:var(--mono);
+  font-size:12px;
+}
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation:none !important;transition:none !important;scroll-behavior:auto !important}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="page-head">
+    <p class="kicker">Context Kernel · protocol datasheet</p>
+    <h1>Context Requirement Explorer</h1>
+    <p class="lede">One <code>context_required</code> call, followed end to end. Set the request, watch each gate and stage decide, and read the artifact that comes back. Every answer is one of three things: cited context, governed absence, or an empty optional result.</p>
+    <p class="fidelity">Stages, gates, reason codes, weights, and the hash rule mirror <code>crates/ck-app/src/context.rs</code>, <code>crates/ck-mcp/src/cep_bundle.rs</code>, and <code>crates/ck-mcp/src/agentic_capability_loop.rs</code>. Candidate chunks, scores, ages, and token counts are illustrative fixtures; semantic merging is not simulated.</p>
+  </header>
+
+  <nav class="presets" aria-label="Scenario presets">
+    <span class="presets-label">Scenarios</span>
+    <button type="button" data-preset="complete" aria-pressed="true">Complete</button>
+    <button type="button" data-preset="budget-partial" aria-pressed="false">Token budget cut</button>
+    <button type="button" data-preset="budget-exhausted" aria-pressed="false">Budget exhausted</button>
+    <button type="button" data-preset="capped" aria-pressed="false">Result cap</button>
+    <button type="button" data-preset="requires-scope" aria-pressed="false">Requires scope</button>
+    <button type="button" data-preset="out-of-scope" aria-pressed="false">Out of scope</button>
+    <button type="button" data-preset="excluded" aria-pressed="false">Excluded</button>
+    <button type="button" data-preset="no-fresh" aria-pressed="false">No fresh content</button>
+    <button type="button" data-preset="no-match" aria-pressed="false">Nothing matched</button>
+    <button type="button" data-preset="corpus-missing" aria-pressed="false">Corpus not found</button>
+    <button type="button" data-preset="contradicted" aria-pressed="false">Contradicted source</button>
+    <button type="button" data-preset="ingress-rejected" aria-pressed="false">Rejected at ingress</button>
+  </nav>
+
+  <section class="answer" aria-live="polite" aria-atomic="true">
+    <div class="answer-cell">
+      <span class="answer-label">Outcome</span>
+      <span class="answer-value" id="ansOutcome">cited</span>
+    </div>
+    <div class="answer-cell">
+      <span class="answer-label">Reason</span>
+      <span class="answer-value" id="ansReason">none</span>
+    </div>
+    <div class="answer-cell">
+      <span class="answer-label">Access</span>
+      <span class="answer-value" id="ansAccess">accessible</span>
+    </div>
+    <div class="answer-cell">
+      <span class="answer-label">Completeness</span>
+      <span class="answer-value" id="ansComplete">complete_for_context</span>
+    </div>
+  </section>
+
+  <noscript><p class="noscript">This explorer needs JavaScript. The underlying behavior is described in <code>docs/workflows/context-requirement-resolution.md</code>.</p></noscript>
+
+  <main class="grid">
+    <form class="panel controls" id="controls" autocomplete="off">
+      <fieldset>
+        <legend>Ingress envelope</legend>
+        <div class="field">
+          <label for="srcAgent">source_agent</label>
+          <select id="srcAgent">
+            <option value="swe-seed">swe-seed</option>
+            <option value="swe_seed">swe_seed</option>
+            <option value="gauntlet">gauntlet (rejected)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="eventId">event_id</label>
+          <input type="text" id="eventId" value="evt-01J9Z4Q7K3M2">
+        </div>
+        <div class="field">
+          <label for="worldRef">world_ref</label>
+          <input type="text" id="worldRef" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="domainHash">domain_model_hash</label>
+          <input type="text" id="domainHash" spellcheck="false">
+        </div>
+        <button type="button" class="inline-btn" id="pseudoHash">Insert the fallback pseudo-hash</button>
+        <div class="field">
+          <label for="workReq">work_request_id</label>
+          <input type="text" id="workReq" value="wr-1042">
+        </div>
+        <label class="check"><input type="checkbox" id="required" checked><span>Caller marks the acquisition required</span></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Corpus and scope</legend>
+        <div class="field">
+          <label for="corpus">corpus state</label>
+          <select id="corpus">
+            <option value="registered-public">registered, public</option>
+            <option value="registered-private">registered, private</option>
+            <option value="available">unregistered, configured under the root</option>
+            <option value="missing">unregistered, directory missing</option>
+            <option value="unconfigured">corpus root unconfigured</option>
+            <option value="failure">ingest failure</option>
+          </select>
+        </div>
+        <label class="check"><input type="checkbox" id="isPrivate"><span>Caller asserts the corpus is private</span></label>
+        <div class="field">
+          <label for="scope">scope_claim (comma separated)</label>
+          <input type="text" id="scope" value="" placeholder="corpus id">
+        </div>
+        <label class="check"><input type="checkbox" id="excluded"><span>Policy excludes this corpus</span></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Retrieval</legend>
+        <label class="check"><input type="checkbox" id="matches" checked><span>Lexical query matches corpus content</span></label>
+        <div class="field">
+          <label for="maxResults">max_results</label>
+          <input type="number" id="maxResults" value="5" min="0" max="10" step="1">
+        </div>
+        <div class="pair">
+          <label class="check"><input type="checkbox" id="budgetOn"><span>Token ceiling</span></label>
+          <div class="field">
+            <label for="budgetTokens">tokens</label>
+            <input type="number" id="budgetTokens" value="20" min="0" step="1">
+          </div>
+        </div>
+        <div class="pair">
+          <label class="check"><input type="checkbox" id="freshOn"><span>Freshness window</span></label>
+          <div class="field">
+            <label for="freshSecs">seconds</label>
+            <input type="number" id="freshSecs" value="3600" min="0" step="1">
+          </div>
+        </div>
+        <div class="field">
+          <label for="requiredConcepts">required_concepts (comma separated)</label>
+          <input type="text" id="requiredConcepts" value="" placeholder="e.g. rollback">
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Calibration</legend>
+        <label class="check"><input type="checkbox" id="calibOn"><span>Apply settlement-backed penalties</span></label>
+        <div class="field">
+          <label for="effectSource">effect target source</label>
+          <select id="effectSource">
+            <option value="ctxfs:docs">ctxfs:docs</option>
+            <option value="ctxfs:archive">ctxfs:archive</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="effectKind">effect kind</label>
+          <select id="effectKind">
+            <option value="source_contradicted">source_contradicted (0.20)</option>
+            <option value="source_stale">source_stale (0.10)</option>
+          </select>
+        </div>
+        <p class="hint">Penalties accumulate per source and cap at 0.50. Score is multiplied by 1 minus the penalty, then results re-sort.</p>
+      </fieldset>
+    </form>
+
+    <div class="output">
+      <section class="panel" aria-labelledby="pathTitle">
+        <div class="panel-head">
+          <h2 id="pathTitle">Resolution path</h2>
+          <div class="stepper-controls">
+            <button type="button" id="stepPrev">Prev</button>
+            <button type="button" id="stepNext">Next</button>
+            <button type="button" id="stepPlay" aria-pressed="false">Play</button>
+          </div>
+        </div>
+        <div class="legend" aria-hidden="true">
+          <span class="chip chip--ok">pass</span>
+          <span class="chip chip--warn">dropped</span>
+          <span class="chip chip--bad">blocked</span>
+          <span class="chip chip--accent">fired</span>
+          <span class="chip chip--neutral">skipped</span>
+        </div>
+        <ol class="stages" id="stages"></ol>
+      </section>
+
+      <section class="panel" aria-labelledby="artifactTitle">
+        <div class="panel-head">
+          <h2 id="artifactTitle">Returned artifact</h2>
+          <label class="check" style="margin:0"><input type="checkbox" id="dualRead"><span>Deprecated dual-read fields</span></label>
+        </div>
+        <p class="verdict" id="verdict"></p>
+        <div class="facts" id="facts"></div>
+        <div class="omissions" id="omissions"></div>
+        <div class="bundle-bar">
+          <h3>context_bundle</h3>
+          <div>
+            <button type="button" id="verifyBtn">Verify integrity</button>
+            <button type="button" id="tamperBtn" aria-pressed="false">Tamper with reference</button>
+            <button type="button" id="copyBtn">Copy JSON</button>
+          </div>
+        </div>
+        <p class="integrity-note" id="integrityNote"></p>
+        <pre id="bundleJson" tabindex="0" aria-label="Context bundle JSON"></pre>
+        <details id="legacyWrap" hidden>
+          <summary>Deprecated context_envelope and context_packet</summary>
+          <pre id="legacyJson"></pre>
+        </details>
+        <div class="request-preview">
+          <h3>Request as received</h3>
+          <pre id="requestJson"></pre>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <footer>
+    <p>Source trail: <a href="../workflows/context-requirement-resolution.md">workflow page</a> · <a href="../mcp-contracts.md">MCP contracts</a> · <a href="../README.md">documentation index</a> · <code>../../crates/ck-app/src/context.rs</code> · <code>../../crates/ck-mcp/src/cep_bundle.rs</code></p>
+    <p>Illustrative fixtures: the three candidate chunks, their scores, ages, versions, and checksums. Semantic merging is described but not simulated. Token costs are whitespace word counts, the same approximation the implementation uses.</p>
+    <p>Single file, offline, no network requests, in-memory state only. Envelope timestamps and identifiers are generated in the browser, so the integrity hash differs per run while the verification rule stays the same.</p>
+  </footer>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var FALLBACK_PSEUDO_HASH = "dc144cbd71a483431301ca1bf32e95c014af4edba8dbcc525f505310e30a107e";
+  var CORPUS_ID = "docs";
+  var SRC_ID = "ctxfs:docs";
+  var CREQ_ID = "creq-01J9Z4Q7K3M2";
+
+  var CANDIDATES = [
+    {
+      chunk_id: "chk_101",
+      title: "Refresh coalescing",
+      heading: "Job coalescing",
+      uri: "docs/runbooks.md",
+      anchor: "job-coalescing",
+      excerpt: "An active refresh job is coalesced per source so duplicate runs cannot pile up…",
+      score: 0.71,
+      source: "ctxfs:docs",
+      ageH: 2,
+      version: "v3",
+      checksum: "4f1c2a9e7b3d5086c1e4a7f290b6d8c3e5a1f7b9d2c4e6081a3b5c7d9e0f2a4b",
+      trust: 0.8,
+      freshness: 0.9
+    },
+    {
+      chunk_id: "chk_102",
+      title: "Retention policy",
+      heading: "Pinned events",
+      uri: "docs/retention.md",
+      anchor: "pinned-events",
+      excerpt: "Pinned session events survive every retention sweep while unpinned events expire after the configured window…",
+      score: 0.64,
+      source: "ctxfs:docs",
+      ageH: 26,
+      version: "v3",
+      checksum: "9a7e4c1d2b8f6035e1c9a4b7d2f8e6c0a3b5d7f9e1c2a4b608d0f2a4c6e8b0d",
+      trust: 0.7,
+      freshness: 0.5
+    },
+    {
+      chunk_id: "chk_103",
+      title: "Historical notes",
+      heading: "Retention drafts",
+      uri: "old/notes.md",
+      anchor: "retention-drafts",
+      excerpt: "An earlier draft of the retention policy states that every stored event is kept indefinitely and never garbage collected, which predates the pinned event guarantee…",
+      score: 0.52,
+      source: "ctxfs:archive",
+      ageH: 400,
+      version: "v1",
+      checksum: null,
+      trust: 0.2,
+      freshness: 0.1
+    }
+  ];
+
+  var K = [
+    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+  ];
+
+  function rotr(x, n){ return ((x >>> n) | (x << (32 - n))) >>> 0; }
+
+  function sha256Bytes(bytes){
+    var l = bytes.length;
+    var padded = new Uint8Array(Math.ceil((l + 9) / 64) * 64);
+    padded.set(bytes);
+    padded[l] = 0x80;
+    var dv = new DataView(padded.buffer);
+    var bitLen = l * 8;
+    dv.setUint32(padded.length - 8, Math.floor(bitLen / 4294967296));
+    dv.setUint32(padded.length - 4, bitLen >>> 0);
+    var H = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+    var w = new Uint32Array(64);
+    for(var off = 0; off < padded.length; off += 64){
+      for(var i = 0; i < 16; i++){ w[i] = dv.getUint32(off + i * 4); }
+      for(var j = 16; j < 64; j++){
+        var s0 = (rotr(w[j-15],7) ^ rotr(w[j-15],18) ^ (w[j-15] >>> 3)) >>> 0;
+        var s1 = (rotr(w[j-2],17) ^ rotr(w[j-2],19) ^ (w[j-2] >>> 10)) >>> 0;
+        w[j] = (w[j-16] + s0 + w[j-7] + s1) >>> 0;
+      }
+      var a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+      for(var k = 0; k < 64; k++){
+        var S1 = (rotr(e,6) ^ rotr(e,11) ^ rotr(e,25)) >>> 0;
+        var ch = ((e & f) ^ ((~e) & g)) >>> 0;
+        var t1 = (h + S1 + ch + K[k] + w[k]) >>> 0;
+        var S0 = (rotr(a,2) ^ rotr(a,13) ^ rotr(a,22)) >>> 0;
+        var maj = ((a & b) ^ (a & c) ^ (b & c)) >>> 0;
+        var t2 = (S0 + maj) >>> 0;
+        h = g; g = f; f = e; e = (d + t1) >>> 0;
+        d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+      }
+      H[0] = (H[0] + a) >>> 0; H[1] = (H[1] + b) >>> 0;
+      H[2] = (H[2] + c) >>> 0; H[3] = (H[3] + d) >>> 0;
+      H[4] = (H[4] + e) >>> 0; H[5] = (H[5] + f) >>> 0;
+      H[6] = (H[6] + g) >>> 0; H[7] = (H[7] + h) >>> 0;
+    }
+    var out = "";
+    for(var m = 0; m < 8; m++){ out += H[m].toString(16).padStart(8, "0"); }
+    return out;
+  }
+
+  function sha256(text){
+    return sha256Bytes(new TextEncoder().encode(text));
+  }
+
+  function canon(value){
+    if(value === null || value === undefined){ return "null"; }
+    if(typeof value === "boolean"){ return value ? "true" : "false"; }
+    if(typeof value === "number"){
+      var n = Number(value.toFixed(6));
+      if(n === 0){ n = 0; }
+      return JSON.stringify(n);
+    }
+    if(typeof value === "string"){ return JSON.stringify(value); }
+    if(Array.isArray(value)){ return "[" + value.map(canon).join(",") + "]"; }
+    return "{" + Object.keys(value).sort().map(function(key){
+      return JSON.stringify(key) + ":" + canon(value[key]);
+    }).join(",") + "}";
+  }
+
+  function verifyWorldRef(raw){
+    var i = raw.indexOf("@sha256:");
+    if(i < 0){ return false; }
+    var namePart = raw.slice(0, i);
+    if(namePart.indexOf("world:") !== 0){ return false; }
+    var name = namePart.slice(6);
+    var digest = raw.slice(i + 8);
+    var digestOk = digest.length === 64 && /^[0-9a-f]+$/.test(digest);
+    var nameOk = name.length <= 64 && /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/.test(name);
+    return digestOk && nameOk;
+  }
+
+  function verifyDomainIdentity(hash){
+    if(hash.length !== 64 || !/^[0-9a-f]+$/.test(hash)){ return false; }
+    if(hash === FALLBACK_PSEUDO_HASH){ return false; }
+    if(/^0+$/.test(hash)){ return false; }
+    return true;
+  }
+
+  function words(text){
+    return text.trim().split(/\s+/).filter(Boolean).length;
+  }
+
+  function estTokens(c){
+    return words(c.title) + words(c.excerpt);
+  }
+
+  function el(id){ return document.getElementById(id); }
+
+  function node(tag, cls, text){
+    var n = document.createElement(tag);
+    if(cls){ n.className = cls; }
+    if(text !== undefined){ n.textContent = text; }
+    return n;
+  }
+
+  function randomId(){
+    var bytes = new Uint8Array(10);
+    if(window.crypto && window.crypto.getRandomValues){ window.crypto.getRandomValues(bytes); }
+    else { for(var i = 0; i < bytes.length; i++){ bytes[i] = Math.floor(Math.random() * 256); } }
+    var out = "";
+    for(var j = 0; j < bytes.length; j++){ out += bytes[j].toString(16).padStart(2, "0"); }
+    return out.toUpperCase();
+  }
+
+  function nowRfc3339(){
+    return new Date().toISOString().replace("Z", "+00:00");
+  }
+
+  function domainHash(){
+    return sha256("context-kernel.explorer.domain/v1");
+  }
+
+  function worldRef(){
+    return "world:acme-core@sha256:" + sha256("acme-core.world/v7");
+  }
+
+  var PRESETS = {
+    "complete": {},
+    "budget-partial": { budgetOn: true, budgetTokens: 20 },
+    "budget-exhausted": { budgetOn: true, budgetTokens: 10 },
+    "capped": { maxResults: 2 },
+    "requires-scope": { corpus: "registered-private", isPrivate: true, scope: "" },
+    "out-of-scope": { corpus: "registered-private", isPrivate: true, scope: "other-corpus" },
+    "excluded": { excluded: true },
+    "no-fresh": { freshOn: true, freshSecs: 3600 },
+    "no-match": { matches: false },
+    "corpus-missing": { corpus: "missing" },
+    "contradicted": { calibOn: true, effectSource: "ctxfs:docs", effectKind: "source_contradicted" },
+    "ingress-rejected": { worldRef: "world:acme-core" }
+  };
+
+  var DEFAULTS = {
+    srcAgent: "swe-seed",
+    eventId: "evt-01J9Z4Q7K3M2",
+    worldRef: "",
+    domainHash: "",
+    workReq: "wr-1042",
+    required: true,
+    corpus: "registered-public",
+    isPrivate: false,
+    scope: "",
+    excluded: false,
+    matches: true,
+    maxResults: 5,
+    budgetOn: false,
+    budgetTokens: 20,
+    freshOn: false,
+    freshSecs: 3600,
+    requiredConcepts: "",
+    calibOn: false,
+    effectSource: "ctxfs:docs",
+    effectKind: "source_contradicted"
+  };
+
+  var FIELDS = {
+    srcAgent: "srcAgent",
+    eventId: "eventId",
+    worldRef: "worldRef",
+    domainHash: "domainHash",
+    workReq: "workReq",
+    required: "required",
+    corpus: "corpus",
+    isPrivate: "isPrivate",
+    scope: "scope",
+    excluded: "excluded",
+    matches: "matches",
+    maxResults: "maxResults",
+    budgetOn: "budgetOn",
+    budgetTokens: "budgetTokens",
+    freshOn: "freshOn",
+    freshSecs: "freshSecs",
+    requiredConcepts: "requiredConcepts",
+    calibOn: "calibOn",
+    effectSource: "effectSource",
+    effectKind: "effectKind"
+  };
+
+  function applyState(state){
+    Object.keys(FIELDS).forEach(function(key){
+      var input = el(FIELDS[key]);
+      if(!input){ return; }
+      var value = Object.prototype.hasOwnProperty.call(state, key) ? state[key] : DEFAULTS[key];
+      if(input.type === "checkbox"){ input.checked = Boolean(value); }
+      else { input.value = value; }
+    });
+  }
+
+  function readState(){
+    return {
+      srcAgent: el("srcAgent").value,
+      eventId: el("eventId").value.trim(),
+      worldRef: el("worldRef").value.trim(),
+      domainHash: el("domainHash").value.trim(),
+      workReq: el("workReq").value.trim(),
+      required: el("required").checked,
+      corpus: el("corpus").value,
+      isPrivate: el("isPrivate").checked,
+      scope: el("scope").value.split(",").map(function(s){ return s.trim(); }).filter(Boolean),
+      excluded: el("excluded").checked,
+      matches: el("matches").checked,
+      maxResults: Math.max(0, parseInt(el("maxResults").value, 10) || 0),
+      budgetOn: el("budgetOn").checked,
+      budgetTokens: Math.max(0, parseInt(el("budgetTokens").value, 10) || 0),
+      freshOn: el("freshOn").checked,
+      freshSecs: Math.max(0, parseInt(el("freshSecs").value, 10) || 0),
+      requiredConcepts: el("requiredConcepts").value.split(",").map(function(s){ return s.trim(); }).filter(Boolean),
+      calibOn: el("calibOn").checked,
+      effectSource: el("effectSource").value,
+      effectKind: el("effectKind").value
+    };
+  }
+
+  function stage(n, title, loc, status, detail){
+    return { n: n, title: title, loc: loc, status: status, detail: detail };
+  }
+
+  function gateFailure(s){
+    if(s.srcAgent !== "swe-seed" && s.srcAgent !== "swe_seed"){
+      return "ContextRequired may only be produced by swe_seed, got " + s.srcAgent;
+    }
+    if(!s.eventId){ return "request envelope missing event_id"; }
+    if(!verifyDomainIdentity(s.domainHash)){ return "domain identity rejected: malformed or placeholder hash"; }
+    if(!verifyWorldRef(s.worldRef)){ return "world identity rejected: expected world:<name>@sha256:<64 lowercase hex>"; }
+    if(!s.workReq || !CREQ_ID){ return "work_request_id and context_requirement_id are required correlation"; }
+    return null;
+  }
+
+  function resolve(s){
+    var stages = [];
+    var omissions = [];
+    var gate = gateFailure(s);
+    if(gate){
+      stages.push(stage("0", "Ingress gates", "ck-mcp/src/lib.rs 485-528", "blocked", "Rejected before resolution: " + gate + ". The call returns an invalid_arguments error, so no result envelope exists."));
+      return {
+        blocked: "gate", gate: gate, stages: stages, omissions: [],
+        kept: [], mode: "hybrid", budget: null,
+        access: null, reason: null, complete: false, reasonText: null
+      };
+    }
+    stages.push(stage("0", "Ingress gates", "ck-mcp/src/lib.rs 485-528", "pass",
+      "Seven checks pass: canonical v1 envelope, ContextRequired event, swe_seed producer, event id, domain identity, world pin, correlation ids."));
+
+    var isPrivateCorpus = s.isPrivate || s.corpus === "registered-private";
+    var corpusOk = true;
+    var corpusReason = null;
+
+    if(s.corpus === "unconfigured"){
+      corpusOk = false;
+      corpusReason = "corpus_root_unconfigured";
+      stages.push(stage("0b", "Corpus resolution", "ck-mcp/src/agentic_capability_loop.rs 288-329", "blocked",
+        "CK_CONTEXT_CORPUS_ROOT is unset, so no operator-configured corpus can be ingested. The acquisition returns no context with reason corpus_root_unconfigured."));
+    } else if(s.corpus === "missing"){
+      corpusOk = false;
+      corpusReason = "corpus_not_found";
+      stages.push(stage("0b", "Corpus resolution", "ck-mcp/src/agentic_capability_loop.rs 288-329", "blocked",
+        "No directory matches source " + SRC_ID + " under the corpus root. The acquisition returns no context with reason corpus_not_found."));
+    } else if(s.corpus === "failure"){
+      corpusOk = false;
+      corpusReason = "corpus_unavailable";
+      stages.push(stage("0b", "Corpus resolution", "ck-mcp/src/agentic_capability_loop.rs 288-329", "blocked",
+        "The filesystem adapter failed during ingest. The acquisition returns no context with reason corpus_unavailable."));
+    } else if(s.corpus === "available" && isPrivateCorpus){
+      corpusOk = false;
+      corpusReason = "corpus_not_found";
+      stages.push(stage("0b", "Corpus resolution", "ck-mcp/src/agentic_capability_loop.rs 288-329", "blocked",
+        "The caller asserts the corpus is private and it is not registered. Private corpora are never auto-ingested open, so the result is corpus_not_found."));
+    } else if(s.corpus === "available"){
+      stages.push(stage("0b", "Corpus resolution", "ck-mcp/src/agentic_capability_loop.rs 288-329", "pass",
+        "Auto-ingested " + SRC_ID + " exactly once as a filesystem tree under the corpus root, then continued with the freshly registered corpus."));
+    } else {
+      stages.push(stage("0b", "Corpus resolution", "ck-mcp/src/agentic_capability_loop.rs 288-329", "pass",
+        "Corpus " + CORPUS_ID + " is already registered, so no ingest is attempted and storage remains authoritative."));
+    }
+
+    if(!corpusOk){
+      return {
+        blocked: "corpus", gate: null, stages: stages, omissions: [],
+        kept: [], mode: "hybrid", budget: null,
+        access: { result: "accessible" }, reason: corpusReason,
+        complete: false, reasonText: corpusReason
+      };
+    }
+
+    var access = { result: "accessible" };
+    var accessReason = null;
+    if(s.excluded){
+      access = { result: "inaccessible", corpus_id: CORPUS_ID, reason: "excluded" };
+      accessReason = "corpus_excluded";
+      stages.push(stage("1", "Data-access gate", "ck-app/src/context.rs 253-296", "blocked",
+        "Policy excludes corpus " + CORPUS_ID + ". No chunk is ever retrieved; access reports inaccessible with reason excluded."));
+      return {
+        blocked: "access", gate: null, stages: stages, omissions: [],
+        kept: [], mode: "hybrid", budget: null,
+        access: access, reason: accessReason, complete: false, reasonText: accessReason
+      };
+    }
+    if(isPrivateCorpus && s.scope.length === 0){
+      access = { result: "requires_scope", corpus_id: CORPUS_ID };
+      accessReason = "corpus_scope_unresolved";
+      stages.push(stage("1", "Data-access gate", "ck-app/src/context.rs 253-296", "blocked",
+        "Private corpus " + CORPUS_ID + " needs an explicit scope claim (POL-ACL-002). Access reports requires_scope and nothing is retrieved."));
+      return {
+        blocked: "access", gate: null, stages: stages, omissions: [],
+        kept: [], mode: "hybrid", budget: null,
+        access: access, reason: accessReason, complete: false, reasonText: accessReason
+      };
+    }
+    if(isPrivateCorpus && s.scope.indexOf(CORPUS_ID) < 0){
+      access = { result: "inaccessible", corpus_id: CORPUS_ID, reason: "out_of_scope" };
+      accessReason = "corpus_scope_unresolved";
+      stages.push(stage("1", "Data-access gate", "ck-app/src/context.rs 253-296", "blocked",
+        "The scope claim " + JSON.stringify(s.scope) + " does not include " + CORPUS_ID + ". Access reports out_of_scope and nothing is retrieved."));
+      return {
+        blocked: "access", gate: null, stages: stages, omissions: [],
+        kept: [], mode: "hybrid", budget: null,
+        access: access, reason: accessReason, complete: false, reasonText: accessReason
+      };
+    }
+    stages.push(stage("1", "Data-access gate", "ck-app/src/context.rs 253-296", "pass",
+      isPrivateCorpus
+        ? "Private corpus " + CORPUS_ID + " is covered by the caller scope claim " + JSON.stringify(s.scope) + ". Retrieval is allowed."
+        : "No exclusion applies and the corpus is public, so the gate admits retrieval."));
+
+    var pool = s.matches ? CANDIDATES.slice() : [];
+    pool.sort(function(x, y){ return y.score - x.score; });
+    var kept = pool.slice(0, s.maxResults);
+    var capped = pool.length - kept.length;
+    if(!s.matches){
+      stages.push(stage("2", "Real retrieval", "ck-app/src/context.rs 298-345", "dropped",
+        "Hybrid retrieval returns zero candidates for the query, so nothing enters the pipeline."));
+    } else if(capped > 0){
+      omissions.push({ code: "max_results_reached", detail: null });
+      stages.push(stage("2", "Real retrieval", "ck-app/src/context.rs 298-345", "pass",
+        "Retrieved " + pool.length + " candidates, then applied the result cap: kept " + kept.length + ", omitted " + capped + "."));
+    } else {
+      stages.push(stage("2", "Real retrieval", "ck-app/src/context.rs 298-345", "pass",
+        "Hybrid retrieval returns " + pool.length + " candidates, ranked by the intent weight profile. Kept " + kept.length + "."));
+    }
+
+    var staleDropped = [];
+    if(s.freshOn){
+      var fresh = [];
+      kept.forEach(function(c){
+        var ageSecs = c.ageH * 3600;
+        if(ageSecs > s.freshSecs){ staleDropped.push(c); }
+        else { fresh.push(c); }
+      });
+      kept = fresh;
+      if(staleDropped.length > 0){
+        omissions.push({ code: "stale_source_excluded", detail: null });
+        stages.push(stage("3", "Freshness gate", "ck-app/src/context.rs 347-367", "dropped",
+          "Dropped " + staleDropped.map(function(c){ return c.chunk_id; }).join(", ") + " for exceeding the declared " + s.freshSecs + "s window. Unknown ages are never treated as stale."));
+      } else {
+        stages.push(stage("3", "Freshness gate", "ck-app/src/context.rs 347-367", "pass",
+          "All " + kept.length + " surviving results fall inside the " + s.freshSecs + "s window."));
+      }
+    } else {
+      stages.push(stage("3", "Freshness gate", "ck-app/src/context.rs 347-367", "skipped",
+        "No freshness window was declared, so nothing is dropped for age."));
+    }
+
+    var budgetHit = false;
+    var used = 0;
+    if(s.budgetOn){
+      var within = [];
+      var over = [];
+      kept.forEach(function(c){
+        var cost = estTokens(c);
+        if(used + cost > s.budgetTokens){
+          budgetHit = true;
+          over.push(c.chunk_id + " needs " + cost + " tokens");
+        } else {
+          used += cost;
+          within.push(c);
+        }
+      });
+      kept = within;
+      if(over.length > 0){
+        omissions.push({ code: "token_budget_exhausted", detail: null });
+      }
+      stages.push(stage("4", "Budget", "ck-app/src/context.rs 369-394", budgetHit ? "dropped" : "pass",
+        budgetHit
+          ? "Ceiling " + s.budgetTokens + " tokens. Consumed " + used + " and omitted the remainder. Costs are whitespace word counts, an approximation."
+          : "Ceiling " + s.budgetTokens + " tokens. Consumed " + used + ". Every kept result fits."));
+    } else {
+      stages.push(stage("4", "Budget", "ck-app/src/context.rs 369-394", "skipped",
+        "No token ceiling was declared, so budget cannot drop a result."));
+      used = kept.reduce(function(sum, c){ return sum + estTokens(c); }, 0);
+    }
+
+    stages.push(stage("5", "Corpus availability", "ck-app/src/context.rs 396-404", "pass",
+      "Every corpus backing the kept results is registered: " + CORPUS_ID + ". Unregistered corpora would appear here as omissions."));
+
+    var conceptMissing = [];
+    s.requiredConcepts.forEach(function(concept){
+      var needle = concept.toLowerCase();
+      var found = kept.some(function(c){
+        return (c.title + " " + c.excerpt + " " + c.heading).toLowerCase().indexOf(needle) >= 0;
+      });
+      if(!found){ conceptMissing.push(concept); }
+    });
+    if(conceptMissing.length > 0){
+      conceptMissing.forEach(function(concept){
+        omissions.push({ code: "required_distinction_absent", detail: "no result covered: " + concept });
+      });
+      stages.push(stage("6", "Required concepts", "ck-app/src/context.rs 406-462", "dropped",
+        "Required concepts absent from the kept set: " + conceptMissing.join(", ") + ". Each becomes a marked omission, never a fabricated distinction."));
+    } else {
+      stages.push(stage("6", "Required concepts", "ck-app/src/context.rs 406-462", "pass",
+        s.requiredConcepts.length === 0
+          ? "No concepts were required, so there is nothing to check."
+          : "All required concepts appear in the kept set: " + s.requiredConcepts.join(", ") + "."));
+    }
+
+    if(kept.length === 0){
+      var reason;
+      if(budgetHit){ reason = "budget_exhausted"; }
+      else if(staleDropped.length > 0){ reason = "no_fresh_content"; }
+      else if(pool.length === 0){ reason = "no_matching_content"; }
+      else { reason = "no_matching_content"; }
+      stages.push(stage("6b", "Empty-result reason", "ck-app/src/context.rs 440-462", "fired",
+        "Kept set is empty, so the reason follows a fixed precedence: budget_exhausted, then no_fresh_content, then corpus_not_found, then no_matching_content. Selected " + reason + "."));
+
+      var penaltyNote = "";
+      if(s.calibOn){
+        stages.push(stage("7", "Calibration", "ck-app/src/context.rs 464-507", "skipped",
+          "No results remain, so no calibration is applied."));
+      } else {
+        stages.push(stage("7", "Calibration", "ck-app/src/context.rs 464-507", "skipped",
+          "Calibration is disabled for this request."));
+      }
+      stages.push(stage("8", "Verdict", "ck-app/src/context.rs 509-535", "skipped",
+        "Nothing to grade. Completeness is none and the bundle becomes minimal with the reason recorded as an omission."));
+
+      return {
+        blocked: null, gate: null, stages: stages, omissions: omissions,
+        kept: kept, mode: "hybrid",
+        budget: { requested_results: s.maxResults, consumed_results: 0, requested_tokens: s.budgetOn ? s.budgetTokens : null, consumed_tokens: used },
+        access: access, reason: reason, complete: false, reasonText: reason, penaltyNote: penaltyNote
+      };
+    }
+
+    var penalty = 0;
+    var penaltyApplied = false;
+    if(s.calibOn){
+      penalty = s.effectKind === "source_contradicted" ? 0.2 : 0.1;
+      penalty = Math.min(penalty, 0.5);
+      var before = kept.map(function(c){ return c.chunk_id + " " + c.score.toFixed(3); }).join(", ");
+      kept = kept.map(function(c){
+        var copy = Object.assign({}, c);
+        if(c.source === s.effectSource){ copy.score = copy.score * (1 - penalty); penaltyApplied = true; }
+        return copy;
+      });
+      kept.sort(function(x, y){ return y.score - x.score; });
+      var after = kept.map(function(c){ return c.chunk_id + " " + c.score.toFixed(3); }).join(", ");
+      stages.push(stage("7", "Calibration", "ck-app/src/context.rs 464-507", penaltyApplied ? "fired" : "pass",
+        penaltyApplied
+          ? "Settlement-backed " + s.effectKind + " on " + s.effectSource + " multiplies score by " + (1 - penalty).toFixed(2) + " and re-sorts. Before: " + before + ". After: " + after + "."
+          : "The effect targets " + s.effectSource + ", which backs none of the kept results. No score changes."));
+    } else {
+      stages.push(stage("7", "Calibration", "ck-app/src/context.rs 464-507", "skipped",
+        "Calibration is disabled, so settlement-backed penalties do not apply."));
+    }
+
+    var partial = omissions.length > 0;
+    stages.push(stage("8", "Verdict", "ck-app/src/context.rs 509-535", partial ? "dropped" : "pass",
+      partial
+        ? "Kept " + kept.length + " results and marked " + omissions.length + " omission" + (omissions.length === 1 ? "" : "s") + ", so completeness is partial."
+        : "Kept " + kept.length + " results with no omissions, so completeness is complete for this context."));
+
+    stages.push(stage("P", "Projection and seal", "ck-mcp/src/cep_bundle.rs 179-331", "pass",
+      "The truthfulness branch is chosen from completeness, the integrity block is stamped last, and content_hash covers the envelope minus integrity."));
+
+    return {
+      blocked: null, gate: null, stages: stages, omissions: omissions,
+      kept: kept, mode: "hybrid",
+      budget: { requested_results: s.maxResults, consumed_results: kept.length, requested_tokens: s.budgetOn ? s.budgetTokens : null, consumed_tokens: used },
+      access: access, reason: null, complete: !partial, reasonText: null
+    };
+  }
+
+  function buildReferences(kept){
+    return kept.map(function(c){
+      var ref = {
+        ref_id: "ref-" + c.chunk_id,
+        ref_type: "chunk",
+        target_uri_or_id: c.uri + "#" + c.anchor,
+        availability_status: "available",
+        integrity_status: c.checksum ? "verifiable" : "unverified"
+      };
+      if(c.version){ ref.target_version = c.version; }
+      if(c.checksum){ ref.target_hash = "sha256:" + c.checksum; }
+      ref.scope = CORPUS_ID;
+      if(c.excerpt.slice(-1) === "…"){ ref.limitations = ["content_truncated"]; }
+      return ref;
+    });
+  }
+
+  function buildBundle(s, r, createdAt, packetId){
+    var omissions = r.omissions.slice();
+    if(r.reason && !omissions.some(function(o){ return o.code === r.reason; })){
+      omissions.push({ code: r.reason, detail: null });
+    }
+    var references = buildReferences(r.kept);
+    var level = references.length === 0 ? "none" : (omissions.length === 0 ? "complete" : "partial");
+    var status = level === "complete" ? "complete_for_context" : (level === "partial" ? "partial" : "minimal");
+    var included = [];
+    var omissionEntries = omissions.map(function(o, i){
+      return {
+        omission_id: "om-" + (i + 1),
+        omission_type: o.code,
+        reason: o.code,
+        description: o.detail || o.code
+      };
+    });
+    var provenanceSources = ["corpus:" + CORPUS_ID];
+    r.kept.forEach(function(c){
+      var entry = "source:" + c.source;
+      if(provenanceSources.indexOf(entry) < 0){ provenanceSources.push(entry); }
+    });
+    var env = {
+      envelope_id: "env-" + packetId,
+      cep_version: "1.0.0",
+      envelope_version: "1.0",
+      envelope_kind: "context_bundle",
+      created_at: createdAt,
+      created_by: "context-kernel",
+      scope: {
+        world_ref: s.worldRef,
+        evaluation_context: "context-kernel:" + CORPUS_ID
+      },
+      boundary_record: {
+        scope: "context for " + s.workReq,
+        included_sections: [],
+        excluded_sections: [],
+        known_omissions: omissions.map(function(o){ return o.code; }),
+        unknowns: [],
+        redactions: [],
+        compression_notes: [],
+        out_of_scope_entities: [],
+        limitations: []
+      },
+      completeness_status: status,
+      omission_status: omissions.length === 0 ? "none_known" : "marked",
+      provenance_refs: ["prov-" + packetId],
+      validation_status: "valid",
+      lineage_refs: [],
+      provenance: [{
+        provenance_id: "prov-" + packetId,
+        source_system_refs: provenanceSources,
+        producer_refs: ["context-kernel"],
+        production_method: "retrieval",
+        created_at: createdAt
+      }],
+      extensions: {
+        "cep.profile": {
+          profile_id: "godspeed.context_bundle",
+          profile_version: "1.0.0"
+        },
+        "godspeed.context_bundle": {
+          work_request_ref: s.workReq,
+          retrieval_completeness: level,
+          context_packet_id: packetId,
+          context_requirement_id: CREQ_ID,
+          domain_model_hash: s.domainHash,
+          retrieval_policy: "ck-app.resolve_context/v1",
+          query_mode: r.mode
+        }
+      }
+    };
+    if(r.kept.length === 0){
+      env.questions = [{
+        question_id: CREQ_ID,
+        question_form: "What context applies to work request " + s.workReq + "?"
+      }];
+      included.push("questions");
+    } else {
+      env.references = references;
+      included.push("references");
+    }
+    if(omissionEntries.length > 0){
+      env.omissions = omissionEntries;
+      included.push("omissions");
+    }
+    env.boundary_record.included_sections = included;
+    if(r.budget){
+      env.extensions["godspeed.context_bundle"].budget = {
+        requested_results: r.budget.requested_results,
+        consumed_results: r.budget.consumed_results,
+        requested_tokens: r.budget.requested_tokens,
+        consumed_tokens: r.budget.consumed_tokens
+      };
+    }
+    env.extensions["godspeed.context_bundle"].caused_by = s.eventId;
+    env.extensions["godspeed.context_bundle"].correlation_id = "corr-" + s.workReq;
+    if(r.kept.length > 0){
+      env.extensions["godspeed.context_bundle"].evaluations = r.kept.map(function(c){
+        return {
+          ref_id: "ref-" + c.chunk_id,
+          score: c.score,
+          score_breakdown: {
+            fts: c.score,
+            trust_score: c.trust,
+            freshness: c.freshness
+          }
+        };
+      });
+    }
+    var withoutIntegrity = Object.assign({}, env);
+    var hash = sha256(canon(withoutIntegrity));
+    env.integrity = {
+      content_hash: hash,
+      verification_method: "sha256-canonical-json-v1",
+      verification_status: "verified",
+      tamper_status: "intact"
+    };
+    return env;
+  }
+
+  function buildPacket(s, r, packetId, createdAt){
+    return {
+      domain_model_hash: s.domainHash,
+      world_ref: s.worldRef,
+      retrieval_completeness: r.kept.length === 0 ? "none" : (r.complete ? "complete" : "partial"),
+      omissions: r.omissions.map(function(o){ return o.code; }),
+      context_packet_id: packetId,
+      context_requirement_id: CREQ_ID,
+      work_request_id: s.workReq,
+      corpus_id: CORPUS_ID,
+      citations: r.kept.map(function(c){
+        return {
+          chunk_id: c.chunk_id,
+          document_id: c.uri,
+          title: c.title,
+          uri: c.uri,
+          anchor: c.anchor,
+          excerpt: c.excerpt,
+          score: c.score
+        };
+      }),
+      authority_decision_id: null,
+      authority_reference: null
+    };
+  }
+
+  function buildLegacyEnvelope(s, packet, createdAt){
+    var payloadForHash = JSON.parse(JSON.stringify(packet));
+    delete payloadForHash.signature;
+    var key = sha256(s.workReq + "|ContextPacketCreated|" + canon(payloadForHash));
+    return {
+      schema_version: "v1",
+      event_type: "ContextPacketCreated",
+      event_id: "evt-pkt-" + packet.context_packet_id.slice(-10),
+      source_agent: "context-kernel",
+      occurred_at: createdAt,
+      idempotency_key: key,
+      caused_by: s.eventId,
+      payload: packet
+    };
+  }
+
+  function buildRequest(s){
+    var payload = {
+      domain_model_hash: s.domainHash,
+      world_ref: s.worldRef,
+      work_request_id: s.workReq,
+      context_requirement_id: CREQ_ID,
+      corpus_id: CORPUS_ID,
+      query: "retention and refresh behavior",
+      max_results: s.maxResults
+    };
+    if(s.isPrivate){ payload.is_private = true; }
+    if(s.scope.length > 0){ payload.scope_claim = s.scope.join(","); }
+    if(s.excluded){ payload.exclusions = [CORPUS_ID]; }
+    if(s.freshOn){ payload.freshness_max_age_secs = s.freshSecs; }
+    if(s.budgetOn){ payload.token_budget = s.budgetTokens; }
+    if(s.requiredConcepts.length > 0){ payload.required_concepts = s.requiredConcepts; }
+    payload.correlation_id = "corr-" + s.workReq;
+    return {
+      schema_version: "v1",
+      event_type: "ContextRequired",
+      event_id: s.eventId,
+      source_agent: s.srcAgent,
+      occurred_at: "2026-10-24T09:14:02+00:00",
+      required: s.required,
+      payload: payload
+    };
+  }
+
+  var view = { bundle: null, tampered: false, current: 0, timer: null, playing: false };
+  var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  function setAnswer(r, s, gateError){
+    var outcome, reason, access, completeness, outcomeClass, reasonClass;
+    if(gateError){
+      outcome = "rejected"; reason = "invalid_arguments"; access = "n/a"; completeness = "no bundle";
+      outcomeClass = "v-bad"; reasonClass = "v-bad";
+    } else {
+      outcome = r.kept.length > 0 ? "cited" : (s.required ? "no_context_governed" : "empty_optional");
+      reason = r.reason || "none";
+      access = r.access.result;
+      completeness = r.kept.length === 0 ? "minimal" : (r.complete ? "complete_for_context" : "partial");
+      outcomeClass = r.kept.length > 0 ? "v-ok" : "v-warn";
+      reasonClass = r.reason ? "v-warn" : "v-neutral";
+    }
+    var o = el("ansOutcome"), re = el("ansReason"), ac = el("ansAccess"), co = el("ansComplete");
+    o.textContent = outcome; o.className = "answer-value " + outcomeClass;
+    re.textContent = reason; re.className = "answer-value " + reasonClass;
+    ac.textContent = access; ac.className = "answer-value " + (access === "accessible" ? "v-neutral" : "v-warn");
+    co.textContent = completeness; co.className = "answer-value " + (completeness === "complete_for_context" ? "v-ok" : (completeness === "minimal" ? "v-warn" : "v-neutral"));
+  }
+
+  function renderStages(stages){
+    var list = el("stages");
+    list.textContent = "";
+    stages.forEach(function(st, i){
+      var li = node("li", "stage");
+      if(i === view.current){ li.className += " is-current"; }
+      var n = node("span", "stage-n", String(st.n));
+      var body = node("div", "stage-body");
+      var head = node("div", "stage-head");
+      head.appendChild(node("h3", null, st.title));
+      head.appendChild(node("span", "chip chip--" + st.status, st.status));
+      var detail = node("p", null, st.detail);
+      var loc = node("p", "stage-loc", st.loc);
+      body.appendChild(head);
+      body.appendChild(detail);
+      body.appendChild(loc);
+      li.appendChild(n);
+      li.appendChild(body);
+      list.appendChild(li);
+    });
+  }
+
+  function renderOmissions(r){
+    var wrap = el("omissions");
+    wrap.textContent = "";
+    if(!r.omissions.length && !r.reason){ return; }
+    var codes = r.omissions.slice();
+    if(r.reason && !codes.some(function(o){ return o.code === r.reason; })){
+      codes.push({ code: r.reason, detail: "no-context reason appended as a known omission" });
+    }
+    var h = node("h3", null, "Marked omissions");
+    var table = node("table");
+    var thead = node("thead");
+    var hr = node("tr");
+    hr.appendChild(node("th", null, "code"));
+    hr.appendChild(node("th", null, "detail"));
+    thead.appendChild(hr);
+    var tbody = node("tbody");
+    codes.forEach(function(o){
+      var tr = node("tr");
+      tr.appendChild(node("td", null, o.code));
+      tr.appendChild(node("td", null, o.detail || "code only"));
+      tbody.appendChild(tr);
+    });
+    table.appendChild(thead);
+    table.appendChild(tbody);
+    wrap.appendChild(h);
+    wrap.appendChild(table);
+  }
+
+  function renderFacts(s, r){
+    var facts = el("facts");
+    facts.textContent = "";
+    var items = [
+      ["kept", String(r.kept.length)],
+      ["mode", r.mode],
+      ["max_results", String(s.maxResults)],
+      ["tokens est", r.budget ? (s.budgetOn ? r.budget.consumed_tokens + " / " + s.budgetTokens : String(r.budget.consumed_tokens)) : "n/a"]
+    ];
+    if(s.freshOn){ items.push(["freshness", s.freshSecs + "s"]); }
+    if(s.calibOn){ items.push(["calibration", s.effectKind]); }
+    items.forEach(function(pair){
+      var f = node("span", "fact");
+      f.appendChild(node("b", null, pair[0] + " "));
+      f.appendChild(document.createTextNode(pair[1]));
+      facts.appendChild(f);
+    });
+  }
+
+  function verdictText(s, r, gateError){
+    if(gateError){
+      return "Rejected at ingress. Nothing was retrieved and no result envelope exists; the call fails at the protocol boundary with invalid_arguments.";
+    }
+    if(r.blocked === "corpus"){
+      return "Corpus resolution stopped before retrieval. The artifact is a minimal bundle whose only content is the question and the reason " + r.reason + ".";
+    }
+    if(r.blocked === "access"){
+      return r.access.result === "requires_scope"
+        ? "Access refused before retrieval because a private corpus needs an explicit scope claim. The bundle records requires_scope and still carries the no-context reason."
+        : "Access refused before retrieval: " + r.access.reason + ". Private corpora are never opened by guessing.";
+    }
+    if(r.kept.length === 0){
+      if(!s.required){ return "No context, and the caller marked the acquisition optional. The artifact is still explicit: outcome empty_optional, reason " + r.reason + "."; }
+      return "No context, stated as a governed result with reason " + r.reason + ". The caller must treat this as an answer, not as a transient failure to retry blindly.";
+    }
+    if(r.complete){
+      return "Context returned and complete for this requirement. Every kept reference is grounded in the bundle and no omission is marked.";
+    }
+    return "Context returned, but the requirement is only partly met. The bundle marks " + r.omissions.length + " omission" + (r.omissions.length === 1 ? "" : "s") + " and remains usable because the gaps are explicit.";
+  }
+
+  function hashNow(env){
+    var copy = Object.assign({}, env);
+    delete copy.integrity;
+    return sha256(canon(copy));
+  }
+
+  function refreshIntegrity(env, tampered){
+    var expected = env.integrity.content_hash;
+    var actual = hashNow(env);
+    var ok = expected === actual;
+    el("integrityNote").textContent = ok
+      ? "content_hash " + expected.slice(0, 16) + "… " + expected.slice(-8) + " recomputes exactly. sha256-canonical-json-v1."
+      : "Mismatch. Stored " + expected.slice(0, 16) + "… recomputes to " + actual.slice(0, 16) + "… The envelope is no longer intact.";
+    el("integrityNote").style.color = ok ? "var(--ink-3)" : "var(--bad)";
+    el("tamperBtn").setAttribute("aria-pressed", tampered ? "true" : "false");
+    el("tamperBtn").textContent = tampered ? "Restore reference" : "Tamper with reference";
+    el("bundleJson").textContent = JSON.stringify(env, null, 2);
+    return ok;
+  }
+
+  function run(){
+    var s = readState();
+    var gate = gateFailure(s);
+    var r = resolve(s);
+    var createdAt = nowRfc3339();
+    var packetId = "ctx_" + randomId();
+    view.tampered = false;
+
+    if(gate){
+      setAnswer(r, s, gate);
+      el("verdict").className = "verdict verdict--bad";
+      el("verdict").textContent = verdictText(s, r, gate);
+      renderFacts(s, r);
+      renderOmissions(r);
+      var err = {
+        jsonrpc: "2.0",
+        id: 1,
+        error: { code: -32602, message: gate }
+      };
+      el("bundleJson").textContent = JSON.stringify(err, null, 2);
+      el("integrityNote").textContent = "No envelope is produced when ingress rejects the request.";
+      el("integrityNote").style.color = "var(--ink-3)";
+      el("tamperBtn").disabled = true;
+      el("verifyBtn").disabled = true;
+      el("copyBtn").disabled = true;
+      el("legacyWrap").hidden = true;
+      view.bundle = null;
+      el("requestJson").textContent = JSON.stringify(buildRequest(s), null, 2);
+      renderStages(r.stages);
+      restartStepper(r.stages.length, false);
+      return;
+    }
+
+    var bundle = buildBundle(s, r, createdAt, packetId);
+    var packet = buildPacket(s, r, packetId, createdAt);
+    var legacy = buildLegacyEnvelope(s, packet, createdAt);
+    view.bundle = bundle;
+    view.packet = packet;
+    view.legacy = legacy;
+
+    setAnswer(r, s, null);
+    el("verdict").className = "verdict " + (r.kept.length === 0 ? "verdict--warn" : (r.complete ? "verdict--ok" : "verdict--warn"));
+    el("verdict").textContent = verdictText(s, r, null);
+    renderFacts(s, r);
+    renderOmissions(r);
+    el("tamperBtn").disabled = false;
+    el("verifyBtn").disabled = false;
+    el("copyBtn").disabled = false;
+    refreshIntegrity(bundle, false);
+    el("legacyJson").textContent = JSON.stringify({ context_envelope: legacy, context_packet: packet }, null, 2);
+    el("legacyWrap").hidden = !el("dualRead").checked;
+    el("requestJson").textContent = JSON.stringify(buildRequest(s), null, 2);
+    renderStages(r.stages);
+    restartStepper(r.stages.length, false);
+  }
+
+  function setCurrent(index){
+    var list = el("stages");
+    var items = list.querySelectorAll(".stage");
+    if(!items.length){ return; }
+    if(index < 0){ index = 0; }
+    if(index > items.length - 1){ index = items.length - 1; }
+    view.current = index;
+    for(var i = 0; i < items.length; i++){
+      items[i].classList.toggle("is-current", i === index);
+    }
+  }
+
+  function stopPlay(){
+    view.playing = false;
+    el("stepPlay").setAttribute("aria-pressed", "false");
+    el("stepPlay").textContent = "Play";
+    if(view.timer){ clearInterval(view.timer); view.timer = null; }
+  }
+
+  function startPlay(){
+    if(reduceMotion){ setCurrent(el("stages").querySelectorAll(".stage").length - 1); return; }
+    stopPlay();
+    view.playing = true;
+    el("stepPlay").setAttribute("aria-pressed", "true");
+    el("stepPlay").textContent = "Pause";
+    view.timer = setInterval(function(){
+      var count = el("stages").querySelectorAll(".stage").length;
+      if(view.current >= count - 1){ stopPlay(); return; }
+      setCurrent(view.current + 1);
+    }, 850);
+  }
+
+  function restartStepper(count, auto){
+    stopPlay();
+    view.current = 0;
+    setCurrent(0);
+    if(auto && count > 1 && !reduceMotion){ startPlay(); }
+  }
+
+  var form = el("controls");
+  form.addEventListener("input", run);
+  form.addEventListener("change", run);
+  form.addEventListener("submit", function(e){ e.preventDefault(); run(); });
+
+  el("pseudoHash").addEventListener("click", function(){
+    el("domainHash").value = FALLBACK_PSEUDO_HASH;
+    run();
+  });
+
+  document.querySelectorAll("[data-preset]").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      document.querySelectorAll("[data-preset]").forEach(function(b){ b.setAttribute("aria-pressed", "false"); });
+      btn.setAttribute("aria-pressed", "true");
+      var state = {};
+      Object.keys(DEFAULTS).forEach(function(k){ state[k] = DEFAULTS[k]; });
+      state.worldRef = worldRef();
+      state.domainHash = domainHash();
+      var preset = PRESETS[btn.getAttribute("data-preset")] || {};
+      Object.keys(preset).forEach(function(k){ state[k] = preset[k]; });
+      applyState(state);
+      run();
+    });
+  });
+
+  el("stepPrev").addEventListener("click", function(){ stopPlay(); setCurrent(view.current - 1); });
+  el("stepNext").addEventListener("click", function(){ stopPlay(); setCurrent(view.current + 1); });
+  el("stepPlay").addEventListener("click", function(){
+    if(view.playing){ stopPlay(); } else { startPlay(); }
+  });
+
+  el("verifyBtn").addEventListener("click", function(){
+    if(!view.bundle){ return; }
+    refreshIntegrity(view.bundle, view.tampered);
+  });
+
+  el("tamperBtn").addEventListener("click", function(){
+    if(!view.bundle){ return; }
+    if(view.bundle.references && view.bundle.references.length > 0){
+      if(!view.tampered){
+        view.bundle.references[0].availability_status = "missing";
+        view.tampered = true;
+      } else {
+        view.bundle.references[0].availability_status = "available";
+        view.tampered = false;
+      }
+      refreshIntegrity(view.bundle, view.tampered);
+    }
+  });
+
+  el("copyBtn").addEventListener("click", function(){
+    var text = el("bundleJson").textContent;
+    var done = function(msg){
+      var note = el("integrityNote");
+      var prev = note.textContent;
+      note.textContent = msg;
+      setTimeout(function(){ if(note.textContent === msg){ note.textContent = prev; } }, 1600);
+    };
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(function(){ done("Bundle JSON copied."); }, function(){
+        selectPre(el("bundleJson"));
+        done("Selected. Press Ctrl or Cmd plus C.");
+      });
+    } else {
+      selectPre(el("bundleJson"));
+      done("Selected. Press Ctrl or Cmd plus C.");
+    }
+  });
+
+  function selectPre(pre){
+    var range = document.createRange();
+    range.selectNodeContents(pre);
+    var sel = window.getSelection();
+    if(sel){ sel.removeAllRanges(); sel.addRange(range); }
+    pre.focus();
+  }
+
+  el("dualRead").addEventListener("change", function(){
+    el("legacyWrap").hidden = !el("dualRead").checked;
+    if(el("dualRead").checked){ el("legacyWrap").open = true; }
+  });
+
+  document.addEventListener("keydown", function(e){
+    if(e.target && (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.target.tagName === "TEXTAREA")){ return; }
+    if(e.key === "ArrowRight"){ stopPlay(); setCurrent(view.current + 1); }
+    if(e.key === "ArrowLeft"){ stopPlay(); setCurrent(view.current - 1); }
+  });
+
+  applyState({
+    srcAgent: "swe-seed",
+    eventId: "evt-01J9Z4Q7K3M2",
+    worldRef: worldRef(),
+    domainHash: domainHash(),
+    workReq: "wr-1042",
+    required: true,
+    corpus: "registered-public",
+    isPrivate: false,
+    scope: "",
+    excluded: false,
+    matches: true,
+    maxResults: 5,
+    budgetOn: false,
+    budgetTokens: 20,
+    freshOn: false,
+    freshSecs: 3600,
+    requiredConcepts: "",
+    calibOn: false,
+    effectSource: "ctxfs:docs",
+    effectKind: "source_contradicted"
+  });
+  run();
+  if(!reduceMotion){ startPlay(); }
+})();
+</script>
+</body>
+</html>

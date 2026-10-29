@@ -49,13 +49,13 @@ sequenceDiagram
 ## 3. Detailed Execution Path
 
 ### Step 1: Request Ingress & Entity Creation
-* **Code Symbol**: `AppServices::ingest_source` in [`crates/ck-app/src/lib.rs`](file:///crates/ck-app/src/lib.rs#L348).
+* **Code Symbol**: `AppServices::ingest_source` in [`crates/ck-app/src/lib.rs`](../../crates/ck-app/src/lib.rs#L348).
 * Creates or verifies the `Corpus`.
 * Generates a `Source` struct with kind (`filesystem`), config JSON, and freshness TTL.
 * Links source to corpus via `StoragePort::link_source_to_corpus`.
 
 ### Step 2: Unit Discovery
-* **Code Symbol**: `SourceAdapter::discover_units` in [`crates/ck-adapter-filesystem/src/lib.rs`](file:///crates/ck-adapter-filesystem/src/lib.rs#L104).
+* **Code Symbol**: `SourceAdapter::discover_units` in [`crates/ck-adapter-filesystem/src/lib.rs`](../../crates/ck-adapter-filesystem/src/lib.rs#L104).
 * Recursively walks the specified root directory.
 * Filters for files matching supported extensions: `.md`, `.txt`, `.toml`, `.rs`, `.json`.
 * Returns a list of `SourceUnit` references containing relative URIs.
@@ -66,7 +66,7 @@ sequenceDiagram
 * Extracts the document title from the first Markdown `# Heading` or falls back to the file stem.
 
 ### Step 4: Heading-Based Chunking
-* **Code Symbol**: `HeadingChunker::chunk` in [`crates/ck-adapter-filesystem/src/lib.rs`](file:///crates/ck-adapter-filesystem/src/lib.rs#L133).
+* **Code Symbol**: `HeadingChunker::chunk` in [`crates/ck-adapter-filesystem/src/lib.rs`](../../crates/ck-adapter-filesystem/src/lib.rs#L133).
 * Splits text along heading lines (`#`, `##`, `###`).
 * If a section exceeds 800 words (`MAX_TOKENS_PER_CHUNK`), splits across paragraph boundaries.
 * Generates URL-friendly anchor slugs (e.g., `#installing-the-cli`).
@@ -79,7 +79,7 @@ sequenceDiagram
   `chunk_id`, `document_id`, `corpus_id`, `library_id`, `title`, `heading`, `text`.
 
 ### Step 6: Refresh Workflow & Non-Accumulation
-* **Code Symbol**: `AppServices::refresh_source` in [`crates/ck-app/src/lib.rs`](file:///crates/ck-app/src/lib.rs#L1881).
+* **Code Symbol**: `AppServices::refresh_source` in [`crates/ck-app/src/lib.rs`](../../crates/ck-app/src/lib.rs#L1881).
 * When a source is refreshed:
   1. Lists existing documents for the source: `StoragePort::list_documents_by_source`.
   2. For every prior document, removes its indexed chunks from FTS5:

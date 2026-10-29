@@ -326,3 +326,14 @@
 - Alternatives considered: Duplicate seven memory files under .agent/ (rejected: conflicting ledgers), retain stale instructions (rejected: repeatable agent misrouting).
 - Evidence: AGENTS.md, .github/copilot-instructions.md, .agents/current_plan.md, .agents/project_state.md, .agents/evidence.md.
 - Consequences: Future agents reuse existing memory; previous historical work-log references stay intact as provenance.
+
+## Decision: Documentation treats the sealed bundle as the only canonical context artifact (2026-10-24)
+- Context: docs still described `ContextPacketCreated` as the output and omitted the requirement/resolution/effect stages, which would mislead integrators into consuming the deprecated shape.
+- Decision: every page now leads with `godspeed.context_bundle` (completeness status, omissions, integrity block) and labels the packet/envelope as deprecated dual-read. Added `docs/workflows/context-requirement-resolution.md` as the canonical trace and `docs/explainers/context-requirement-explorer.html` as an offline model.
+- Evidence: `crates/ck-mcp/src/lib.rs:L562-L569`, `crates/ck-mcp/src/cep_bundle.rs:L179,L345`.
+- Consequences: docs and code agree on the wire shape; the legacy path is documented as migration-only. No code changed in this pass.
+
+## Decision: Documentation links are repo-relative, never `file:///` (2026-10-24)
+- Context: 33 links across 9 docs pages used `file:///crates/...`, which a renderer resolves to `/crates` on the host filesystem.
+- Decision: use depth-correct relative paths (`../crates/` at `docs/*.md`, `../../crates/` at `docs/<dir>/*.md`), and keep a scripted link check as the verification step.
+- Consequences: links work in any markdown viewer and in GitHub; the check is cheap to repeat.

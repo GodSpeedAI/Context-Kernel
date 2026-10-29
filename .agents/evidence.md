@@ -749,3 +749,33 @@
 - Confidence: high
 - Notes: evidence-gated ingestion (self-reports rejected), append-only world-scoped ledger, prospective demotion in `resolve_context`, historical bundles untouched.
 - Confidence: high
+
+## Claim: `context_required` egress is bundle-first with a deprecated dual-read envelope (docs reconciled 2026-10-24)
+- Evidence type: code
+- Files: `crates/ck-mcp/src/lib.rs:L476` (`handle_context_required`), response assembly L562-569, `crates/ck-mcp/src/cep_bundle.rs:L345` (`project_context_bundle`)
+- Confidence: high
+- Notes: response = `{context_bundle, context_envelope, context_packet, outcome, reason, access}`; only the bundle is canonical. Docs now describe the bundle first everywhere.
+
+## Claim: `resolve_context` implements eight ordered stages with code-only vs detailed omissions
+- Evidence type: code + test
+- Files: `crates/ck-app/src/context.rs:L245-L535`, `crates/ck-mcp/tests/context_pipeline.rs`
+- Confidence: high
+- Notes: access gate -> retrieval -> freshness -> budget -> availability -> required concepts -> calibration -> verdict. `max_results`/`token_budget`/`stale` omissions are pushed once with no detail; `required_distinction_absent` carries the concept as detail. A code may repeat.
+
+## Claim: Effect ingestion requires evidence and is idempotent per `effect_id`
+- Evidence type: code + test
+- Files: `crates/ck-app/src/context_effect.rs` (`ContextEffect`, `ContextEffectStore` L201), `crates/ck-mcp/src/lib.rs:L441`, `crates/ck-mcp/tests/context_calibration.rs`
+- Confidence: high
+- Notes: `ContextEffectError` = MissingEvidence | MalformedEvidenceRef | InvalidWorldRef | InvalidBundleHash. Store is append-only JSONL keyed by `effect_id`; response reports `{accepted, skipped_duplicates, rejected}`.
+
+## Claim: The `context_required` corpus bootstrap uses kind-selected adapters, not ad hoc readers
+- Evidence type: code
+- Files: `crates/ck-mcp/src/agentic_capability_loop.rs:L420` (`ensure_corpus_ingested`), `crates/ck-app/src/lib.rs:L34` (`kind_adapters`), L176 (`adapter_for_kind`), `crates/ck-bin/src/main.rs:L390`
+- Confidence: high
+- Notes: `learning_proposals_jsonl` and `filesystem_tree` kinds route through `AppServices::ingest_source`. GitHub/Web remain unregistered.
+
+## Claim: The docs tree had no working code links before the 2026-10-24 pass
+- Evidence type: repository state
+- Files: 9 files under `docs/` used `file:///crates/...` (resolves to `/crates`, outside the repo)
+- Confidence: high
+- Notes: rewritten to depth-correct relative paths; `rg 'file:///' docs` returns nothing and a scripted relative-link check over all `docs/**/*.md` resolves every target.

@@ -45,7 +45,7 @@ graph TD
 
 ## 5. Core Abstractions
 
-### `Cli` & `Commands` ([`crates/ck-bin/src/main.rs`](file:///crates/ck-bin/src/main.rs#L22-L37))
+### `Cli` & `Commands` ([`crates/ck-bin/src/main.rs`](../../crates/ck-bin/src/main.rs#L22-L37))
 Defines the top-level CLI commands using `clap`:
 ```rust
 #[derive(Debug, Subcommand)]
@@ -58,13 +58,13 @@ enum Commands {
 }
 ```
 
-### `KernelConfig` ([`crates/ck-config/src/lib.rs`](file:///crates/ck-config/src/lib.rs#L8-L28))
+### `KernelConfig` ([`crates/ck-config/src/lib.rs`](../../crates/ck-config/src/lib.rs#L8-L28))
 Strongly typed configuration tree mapping top-level TOML tables (`[service]`, `[storage]`, `[retrieval]`, `[mcp]`, `[auth]`, `[scheduler]`, `[embeddings]`, `[reload]`, `[retention]`, `[authorization]`, `[observability]`).
 
-### `init_observability` ([`crates/ck-observability/src/lib.rs`](file:///crates/ck-observability/src/lib.rs#L20-L47))
+### `init_observability` ([`crates/ck-observability/src/lib.rs`](../../crates/ck-observability/src/lib.rs#L20-L47))
 Installs a `tracing_subscriber::fmt` subscriber globally (`tracing::subscriber::set_global_default`) writing to `std::io::stderr`. Spawned background threads (SSE runtime, refresh worker) automatically inherit this subscriber.
 
-### `RefreshScheduler` ([`crates/ck-scheduler/src/lib.rs`](file:///crates/ck-scheduler/src/lib.rs))
+### `RefreshScheduler` ([`crates/ck-scheduler/src/lib.rs`](../../crates/ck-scheduler/src/lib.rs))
 Implements `SchedulerPort`, providing atomic queueing, active job coalescing, and job claiming.
 
 ---

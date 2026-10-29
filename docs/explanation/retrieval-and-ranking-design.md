@@ -77,3 +77,19 @@ If a single long document (e.g. `axum::Router` documentation) mentions the searc
 ## 5. Freshness Scoring Rationale
 
 Freshness is computed as a decay function comparing the document's `updated_at` timestamp against its configured `freshness_ttl_secs`. Documents that have exceeded their TTL receive degraded freshness scores during ranking, signaling to the ranker that more recently refreshed sources should take precedence.
+
+---
+
+## 6. Why Settlement-Backed Calibration
+
+Ranking signals available at retrieval time (BM25, trust, freshness, similarity) describe how well a chunk matches a query, not whether the chunk was right. The context pipeline therefore accepts a second, slower signal: outcomes that have already settled.
+
+Design choices follow from one constraint, that retrieval must never launder an unverified claim into authority:
+
+* **Evidence is required.** An effect must cite `settlement`, `evidence`, `execution`, `observation`, or `proof`. An agent saying "this context was useful" is rejected, because self-report is not evidence.
+* **Only negative settlement signals demote.** `source_contradicted` (0.20) and `source_stale` (0.10) reduce future scores. Positive or burden signals are recorded for analysis but do not by themselves rescore a source.
+* **Penalties are bounded.** They accumulate per source and cap at 0.50, so a run of effects cannot silently remove a source from consideration.
+* **Calibration is world-local and prospective.** Effects are keyed to a pinned `world_ref`, never cross worlds, and only influence future retrieval. The bundle that justified an effect stays byte-identical, which is what makes `integrity.content_hash` meaningful as history.
+* **Absence of calibration is explicit.** With no ledger configured, ranking is simply uncalibrated. The system does not invent a default penalty.
+
+This is a deliberately narrow feedback loop: it corrects source reputation, not the meaning of stored documents, and it cannot manufacture action authority.

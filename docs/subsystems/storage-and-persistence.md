@@ -43,12 +43,12 @@ graph TD
 
 ## 5. Core Abstractions
 
-### `SqliteStore` ([`crates/ck-storage-sqlite/src/lib.rs`](file:///crates/ck-storage-sqlite/src/lib.rs))
+### `SqliteStore` ([`crates/ck-storage-sqlite/src/lib.rs`](../../crates/ck-storage-sqlite/src/lib.rs))
 * Encapsulates access to the SQLite database path.
 * Instantiates `rusqlite::Connection` on demand, enabling foreign keys (`PRAGMA foreign_keys = ON`) and WAL mode (`PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;`).
 * Provides atomic job coalescing queries and retention sweep queries.
 
-### `FileArtifactStore` ([`crates/ck-artifacts/src/lib.rs`](file:///crates/ck-artifacts/src/lib.rs))
+### `FileArtifactStore` ([`crates/ck-artifacts/src/lib.rs`](../../crates/ck-artifacts/src/lib.rs))
 * Manages two files per artifact:
   - `<artifact_id>.bin`: Raw binary or UTF-8 text content.
   - `<artifact_id>.meta.json`: Formatted JSON metadata containing size, MIME type, and SHA-256 checksum.
@@ -63,7 +63,7 @@ graph TD
   }
   ```
 
-### `SqliteVectorStore` ([`crates/ck-vector/src/lib.rs`](file:///crates/ck-vector/src/lib.rs))
+### `SqliteVectorStore` ([`crates/ck-vector/src/lib.rs`](../../crates/ck-vector/src/lib.rs))
 * Stores embeddings in SQLite as little-endian IEEE-754 binary float blobs (`encode_vector` / `decode_vector`).
 * Performs brute-force cosine similarity across candidate vectors directly in SQLite reader threads.
 

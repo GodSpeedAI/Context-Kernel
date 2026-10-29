@@ -167,6 +167,8 @@ ingest_source
 refresh_source
 query_reference
 resolve_reference
+context_required
+ingest_context_effects
 ```
 
 For compatibility with documentation-oriented MCP clients:
@@ -812,6 +814,14 @@ Search reference material and return relevant excerpts.
 
 Resolve a user-facing library or source name into the stable identity used for retrieval.
 
+### `context_required`
+
+Answer a frozen SWE_SEED context requirement with a sealed, hash-verified context bundle. The response reports retrieval completeness, omissions, a governed no-context reason when nothing qualifies, and access status. It never grants action authority.
+
+### `ingest_context_effects`
+
+Record settlement-backed effects (contradicted source, stale source, missing distinction) into the per-world ledger. Later retrievals in that world demote affected sources, capped at 0.50 per source.
+
 The compatibility aliases exist so clients designed around common documentation MCP conventions can use Context Kernel without changing its canonical internal vocabulary.
 
 See:
@@ -940,6 +950,8 @@ and where it came from."
 SWE_SEED should not need to become a second retrieval engine.
 
 Context Kernel should not need to decide the software route.
+
+The wire boundary is the `context_required` tool: SWE_SEED sends a versioned requirement with a pinned `world_ref`, and Context Kernel returns a `context_bundle` whose `integrity.content_hash` can be re-verified. Walkthrough: [Context Requirement Resolution](docs/workflows/context-requirement-resolution.md). Interactive version: [Context Requirement Explorer](docs/explainers/context-requirement-explorer.html).
 
 ---
 

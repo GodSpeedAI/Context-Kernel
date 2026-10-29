@@ -42,22 +42,27 @@ graph TD
 
     McpService -->|Canonical Tools| App["ck-app::AppServices"]
     McpService -->|context_required| ACL["ck-mcp::AclContextAgent"]
+    McpService -->|ingest_context_effects| App
+    ACL -->|resolve_context| App
+    ACL -->|ContextResolution| Bundle["ck-mcp::cep_bundle"]
+    Bundle -->|sealed context_bundle| McpService
+    App -->|effects| Ledger["Per-world JSONL effect ledger"]
 ```
 
 ---
 
 ## 5. Core Abstractions
 
-### `McpService` ([`crates/ck-mcp/src/lib.rs`](file:///crates/ck-mcp/src/lib.rs#L57-L148))
+### `McpService` ([`crates/ck-mcp/src/lib.rs`](../../crates/ck-mcp/src/lib.rs#L57-L148))
 * Dispatches tool calls by name:
-  - Canonical tools: `get_status`, `store_context`, `recall_context`, `ingest_source`, `refresh_source`, `query_reference`, `resolve_reference`, `context_required`.
+  - Canonical tools: `get_status`, `store_context`, `recall_context`, `ingest_source`, `refresh_source`, `query_reference`, `resolve_reference`, `context_required`, `ingest_context_effects`.
   - Compatibility aliases: `resolve-library-id` (maps to `resolve_reference`), `get-library-docs` & `query-docs` (map to `query_reference`).
 * Emits structured tracing for every tool execution:
   ```rust
   tracing::info!(tool_name = name, duration_ms = elapsed, outcome = "success", "tool call completed");
   ```
 
-### `BearerAuth` ([`crates/ck-auth/src/lib.rs`](file:///crates/ck-auth/src/lib.rs))
+### `BearerAuth` ([`crates/ck-auth/src/lib.rs`](../../crates/ck-auth/src/lib.rs))
 * Validates tokens in constant time:
   ```rust
   let token = token.strip_prefix("Bearer ").unwrap_or(token);
@@ -65,12 +70,15 @@ graph TD
   ```
 * Evaluates tool and corpus allowlists (`["*"]` allows all).
 
-### `AclContextAgent` ([`crates/ck-mcp/src/agentic_capability_loop.rs`](file:///crates/ck-mcp/src/agentic_capability_loop.rs))
+### `AclContextAgent` ([`crates/ck-mcp/src/agentic_capability_loop.rs`](../../crates/ck-mcp/src/agentic_capability_loop.rs))
 * Handles the frozen E2/E3 boundary.
 * Ingress gate: Validates canonical v1 envelope, asserts `source_agent == "swe_seed"`, verifies `domain_model_hash` is a 64-char lowercase SHA-256 (rejecting `FALLBACK_PSEUDO_HASH` or all-zero placeholders fail-closed).
-* Egress: Resolves citations from filesystem corpus and learning proposals ledger into a `ContextPacketCreated` envelope stamped with `source_agent: "context-kernel"` and `caused_by: <request_event_id>`.
+* Corpus resolution: an operator-configured corpus is auto-ingested exactly once; a caller-declared private corpus is never auto-ingested open, and any other unregistered corpus yields an explicit no-context reason.
+* Retrieval: delegates to `AppServices::resolve_context`, which runs the eight stages (access, retrieval, freshness, budget, availability, required concepts, calibration, verdict).
+* Egress: projects the `ContextResolution` into a CEP `godspeed.context_bundle` stamped with `created_by: "context-kernel"` and `caused_by: <request_event_id>`. `assemble` enforces the truthfulness rules and stamps `integrity` last. The legacy `ContextPacketCreated` envelope and packet payload are still returned for dual-read migration and are marked deprecated.
+* Access semantics: `access` reports `accessible`, `inaccessible` (with `excluded` or `out_of_scope`), or `requires_scope`. It never conveys action authority.
 
-### `ReloadableSseState` ([`crates/ck-transport-sse/src/lib.rs`](file:///crates/ck-transport-sse/src/lib.rs#L15-L43))
+### `ReloadableSseState` ([`crates/ck-transport-sse/src/lib.rs`](../../crates/ck-transport-sse/src/lib.rs#L15-L43))
 * Wraps `Arc<McpService>` and `Arc<dyn AuthPort>` in `RwLock` structures.
 * When configuration is reloaded, the active service and auth policy are replaced atomically without restarting the Axum HTTP server.
 
@@ -121,7 +129,9 @@ graph TD
 ---
 
 ## 11. Source Trail
-* `crates/ck-mcp/src/lib.rs` — `McpService`, tool dispatch (L119), `handle_store_context`, `handle_query_reference`.
+* `crates/ck-mcp/src/lib.rs` — `McpService` (L57), `call_tool` (L106), `dispatch_tool` (L120), `handle_store_context` (L185), `handle_recall_context` (L239), `handle_ingest_source` (L283), `handle_query_reference` (L320), `handle_resolve_reference` (L384), `handle_ingest_context_effects` (L441), `handle_context_required` (L476), `handle_refresh_source` (L572).
+* `crates/ck-mcp/src/agentic_capability_loop.rs` — ingress gates (L51, L91), `acquire_context` (L288), `ensure_corpus_ingested` (L420).
+* `crates/ck-mcp/src/cep_bundle.rs` — `canonical_json` (L70), `assemble` (L179), `project_context_bundle` (L345).
 * `crates/ck-mcp/src/agentic_capability_loop.rs` — `AclContextAgent`, `verify_domain_identity` (L51), `acquire_context`.
 * `crates/ck-auth/src/lib.rs` — `BearerAuth`, `validate_token` (L54), `authorize_tool`, `authorize_corpus`.
 * `crates/ck-transport-stdio/src/lib.rs` — `handle_line` (L5).

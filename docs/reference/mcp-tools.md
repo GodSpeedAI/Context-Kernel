@@ -16,6 +16,7 @@ Context Kernel implements the [Model Context Protocol (MCP)](https://modelcontex
 | [`query_reference`](#6-query_reference) | Retrieval | `get-library-docs`, `query-docs` | Queries chunks using hybrid intent-weighted ranking |
 | [`resolve_reference`](#7-resolve_reference)| Retrieval | `resolve-library-id` | Resolves colloquial library queries to canonical identities |
 | [`context_required`](#8-context_required) | Convergence | — | E2/E3 boundary tool for SWE_SEED work contracts |
+| [`ingest_context_effects`](#9-ingest_context_effects) | Calibration | — | Records settlement-backed ranking effects for one pinned world |
 
 ---
 
@@ -245,7 +246,7 @@ Resolves a colloquial library or framework name into a canonical library identit
 ---
 
 ### 8. `context_required`
-Fulfills the E2/E3 convergence boundary with SWE_SEED. Takes a canonical `ContextRequired` envelope and emits a `ContextPacketCreated` envelope.
+Fulfills the E2/E3 convergence boundary with SWE_SEED. Takes a canonical `ContextRequired` envelope and emits a CEP `context_bundle` envelope.
 
 #### Request Arguments
 Must be a canonical v1 envelope stamped by `swe-seed` (or `swe_seed`). Identity and correlation fields live in `payload`; `required` (default `true`) sits beside the envelope:
@@ -259,51 +260,164 @@ Must be a canonical v1 envelope stamped by `swe-seed` (or `swe_seed`). Identity 
   "payload": {
     "domain_model_hash": "<64 lowercase hex>",
     "world_ref": "world:acme@sha256:<64 lowercase hex>",
-    "namespace": "agentic_capability_loop",
     "work_request_id": "wr-123",
     "context_requirement_id": "cr-456",
     "corpus_id": "core_docs",
     "query": "connection pooling",
-    "max_results": 10
+    "max_results": 10,
+    "required_concepts": ["pool exhaustion"],
+    "scope_claim": "core_docs",
+    "is_private": false,
+    "exclusions": [],
+    "freshness_max_age_secs": 86400,
+    "token_budget": 1500,
+    "expected_refs": [],
+    "correlation_id": "corr-789"
   },
   "required": true
 }
 ```
-`world_ref` is required and must be well formed; an alias such as `world:acme` is rejected before any retrieval.
+`world_ref` is required and must be well formed; an alias such as `world:acme` is rejected before any retrieval. The handler rejects a wrong `schema_version`, a producer other than `swe_seed`, an empty `event_id`, a placeholder or malformed `domain_model_hash`, and missing correlation ids with `invalid_arguments`. A caller-declared private corpus is never auto-ingested: it must already be registered, otherwise the result is `corpus_not_found`.
 
 #### Response Result Schema
 ```json
 {
-  "context_envelope": {
-    "schema_version": "v1",
-    "event_type": "ContextPacketCreated",
-    "source_agent": "context-kernel",
-    "event_id": "<ulid>",
-    "payload": {
-      "domain_model_hash": "<64 lowercase hex>",
+  "context_bundle": {
+    "envelope_id": "env-ctx_<ulid>",
+    "cep_version": "1.0.0",
+    "envelope_version": "1.0",
+    "envelope_kind": "context_bundle",
+    "created_at": "2026-10-24T09:14:02+00:00",
+    "created_by": "context-kernel",
+    "scope": {
       "world_ref": "world:acme@sha256:<64 lowercase hex>",
-      "retrieval_completeness": "complete",
-      "omissions": [],
-      "work_request_id": "wr-123",
-      "context_requirement_id": "cr-456",
-      "context_packet_id": "ctx_<ulid>",
-      "corpus_id": "core_docs",
-      "citations": [
-        {"citation_id": "cit_<ulid>", "source": "docs/db.md", "content": "...", "fetched_at": "...", "truncated": false}
-      ]
+      "evaluation_context": "context-kernel:core_docs"
     },
-    "provenance": {"origin": "context-kernel", "chain": ["domain_model_hash:...", "caused_by:evt_swe_01"]}
+    "boundary_record": {
+      "scope": "context for wr-123",
+      "included_sections": ["references", "omissions"],
+      "excluded_sections": [],
+      "known_omissions": ["max_results_reached"],
+      "unknowns": [],
+      "redactions": [],
+      "compression_notes": [],
+      "out_of_scope_entities": [],
+      "limitations": []
+    },
+    "completeness_status": "partial",
+    "omission_status": "marked",
+    "provenance_refs": ["prov-ctx_<ulid>"],
+    "validation_status": "valid",
+    "lineage_refs": [],
+    "provenance": [
+      {
+        "provenance_id": "prov-ctx_<ulid>",
+        "source_system_refs": ["corpus:core_docs", "source:ctxfs:core_docs"],
+        "producer_refs": ["context-kernel"],
+        "production_method": "retrieval",
+        "created_at": "2026-10-24T09:14:02+00:00"
+      }
+    ],
+    "extensions": {
+      "cep.profile": {"profile_id": "godspeed.context_bundle", "profile_version": "1.0.0"},
+      "godspeed.context_bundle": {
+        "work_request_ref": "wr-123",
+        "retrieval_completeness": "partial",
+        "context_packet_id": "ctx_<ulid>",
+        "context_requirement_id": "cr-456",
+        "domain_model_hash": "<64 lowercase hex>",
+        "retrieval_policy": "ck-app.resolve_context/v1",
+        "query_mode": "hybrid",
+        "caused_by": "evt_swe_01",
+        "correlation_id": "corr-789",
+        "budget": {"requested_results": 10, "consumed_results": 10, "requested_tokens": 1500, "consumed_tokens": 1490},
+        "evaluations": [{"ref_id": "ref-chk_01", "score": 0.71, "score_breakdown": {"fts": 0.71}}]
+      }
+    },
+    "references": [
+      {
+        "ref_id": "ref-chk_01",
+        "ref_type": "chunk",
+        "target_uri_or_id": "docs/db.md#connection-pooling",
+        "availability_status": "available",
+        "integrity_status": "verifiable",
+        "target_version": "v3",
+        "target_hash": "sha256:<64 lowercase hex>",
+        "scope": "core_docs",
+        "limitations": ["content_truncated"]
+      }
+    ],
+    "omissions": [
+      {
+        "omission_id": "om-1",
+        "omission_type": "max_results_reached",
+        "reason": "max_results_reached",
+        "description": "requested 10 of 14 candidates"
+      }
+    ],
+    "integrity": {
+      "content_hash": "<64 lowercase hex>",
+      "verification_method": "sha256-canonical-json-v1",
+      "verification_status": "verified",
+      "tamper_status": "intact"
+    }
   },
-  "context_packet": { "...": "the same payload fields" },
-  "context_bundle": { "...": "the CEP context bundle projection of the same resolution" },
-  "access": {"result": "accessible"},
+  "context_envelope": {"...": "DEPRECATED legacy ContextPacketCreated envelope"},
+  "context_packet": {"...": "DEPRECATED packet payload, also embedded in the legacy envelope"},
   "outcome": "cited",
-  "reason": null
+  "reason": null,
+  "access": {"result": "accessible"}
 }
 ```
-`context_bundle` is the CEP bundle projection of the resolution. `access` reports data-access only: `{"result": "accessible"}`, `{"result": "inaccessible", "corpus_id": "...", "reason": "..."}` or `{"result": "requires_scope", "corpus_id": "..."}`.
 
-`outcome` is `cited`, `no_context_governed` (required, zero citations) or `empty_optional`. `retrieval_completeness` is `complete`, `partial` or `none`; `omissions` lists `max_results_reached` and/or `citation_content_truncated`.
+`outcome` is `cited`, `no_context_governed` (required, zero references) or `empty_optional`. `reason` is `null` when cited; otherwise one of `corpus_root_unconfigured`, `corpus_not_found`, `no_matching_content`, `corpus_unavailable`, `corpus_scope_unresolved`, `corpus_excluded`, `budget_exhausted`, `no_fresh_content`. The reason is always appended to `boundary_record.known_omissions` and to `omissions`, so a minimal bundle still explains itself.
+
+`completeness_status` is `complete_for_context` (references, no omissions), `partial` (references plus omissions) or `minimal` (no references, questions plus omissions). The projection refuses unexplained incompleteness and a `complete` bundle with omissions.
+
+`access` reports context access only, never action authority:
+- `{"result": "accessible"}`
+- `{"result": "inaccessible", "corpus_id": "...", "reason": "excluded" | "out_of_scope"}`
+- `{"result": "requires_scope", "corpus_id": "..."}`
+
+Omission codes are `max_results_reached`, `token_budget_exhausted`, `stale_source_excluded`, `required_distinction_absent`, and `citation_content_truncated` (legacy path only). `integrity.content_hash` is SHA-256 over the canonical JSON of the envelope with the `integrity` block removed: keys sorted, compact separators, floats normalized to six decimals, negative zero flattened to `0.0`.
+
+---
+
+### 9. `ingest_context_effects`
+Recalibrates future retrieval for one pinned semantic world. This is prospective ranking calibration, not developmental memory: historical bundles are never rewritten, and a bare self-report is rejected.
+
+#### Request Arguments
+```json
+{
+  "effects": [
+    {
+      "effect_id": "eff_01",
+      "recorded_at": "2026-10-24T09:20:00Z",
+      "kind": "source_contradicted",
+      "world_ref": "world:acme@sha256:<64 lowercase hex>",
+      "work_request_ref": "wr-123",
+      "bundle_envelope_id": "env-ctx_<ulid>",
+      "bundle_content_hash": "sha256:<64 lowercase hex>",
+      "affected_sources": ["ctxfs:core_docs"],
+      "evidence_ref": "settlement:stl_42",
+      "detail": "Settlement contradicted the pinned retention claim."
+    }
+  ]
+}
+```
+`kind` is one of `required_distinction_absent`, `source_contradicted`, `source_stale`, `distinction_material_to_settlement`, `context_item_unused`, `excessive_retrieval_burden`, `omission_consequential`. Only `source_contradicted` (0.20) and `source_stale` (0.10) demote scores; penalties accumulate per source and cap at 0.50.
+
+`evidence_ref` is required and must be `<kind>:<value>` with kind in `settlement`, `evidence`, `execution`, `observation`, `proof`. `world_ref` must be pinned and `bundle_content_hash` must be `sha256:<64 lowercase hex>`; anything else is rejected. The handler rejects an empty `effects` array.
+
+#### Response Result Schema
+```json
+{
+  "accepted": 1,
+  "skipped_duplicates": 0,
+  "rejected": 0
+}
+```
+Ingest is idempotent by `effect_id`: a repeated effect is skipped, never overwritten. The ledger is append-only per world, so unreadable or unavailable storage surfaces as an internal error rather than silently dropping calibration.
 
 ---
 

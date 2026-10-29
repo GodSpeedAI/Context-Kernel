@@ -51,22 +51,22 @@ sequenceDiagram
 ## 3. Detailed Execution Path
 
 ### Step 1: Argument Parsing & Configuration
-* **Code Symbol**: `Cli::parse()` and `open_store()` in [`crates/ck-bin/src/main.rs`](file:///crates/ck-bin/src/main.rs#L51-L67).
+* **Code Symbol**: `Cli::parse()` and `open_store()` in [`crates/ck-bin/src/main.rs`](../../crates/ck-bin/src/main.rs#L51-L67).
 * If `--config <path>` is passed, `ck_config::load_config(path)` parses the TOML file and expands environment variables (`${VAR}`).
 * If `--database <path>` is passed, it overrides `config.storage.database_path`.
 * If no config file is supplied, `ck_config::default_config()` supplies defaults.
 
 ### Step 2: Global Tracing Installation
-* **Code Symbol**: `init_logging(&config)` in [`crates/ck-bin/src/main.rs`](file:///crates/ck-bin/src/main.rs#L345).
+* **Code Symbol**: `init_logging(&config)` in [`crates/ck-bin/src/main.rs`](../../crates/ck-bin/src/main.rs#L345).
 * Sets a global subscriber via `tracing::subscriber::set_global_default`.
 * Emits text formatting or JSON formatting (`config.observability.log_format == "json"`) directly to `std::io::stderr`.
 
 ### Step 3: Migration Execution
-* **Code Symbol**: `store.migrate()` in [`crates/ck-storage-sqlite/src/lib.rs`](file:///crates/ck-storage-sqlite/src/lib.rs#L44).
+* **Code Symbol**: `store.migrate()` in [`crates/ck-storage-sqlite/src/lib.rs`](../../crates/ck-storage-sqlite/src/lib.rs#L44).
 * Opens a SQLite connection with `PRAGMA foreign_keys = ON;` and runs the idempotent SQL script `SCHEMA_V1`.
 
 ### Step 4: Adapter Composition (`wire_app`)
-* **Code Symbol**: `wire_app()` in [`crates/ck-bin/src/main.rs`](file:///crates/ck-bin/src/main.rs#L367).
+* **Code Symbol**: `wire_app()` in [`crates/ck-bin/src/main.rs`](../../crates/ck-bin/src/main.rs#L367).
 * Instantiates:
   - `SqliteStore` (implements `StoragePort` and `SessionMemoryPort`)
   - `FileArtifactStore` pointing to `data_dir/artifacts` (implements `ArtifactPort`)
@@ -77,21 +77,21 @@ sequenceDiagram
   - Optional `OpenAIEmbeddingProvider` and `SqliteVectorStore`
 
 ### Step 5: Startup Retention GC Sweep
-* **Code Symbol**: `app.run_retention_gc()` in [`crates/ck-app/src/lib.rs`](file:///crates/ck-app/src/lib.rs#L50).
+* **Code Symbol**: `app.run_retention_gc()` in [`crates/ck-app/src/lib.rs`](../../crates/ck-app/src/lib.rs#L50).
 * Calculates cutoff timestamps for events, sessions, jobs, artifacts, and disabled sources.
 * Deletes expired database rows and cleans up artifact `.bin` and `.meta.json` payload files.
 
 ### Step 6: SSE Listener Pre-Binding & Thread Spawn
-* **Code Symbol**: `std::net::TcpListener::bind(sse_bind)` in [`crates/ck-bin/src/main.rs`](file:///crates/ck-bin/src/main.rs#L146).
+* **Code Symbol**: `std::net::TcpListener::bind(sse_bind)` in [`crates/ck-bin/src/main.rs`](../../crates/ck-bin/src/main.rs#L146).
 * The socket is bound **on the main thread** and set non-blocking before spawning. If the port is already bound, startup immediately aborts with an error.
 * Moves the listener into a background thread running a dedicated Tokio multi-threaded runtime executing `axum::serve`.
 
 ### Step 7: Background Periodic Refresh Thread
-* **Code Symbol**: `std::thread::spawn` in [`crates/ck-bin/src/main.rs`](file:///crates/ck-bin/src/main.rs#L190).
+* **Code Symbol**: `std::thread::spawn` in [`crates/ck-bin/src/main.rs`](../../crates/ck-bin/src/main.rs#L190).
 * Loops every `scheduler.refresh_interval_secs`, checks for stale sources via `StoragePort::list_stale_sources`, and invokes `AppServices::refresh_source`.
 
 ### Step 8: Stdio Serving & Hot Reload
-* **Code Symbol**: `for line in io::stdin().lock().lines()` in [`crates/ck-bin/src/main.rs`](file:///crates/ck-bin/src/main.rs#L243).
+* **Code Symbol**: `for line in io::stdin().lock().lines()` in [`crates/ck-bin/src/main.rs`](../../crates/ck-bin/src/main.rs#L243).
 * If `reload.enabled = true`, checks the config file for on-disk changes. If modified, rebuilds `AppServices` and atomically swaps the state in `ReloadableSseState`.
 * Passes each line to `ck_transport_stdio::handle_line` and prints the JSON-RPC response to stdout.
 

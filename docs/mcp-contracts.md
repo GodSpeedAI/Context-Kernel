@@ -60,8 +60,9 @@ fields deprecated):
 ```
 
 A partial or empty retrieval never reads as complete: `partial` bundles carry
-`references` + `omissions`, `none` bundles carry the unanswered `questions` +
-`omissions`, and absence is never converted into falsehood.
+`references` + `omissions`, `minimal` bundles (legacy `retrieval_completeness`
+`none`) carry the unanswered `questions` + `omissions`, and absence is never
+converted into falsehood.
 
 `get_status` request:
 

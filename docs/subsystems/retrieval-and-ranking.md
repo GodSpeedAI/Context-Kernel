@@ -50,7 +50,7 @@ graph TD
 
 ## 5. Core Abstractions
 
-### `FtsSearch` ([`crates/ck-search-fts/src/lib.rs`](file:///crates/ck-search-fts/src/lib.rs))
+### `FtsSearch` ([`crates/ck-search-fts/src/lib.rs`](../../crates/ck-search-fts/src/lib.rs))
 * Manages queries against SQLite FTS5 virtual tables.
 * Constructs sanitized FTS queries: tokens are quoted with double-quotes (`"token"`), internal quotes are escaped (`""`), and tokens are joined with `OR`:
   ```rust
@@ -65,7 +65,7 @@ graph TD
   ```
 * Inverts SQLite's `bm25()` output: in SQLite FTS5, lower values indicate better matches (typically negative numbers). Context Kernel computes `score = -raw_score` so that higher values represent better matches across all ranking signals.
 
-### `WeightProfile` & `LexicalRanker` ([`crates/ck-ranker/src/lib.rs`](file:///crates/ck-ranker/src/lib.rs))
+### `WeightProfile` & `LexicalRanker` ([`crates/ck-ranker/src/lib.rs`](../../crates/ck-ranker/src/lib.rs))
 * Context Kernel dynamically selects weights based on `QueryIntent`:
 
 | Query Intent | FTS Lexical | Trust Score | Freshness | Semantic | Session Affinity | Alias Exact |
@@ -79,7 +79,7 @@ graph TD
 ### `LexicalRanker::deduplicate_by_document`
 * When multiple chunks from the same document match a query, the ranker groups chunks by `document_id` and retains only the chunk with the highest composite score, preventing one large file from monopolizing all `top_k` slots.
 
-### `OpenAIEmbeddingProvider` ([`crates/ck-embeddings/src/lib.rs`](file:///crates/ck-embeddings/src/lib.rs))
+### `OpenAIEmbeddingProvider` ([`crates/ck-embeddings/src/lib.rs`](../../crates/ck-embeddings/src/lib.rs))
 * Synchronous HTTP client built on `ureq::Agent`.
 * Calls `/v1/embeddings` with bearer authentication. Supports custom `api_base`, `model` (e.g. `text-embedding-3-small`), and dimension truncation.
 
@@ -88,12 +88,20 @@ graph TD
 ## 6. Internal Operation
 
 ### Reference Query Execution
-1. `AppServices::query_reference` inspects the request. If no `source_scope` is provided, all authorized corpora are queried.
+1. `AppServices::query_reference` inspects the request. If no `source_scope` is provided, all authorized corpora are queried. A private corpus not covered by the caller scope is rejected before search.
 2. `FtsSearch::search_chunks` queries `chunks_fts` with BM25 ranking, scoped by `corpus_id`.
 3. If semantic retrieval is enabled, `OpenAIEmbeddingProvider::embed` generates a query vector and `SqliteVectorStore::search_chunks` finds top cosine similarity chunks.
 4. `LexicalRanker::rank_results` merges lexical scores, semantic scores, library trust scores, and document freshness scores using the intent's `WeightProfile`.
 5. The ranker collapses results by `document_id` to ensure diversity.
 6. The top $K$ results are enriched with parent document metadata (`StoragePort::get_chunk_with_document`) to construct complete citation objects.
+
+### Prospective Calibration (context pipeline)
+The `context_required` path adds one step that `query_reference` does not: after ranking, budgets, and concept checks, `resolve_context` reads the per-world effect ledger and demotes sources that settlement evidence has contradicted or found stale.
+
+* Only `source_contradicted` (0.20) and `source_stale` (0.10) change scores. Other recorded kinds are informational.
+* Penalties accumulate per affected source and cap at 0.50, so no source can be erased by stacking effects.
+* The multiplier is `score * (1 - penalty)`; results are re-sorted afterward.
+* Calibration is scoped to one pinned `world_ref` and applies prospectively. Historical bundles are never rewritten, and an unreadable ledger degrades to uncalibrated ranking with a warning rather than failing retrieval.
 
 ---
 

@@ -47,7 +47,7 @@ graph TD
 
 ## 5. Core Abstractions
 
-### Entities ([`crates/ck-core/src/entities/`](file:///crates/ck-core/src/entities/))
+### Entities ([`crates/ck-core/src/entities/`](../../crates/ck-core/src/entities/))
 * `Source`: Ingestion origin configuration, health status, and freshness TTL.
 * `Corpus`: Access-control and query-scoping boundary.
 * `Document`: Normalised document record with SHA-256 checksum.
@@ -56,14 +56,14 @@ graph TD
 * `SessionEvent`: Discrete timestamped memory record (decision, architecture, note).
 * `Artifact`: Content-addressed disk payload descriptor.
 
-### Ports ([`crates/ck-core/src/ports/`](file:///crates/ck-core/src/ports/))
+### Ports ([`crates/ck-core/src/ports/`](../../crates/ck-core/src/ports/))
 * `StoragePort`: CRUD operations across all entity types, plus retention sweep queries.
 * `SessionMemoryPort`: Dedicated interface for active session counting and event queries.
 * `LexicalSearchPort`: Indexing and BM25 lexical querying of chunks and events.
 * `RankerPort`: Combining lexical scores, vector scores, trust scores, and freshness into a unified rank.
 * `ArtifactPort`: Writing and reading binary/text payload files.
 
-### Memory Classification ([`crates/ck-memory/src/lib.rs`](file:///crates/ck-memory/src/lib.rs))
+### Memory Classification ([`crates/ck-memory/src/lib.rs`](../../crates/ck-memory/src/lib.rs))
 * `EventRetentionClass`: Categorizes event kinds into `Permanent`, `Pinnable`, or `Ephemeral`.
   ```rust
   pub fn classify_event_kind(kind: &str) -> EventRetentionClass {
