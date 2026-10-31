@@ -157,3 +157,30 @@ fn stdio_only_exits_at_stdin_eof() {
         std::thread::sleep(Duration::from_millis(50));
     }
 }
+
+/// SSE without authentication must never listen on a non-loopback address.
+#[test]
+fn sse_refuses_public_bind_without_auth() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("kernel.db");
+    let out = bin()
+        .args([
+            "serve",
+            "--database",
+            db.to_str().unwrap(),
+            "--sse",
+            "0.0.0.0:0",
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "public SSE bind without auth must fail"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("refusing to serve SSE"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

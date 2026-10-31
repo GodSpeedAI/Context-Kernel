@@ -47,7 +47,7 @@ if [[ "$machine" != "$elf_machine" ]]; then
 fi
 
 interp="$(readelf -l "$binary" | awk '/Requesting program interpreter/ {gsub(/[\[\]]/, ""); print $NF}')"
-max_sym="$(objdump -T "$binary" | grep -o 'GLIBC_[0-9][0-9.]*' | sort -uV | tail -1 | sed 's/^GLIBC_//')"
+max_sym="$(objdump -T "$binary" | { grep -o 'GLIBC_[0-9][0-9.]*' || true; } | sort -uV | tail -1 | sed 's/^GLIBC_//')"
 if [[ -z "$max_sym" ]]; then
   echo "error: no GLIBC symbol versions found; binary is not a dynamically linked glibc build" >&2
   exit 1
@@ -134,7 +134,7 @@ EOF
 dpkg-deb --build --root-owner-group "$deb_root" "$outdir/$deb_name" >/dev/null
 
 # ---- Checksums and report ---------------------------------------------------
-(cd "$outdir" && sha256sum "$name.tar.gz" "$deb_name" >> SHA256SUMS)
+(cd "$outdir" && sed -i "\|  $name.tar.gz\$|d;\|  $deb_name\$|d" SHA256SUMS 2>/dev/null || true; sha256sum "$name.tar.gz" "$deb_name" >> SHA256SUMS)
 echo "built: $tarball"
 echo "built: $outdir/$deb_name"
 echo "abi: machine='$machine' interpreter='$interp' max_glibc=GLIBC_$max_sym"

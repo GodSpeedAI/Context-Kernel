@@ -140,6 +140,15 @@ fn serve(args: RuntimeArgs) -> Result<()> {
     // Determine if SSE should be enabled
     let enable_sse = args.sse.is_some() || config.mcp.enable_sse;
     let sse_bind = args.sse.as_deref().unwrap_or(config.mcp.sse.bind.as_str());
+    // Fail closed: without bearer auth, the SSE listener is unauthenticated and
+    // grants every tool and corpus (BearerAuth::no_auth). Only loopback may run
+    // that way; any other bind requires require_auth = true.
+    if enable_sse && !config.mcp.sse.require_auth && !is_loopback_bind(sse_bind) {
+        anyhow::bail!(
+            "refusing to serve SSE on non-loopback address {sse_bind} without authentication; \
+             set [mcp.sse] require_auth = true and configure [auth] tokens"
+        );
+    }
 
     let mut sse_thread: Option<std::thread::JoinHandle<Result<()>>> = None;
     let sse_reload_state: Option<std::sync::Arc<ck_transport_sse::ReloadableSseState>> =
@@ -284,6 +293,9 @@ fn serve(args: RuntimeArgs) -> Result<()> {
                     // Previously this used `with_app`, which set the service's
                     // internal auth to None — so after the first reload SSE's
                     // tool/corpus allowlist checks silently passed.
+                    if reloaded.mcp.sse.require_auth && reloaded.auth.tokens.is_empty() {
+                        anyhow::bail!("reloaded config requires SSE auth but has no auth tokens");
+                    }
                     let reload_mcp_auth: Arc<dyn AuthPort> = if reloaded.mcp.sse.require_auth {
                         Arc::new(BearerAuth::with_policy(
                             reloaded.auth.tokens.clone(),
@@ -411,6 +423,14 @@ fn ensure_private_dir(dir: &std::path::Path) -> Result<()> {
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
     }
     Ok(())
+}
+
+/// True only for a literal loopback socket address. Anything unparseable (for
+/// example a hostname) is treated as non-loopback so the check fails closed.
+fn is_loopback_bind(bind: &str) -> bool {
+    bind.parse::<std::net::SocketAddr>()
+        .map(|addr| addr.ip().is_loopback())
+        .unwrap_or(false)
 }
 
 /// Resolves when the process receives an interrupt or termination request.

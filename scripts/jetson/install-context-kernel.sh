@@ -52,6 +52,13 @@ deb="$(find "$dl" -name 'context-kernel_*_arm64.deb' | head -1)"
 sums="$(find "$dl" -name 'SHA256SUMS' | head -1)"
 [[ -n "$deb" && -n "$sums" ]] || die "download did not contain the .deb and SHA256SUMS"
 
+# 4a. Release packages carry build-provenance attestations: verify them. This is
+# an independent trust root; a matching SHA256SUMS alone does not prove origin.
+if [[ -n "$RELEASE" ]]; then
+  gh attestation verify "$deb" --repo "$REPO" >/dev/null || die "build provenance attestation failed for $(basename "$deb")"
+  echo "provenance: attestation verified for $(basename "$deb")"
+fi
+
 # 4. Verify SHA-256 against the published checksum list.
 (cd "$(dirname "$deb")" && grep " $(basename "$deb")\$" "$sums" | sha256sum -c -)
 echo "sha256: verified $(basename "$deb")"
