@@ -327,21 +327,39 @@ fn sse_healthz_endpoint_works() {
 
     let input = tool_call(1, "get_status", serde_json::json!({}));
 
-    let mut cmd = Command::cargo_bin("context-kernal").unwrap();
-    cmd.args([
-        "serve",
-        "--database",
-        db_path.to_str().unwrap(),
-        "--data-dir",
-        data_dir.to_str().unwrap(),
-        "--sse",
-        "127.0.0.1:0",
-    ])
-    .write_stdin(input);
-
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains(r#""name":"context-kernel""#));
+    // A standalone SSE service keeps serving after stdin closes, so read the
+    // stdio response line and then stop the child explicitly.
+    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin("context-kernal"))
+        .args([
+            "serve",
+            "--database",
+            db_path.to_str().unwrap(),
+            "--data-dir",
+            data_dir.to_str().unwrap(),
+            "--sse",
+            "127.0.0.1:0",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    {
+        let mut stdin = child.stdin.take().unwrap();
+        std::io::Write::write_all(&mut stdin, format!("{input}\n").as_bytes()).unwrap();
+    }
+    let mut first = String::new();
+    std::io::BufRead::read_line(
+        &mut std::io::BufReader::new(child.stdout.take().unwrap()),
+        &mut first,
+    )
+    .unwrap();
+    child.kill().ok();
+    child.wait().ok();
+    assert!(
+        first.contains(r#""name":"context-kernel""#),
+        "unexpected stdio response: {first}"
+    );
 }
 
 #[test]
