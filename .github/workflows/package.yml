@@ -183,7 +183,7 @@ jobs:
           $zip = Get-ChildItem dist -Filter 'context-kernel-*-windows-x86_64.zip' | Select-Object -First 1
           $extract = Join-Path $env:RUNNER_TEMP ('ck-zip-' + [guid]::NewGuid())
           Expand-Archive -Path $zip.FullName -DestinationPath $extract
-          $root = (Get-ChildItem $extract -Directory | Select-Object -First 1).FullName
+          $root = $extract  # the zip holds bin/ and share/ at its root
           $env:CK_QUALIFY_BIN = Join-Path $root 'bin\context-kernal.exe'
           $env:CK_QUALIFY_VERSION = '${{ steps.ident.outputs.version }}'
           cargo test --release -p ck-bin --test installed_package
