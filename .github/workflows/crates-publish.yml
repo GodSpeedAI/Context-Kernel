@@ -1,0 +1,91 @@
+# Manual resume of the crates.io channel for the current workspace version.
+# Use when release.yml's crates.io publication stopped partway (for example on a
+# crates.io rate limit). Publishes only crates missing at the exact version, in
+# dependency order, and then installs and qualifies the crates.io binary.
+#
+# Guard: refuses to run unless the release tag exists and no crate source has
+# changed since that tag, so an existing version can never gain different contents.
+name: crates-publish
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: Publish missing crates at the release version
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300
+    env:
+      CK_CRATE_RECEIPTS: ${{ github.workspace }}/dist/crates-receipts
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Guard: release tag exists and crate sources are unchanged since it
+        run: |
+          set -euo pipefail
+          tag="v$(bash scripts/package/version.sh)"
+          git rev-parse -q --verify "refs/tags/$tag" >/dev/null \
+            || { echo "error: release tag $tag does not exist" >&2; exit 1; }
+          if ! git diff --quiet "$tag" HEAD -- crates/; then
+            echo "error: crate sources changed since $tag; cut a new version instead" >&2
+            exit 1
+          fi
+          echo "guard passed for $tag"
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal
+          rustup default 1.92.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Validate the publishable set and dry-run every crate
+        run: bash scripts/package/crates/publish.sh --check
+      - name: Publish missing crates in dependency order
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: bash scripts/package/crates/publish.sh --publish
+      - name: Upload crates.io publication receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crates-receipts-manual-${{ github.run_id }}
+          path: dist/crates-receipts/
+          if-no-files-found: warn
+          retention-days: 90
+
+  verify-install:
+    name: Install from crates.io and qualify (${{ matrix.runner }})
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-22.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal
+          rustup default 1.92.0
+      - name: Install context-kernel from crates.io into an empty root
+        run: |
+          set -euo pipefail
+          version="$(bash scripts/package/version.sh)"
+          root="$(mktemp -d)"
+          for attempt in $(seq 1 30); do
+            if cargo install context-kernel --version "=$version" --locked --root "$root"; then break; fi
+            test "$attempt" -lt 30 || exit 1
+            sleep 20
+          done
+          bin="$root/bin/context-kernal"
+          test -x "$bin"
+          test "$("$bin" --version | awk '{print $NF}')" = "$version"
+          echo "CK_QUALIFY_BIN=$bin" >> "$GITHUB_ENV"
+          echo "CK_QUALIFY_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Qualify the crates.io binary with the installed-binary suite
+        run: cargo test --release -p context-kernel --test installed_package

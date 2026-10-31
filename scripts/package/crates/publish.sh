@@ -116,6 +116,8 @@ fi
 
 # ---- 3. Publish mode ---------------------------------------------------------
 [[ "$mode" == "--publish" ]] || die "unknown mode: $mode"
+publish_log="$(mktemp)"
+trap 'rm -f "$publish_log"' EXIT
 : "${CARGO_REGISTRY_TOKEN:?CARGO_REGISTRY_TOKEN must be set (from the org secret)}"
 
 wait_for_index() {
@@ -142,17 +144,34 @@ while IFS= read -r name; do
     continue
   fi
 
-  if cargo publish --locked --allow-dirty -p "$name" >&2; then
-    if wait_for_index "$name"; then
-      write_receipt "$name" "published" "$local_sum" "visible in index"
-      log "published $name@$version"
-    else
-      write_receipt "$name" "unverified" "$local_sum" "uploaded but not visible in index after 10 minutes"
-      die "$name@$version uploaded but not visible in the index"
+  # crates.io limits how many new crates an account may create in a short window
+  # and answers 429 with "try again after <GMT date>". Wait for that time and retry
+  # the same crate; any other failure stops the run.
+  attempt=0
+  while true; do
+    attempt=$((attempt + 1))
+    if cargo publish --locked --allow-dirty -p "$name" > "$publish_log" 2>&1; then
+      cat "$publish_log" >&2
+      break
     fi
-  else
-    write_receipt "$name" "failed" "$local_sum" "cargo publish exited non-zero"
+    cat "$publish_log" >&2
+    retry_at="$(grep -o 'try again after [A-Za-z]*, [0-9]* [A-Za-z]* [0-9]* [0-9:]* GMT' "$publish_log" | tail -1 | sed 's/^try again after //' || true)"
+    if [[ -n "$retry_at" && "$attempt" -lt 30 ]]; then
+      wait_s=$(( $(date -u -d "$retry_at" +%s) - $(date -u +%s) + 20 ))
+      (( wait_s < 20 )) && wait_s=20
+      log "crates.io rate limit on $name; waiting ${wait_s}s (until $retry_at), attempt $attempt"
+      sleep "$wait_s"
+      continue
+    fi
+    write_receipt "$name" "failed" "$local_sum" "cargo publish exited non-zero after $attempt attempt(s)"
     die "publishing $name@$version failed; earlier crates in the order may already be live (see receipts)"
+  done
+  if wait_for_index "$name"; then
+    write_receipt "$name" "published" "$local_sum" "visible in index"
+    log "published $name@$version"
+  else
+    write_receipt "$name" "unverified" "$local_sum" "uploaded but not visible in index after 10 minutes"
+    die "$name@$version uploaded but not visible in the index"
   fi
 done <<<"$order"
 
