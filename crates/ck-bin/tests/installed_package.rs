@@ -453,7 +453,7 @@ fn sse_requires_bearer_and_refuses_unauthorized_tools() {
             r#"[service]
 name = "context-kernal"
 [storage]
-database_path = "{db}"
+database_path = '{db}'
 [retrieval]
 default_mode = "hybrid"
 semantic_enabled = false
