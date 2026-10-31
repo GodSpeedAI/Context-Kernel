@@ -46,3 +46,18 @@ duplicating them.
 - Evidence: 33 links across 9 pages used `file:///crates/...`; a link checker resolved them to `/crates/...` and failed. Rewriting to depth-correct relative paths (`../crates/` from `docs/`, `../../crates/` from `docs/<dir>/`) made every link resolve.
 - Scope: markdown documentation in any repository.
 - Confidence: high
+
+## Lesson: Recall must be verified by content after a process restart (2026-10-31)
+- Verified: the ranker returned event IDs with empty text and kind `unknown`; the earlier test only asserted the keys `query_id`/`results` existed.
+- Evidence: probe over stdio on the debug binary (2026-10-31); `crates/ck-bin/tests/installed_package.rs::memory_survives_process_restart_and_is_recalled_with_content`.
+- Scope: any MCP tool assertion should parse JSON and check the payload value, not only key presence.
+
+## Lesson: Blocking lifecycle changes need the test suite run with a timeout (2026-10-31)
+- Verified: making `--sse` keep running after stdin EOF made `sse_healthz_endpoint_works` hang (it waited on process exit).
+- Evidence: `crates/ck-bin/tests/cli.rs::sse_healthz_endpoint_works` rewritten to read the response line and stop the child.
+- Scope: `crates/ck-bin/tests/`; run tests with `timeout` or in background.
+
+## Lesson: Linux ARM64 artifacts must be built on the target's glibc, not the newest runner (2026-10-31)
+- Verified: `ubuntu-24.04-arm` would produce binaries requiring glibc newer than the Jetson's 2.35.
+- Evidence: `.github/workflows/package.yml` (`ubuntu-22.04-arm`), `scripts/package/linux/build-linux.sh` (`CK_MAX_GLIBC`).
+- Scope: all Linux packaging.

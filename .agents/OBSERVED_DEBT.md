@@ -33,3 +33,11 @@ Status legend: [OPEN] unresolved · [MITIGATED] addressed but residual · [RESOL
 - Audit: `.agents/reports/neatcode-audit-2026-07-29.md`.
 - Harden: `.agents/reports/neatcode-harden-2026-07-29.md`.
 
+
+- [OPEN] Config reload is triggered only by stdin requests (`crates/ck-bin/src/main.rs` stdin loop). A standalone SSE service with closed stdin cannot reload config. Next move: add a reload trigger (e.g. SIGHUP) with the same authorization-preservation tests, or document as unsupported.
+- [OPEN] Unauthorized tool refusal over SSE returns HTTP 200 with JSON-RPC `error.code = "internal"` (`src/main.rs` via `crates/ck-mcp`), not an authorization code. Next move: classify as an authorization error and add a test asserting the code.
+- [OPEN] `doctor` opens and migrates the database; it is not read-only (`crates/ck-bin/src/main.rs` `doctor`). Next move: add a read-only path or document (documented in `docs/install.md`).
+- [OPEN] `config/context-kernal.example.toml` uses a relative `database_path = "./data/kernel.db"`, which resolves against the working directory. Next move: annotate or ship an absolute installed example.
+- [OPEN] Recall scope/`kind` for `RecalledEvent` was hard-coded placeholder before 2026-10-31 (fixed by hydration; no regression test for the Current/Recent scope with hydration yet). Next move: add a scope test.
+- [OPEN] Windows and macOS packages are unexecuted in this environment (no pwsh, no hdiutil/pkgbuild). Next move: verify via `ci.yml` package jobs; fix any failures.
+- [OPEN] `actionlint` is unavailable here (mise shim has no version); workflows checked only for YAML syntax. Next move: run actionlint in CI or install a pinned version.

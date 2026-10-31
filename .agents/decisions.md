@@ -345,3 +345,42 @@
 - Context: 33 links across 9 docs pages used `file:///crates/...`, which a renderer resolves to `/crates` on the host filesystem.
 - Decision: use depth-correct relative paths (`../crates/` at `docs/*.md`, `../../crates/` at `docs/<dir>/*.md`), and keep a scripted link check as the verification step.
 - Consequences: links work in any markdown viewer and in GitHub; the check is cheap to repeat.
+
+## Decision: Native distribution keeps `context-kernal` as the built binary; `context-kernel` is a packaged alias (2026-10-31)
+- Context: MCP client configs reference `context-kernal`; cargo bin name is `context-kernal`, Clap name is `context-kernel`.
+- Decision: no second `[[bin]]` (avoids a duplicate compile). Linux/macOS packages link `context-kernel -> context-kernal`; Windows ships an identical copy. Docs prefer `context-kernel`.
+- Evidence: `crates/ck-bin/Cargo.toml`, `crates/ck-bin/src/main.rs` (`#[command(name = "context-kernel")]`), `scripts/package/linux/build-linux.sh`.
+- Consequences: existing configs keep working; `--version` reports `context-kernel <workspace version>`.
+
+## Decision: Installed default database is per-user, not cwd-relative (2026-10-31) — user-approved design change in scope
+- Context: default `database_path = "kernel.db"` resolved against the working directory, so launching from different directories silently created independent memory stores.
+- Decision: when neither `--config` nor `--database` is given, use `<per-user data dir>/kernel.db`. Linux `$XDG_DATA_HOME/context-kernel` (fallback `~/.local/share`), macOS `~/Library/Application Support/Context Kernel`, Windows `%LOCALAPPDATA%\Context Kernel`. Override with `CK_DATA_DIR`. Explicit flags unchanged.
+- Evidence: `crates/ck-config/src/lib.rs` (`default_user_data_dir`, unit tests), `crates/ck-bin/src/main.rs` (`open_store`, `ensure_private_dir`), `crates/ck-bin/tests/runtime_lifecycle.rs`.
+- Consequences: running a development build with no flags now uses the per-user DB, not `./kernel.db`. Documented in `docs/install.md`.
+
+## Decision: A standalone SSE service does not exit when stdin closes (2026-10-31)
+- Context: `serve` ran the SSE listener on a thread, then exited when the stdin loop hit EOF, so `--sse` under a service manager (stdin=/dev/null) died immediately.
+- Decision: after stdin EOF, join the SSE thread and keep serving. Stdio-only mode still exits at EOF. SIGINT/SIGTERM exit 0 from the SSE thread (SQLite commits per request, so no acknowledged write is lost). No daemon framework added; the systemd unit is an opt-in example only.
+- Evidence: `crates/ck-bin/src/main.rs` (`serve`, `shutdown_signal`), tests `sse_service_survives_closed_stdin`, `stdio_only_exits_at_stdin_eof`, `sse_stops_cleanly_on_sigterm`.
+- Consequences: config reload is still driven by stdin requests (existing behavior), so a standalone SSE service with closed stdin cannot reload config. Recorded as debt.
+
+## Decision: Linux ARM64 is built on `ubuntu-22.04-arm`, with a glibc ceiling enforced at package time (2026-10-31)
+- Context: Jetson AGX Orin runs Ubuntu 22.04 (glibc 2.35). Ubuntu 24.04 binaries require glibc 2.38+.
+- Decision: builder fails if the max `GLIBC_x.y` symbol exceeds `CK_MAX_GLIBC` (default 2.35), or if `DT_NEEDED` contains anything outside libc/libm/libgcc_s/loader. Deb `Depends` is computed from the verified floor.
+- Evidence: `scripts/package/linux/build-linux.sh`; local x86_64 run reported `max_glibc=GLIBC_2.34`, needed = loader, libc, libgcc_s, libm.
+- Consequences: no OpenSSL or system SQLite linkage (rustls + bundled rusqlite). ARM64 execution still unverified until CI or the Jetson runs it.
+
+## Decision: Installed-package qualification is one Rust test file run against any binary (2026-10-31)
+- Context: need the same functional checks on Linux, macOS, Windows, and the Jetson, with JSON parsed properly and no cargo at runtime for the product.
+- Decision: `crates/ck-bin/tests/installed_package.rs` runs only when `CK_QUALIFY_BIN` is set; CI sets it to the installed path. Jetson shell smoke test (`scripts/jetson/functional-smoke.sh`) mirrors the checks with python3 -I as a test-harness dependency only.
+- Consequences: python3 is a test-harness requirement on the device, not a product requirement.
+
+## Decision: Recall returns hydrated event content (2026-10-31)
+- Context: ranker only orders identities and hard-codes `kind: "unknown"`, `text: ""`. Restart-recall acceptance cannot pass.
+- Decision: hydrate kind, text, artifact_id, created_at from `SessionMemoryPort::get_event` after ranking in `ck-app` (no port change).
+- Evidence: `crates/ck-app/src/lib.rs` recall_context; test `memory_survives_process_restart_and_is_recalled_with_content`.
+- Consequences: recall results now carry text; scope filtering and ordering are unchanged.
+
+## Decision: Release publication is tag-gated, single-shot, and fails closed (2026-10-31)
+- Decision: `release.yml` checks tag == workspace version, refuses an existing release, requires exactly 10 platform assets with verified checksums, attests provenance, and creates one release. Candidates from branches are artifacts only, bound to the commit SHA in artifact names.
+- Consequences: a failed platform blocks publication; fix-forward with a new version.
