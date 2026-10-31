@@ -1,13 +1,18 @@
 [package]
-name = "ck-storage-sqlite"
+name = "context-kernel-storage-sqlite"
+description = "SQLite storage adapter for Context Kernel"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
+repository.workspace = true
+
+[lib]
+name = "ck_storage_sqlite"
 
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
-ck-core = { path = "../ck-core" }
+ck-core = { package = "context-kernel-core", version = "=0.1.0", path = "../ck-core" }
 rusqlite.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

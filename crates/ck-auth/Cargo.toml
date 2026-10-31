@@ -1,9 +1,14 @@
 [package]
-name = "ck-auth"
+name = "context-kernel-auth"
+description = "Bearer-token authorization for Context Kernel transports"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
+repository.workspace = true
+
+[lib]
+name = "ck_auth"
 
 [dependencies]
-ck-core = { path = "../ck-core" }
+ck-core = { package = "context-kernel-core", version = "=0.1.0", path = "../ck-core" }
 subtle.workspace = true

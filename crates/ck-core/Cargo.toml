@@ -1,8 +1,13 @@
 [package]
-name = "ck-core"
+name = "context-kernel-core"
+description = "Core domain types and ports for Context Kernel"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
+repository.workspace = true
+
+[lib]
+name = "ck_core"
 
 [dependencies]
 anyhow.workspace = true

@@ -1,16 +1,21 @@
 [package]
-name = "ck-mcp"
+name = "context-kernel-mcp"
+description = "MCP protocol surface for Context Kernel"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
+repository.workspace = true
+
+[lib]
+name = "ck_mcp"
 
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true
 chrono.workspace = true
-ck-core = { path = "../ck-core" }
-ck-app = { path = "../ck-app" }
-ck-adapter-filesystem = { path = "../ck-adapter-filesystem" }
+ck-core = { package = "context-kernel-core", version = "=0.1.0", path = "../ck-core" }
+ck-app = { package = "context-kernel-app", version = "=0.1.0", path = "../ck-app" }
+ck-adapter-filesystem = { package = "context-kernel-adapter-filesystem", version = "=0.1.0", path = "../ck-adapter-filesystem" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -20,7 +25,7 @@ ulid.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-ck-storage-sqlite = { path = "../ck-storage-sqlite" }
-ck-search-fts = { path = "../ck-search-fts" }
-ck-ranker = { path = "../ck-ranker" }
-ck-artifacts = { path = "../ck-artifacts" }
+ck-storage-sqlite = { package = "context-kernel-storage-sqlite", version = "=0.1.0", path = "../ck-storage-sqlite" }
+ck-search-fts = { package = "context-kernel-search-fts", version = "=0.1.0", path = "../ck-search-fts" }
+ck-ranker = { package = "context-kernel-ranker", version = "=0.1.0", path = "../ck-ranker" }
+ck-artifacts = { package = "context-kernel-artifacts", version = "=0.1.0", path = "../ck-artifacts" }

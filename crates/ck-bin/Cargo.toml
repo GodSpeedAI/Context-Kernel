@@ -1,8 +1,10 @@
 [package]
-name = "ck-bin"
+name = "context-kernel"
+description = "Context Kernel: local, governed context service over MCP (stdio and SSE)"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
+repository.workspace = true
 
 [[bin]]
 name = "context-kernal"
@@ -11,21 +13,21 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
-ck-adapter-filesystem = { path = "../ck-adapter-filesystem" }
-ck-app = { path = "../ck-app" }
-ck-artifacts = { path = "../ck-artifacts" }
-ck-auth = { path = "../ck-auth" }
-ck-config = { path = "../ck-config" }
-ck-core = { path = "../ck-core" }
-ck-embeddings = { path = "../ck-embeddings" }
-ck-mcp = { path = "../ck-mcp" }
-ck-observability = { path = "../ck-observability" }
-ck-ranker = { path = "../ck-ranker" }
-ck-search-fts = { path = "../ck-search-fts" }
-ck-storage-sqlite = { path = "../ck-storage-sqlite" }
-ck-transport-sse = { path = "../ck-transport-sse" }
-ck-transport-stdio = { path = "../ck-transport-stdio" }
-ck-vector = { path = "../ck-vector" }
+ck-adapter-filesystem = { package = "context-kernel-adapter-filesystem", version = "=0.1.0", path = "../ck-adapter-filesystem" }
+ck-app = { package = "context-kernel-app", version = "=0.1.0", path = "../ck-app" }
+ck-artifacts = { package = "context-kernel-artifacts", version = "=0.1.0", path = "../ck-artifacts" }
+ck-auth = { package = "context-kernel-auth", version = "=0.1.0", path = "../ck-auth" }
+ck-config = { package = "context-kernel-config", version = "=0.1.0", path = "../ck-config" }
+ck-core = { package = "context-kernel-core", version = "=0.1.0", path = "../ck-core" }
+ck-embeddings = { package = "context-kernel-embeddings", version = "=0.1.0", path = "../ck-embeddings" }
+ck-mcp = { package = "context-kernel-mcp", version = "=0.1.0", path = "../ck-mcp" }
+ck-observability = { package = "context-kernel-observability", version = "=0.1.0", path = "../ck-observability" }
+ck-ranker = { package = "context-kernel-ranker", version = "=0.1.0", path = "../ck-ranker" }
+ck-search-fts = { package = "context-kernel-search-fts", version = "=0.1.0", path = "../ck-search-fts" }
+ck-storage-sqlite = { package = "context-kernel-storage-sqlite", version = "=0.1.0", path = "../ck-storage-sqlite" }
+ck-transport-sse = { package = "context-kernel-transport-sse", version = "=0.1.0", path = "../ck-transport-sse" }
+ck-transport-stdio = { package = "context-kernel-transport-stdio", version = "=0.1.0", path = "../ck-transport-stdio" }
+ck-vector = { package = "context-kernel-vector", version = "=0.1.0", path = "../ck-vector" }
 clap.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

@@ -21,7 +21,20 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
-      - run: cargo build --release -p ck-bin
+      - run: cargo build --release -p context-kernel
+
+  # Keeps the crates.io publication set valid on every change: names, metadata,
+  # lockstep pins, publication order, and a workspace dry-run. Publishes nothing.
+  crates-check:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal
+          rustup default 1.92.0
+      - uses: Swatinem/rust-cache@v2
+      - run: bash scripts/package/crates/publish.sh --check
 
   # Native packages for all supported platforms. Artifacts are downloadable from
   # the workflow run and are bound to the commit SHA in their names. No release

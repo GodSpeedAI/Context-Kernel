@@ -6,7 +6,7 @@ Recommended checks:
 cargo fmt --check
 cargo clippy --workspace --all-targets
 cargo test --workspace
-cargo build --release -p ck-bin
+cargo build --release -p context-kernel
 ```
 
 The repository includes a GitHub Actions example at `.github/workflows/ci.yml`.

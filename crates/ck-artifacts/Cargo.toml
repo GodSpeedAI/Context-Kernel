@@ -1,13 +1,18 @@
 [package]
-name = "ck-artifacts"
+name = "context-kernel-artifacts"
+description = "Artifact storage and provenance for Context Kernel"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
+repository.workspace = true
+
+[lib]
+name = "ck_artifacts"
 
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
-ck-core = { path = "../ck-core" }
+ck-core = { package = "context-kernel-core", version = "=0.1.0", path = "../ck-core" }
 hex.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

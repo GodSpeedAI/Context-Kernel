@@ -39,6 +39,17 @@ binaries and no cross-compiled artifacts.
 If any platform fails, nothing is published. Fix forward with a new version tag; do not
 delete or move a published tag.
 
+## crates.io publication
+
+The `context-kernel` CLI and the 15 internal crates it needs are published to crates.io as one lockstep set at the workspace version. Every internal dependency is pinned exactly (`version = "=X.Y.Z"`). Three workspace crates (`ck-scheduler`, `ck-adapter-github`, `ck-adapter-web`) are `publish = false` and never reach crates.io.
+
+- `scripts/package/crates/publish-order.txt` lists the publication order. `scripts/package/crates/publish.sh --check` verifies that it equals the dependency closure of `context-kernel`, that every crate has metadata and an exact pin, and that no unrelated crate is publishable. It then runs `cargo publish --workspace --dry-run`, which packages and verifies each crate in order. `ci.yml` runs this check on every change.
+- `publish.sh --publish` (release workflow only) publishes missing versions in order. A version already on crates.io is skipped only when its checksum matches this commit; a mismatch stops the run. Each crate writes a receipt to `dist/crates-receipts/`, uploaded as an artifact.
+- Credentials: the `CARGO_REGISTRY_TOKEN` repository secret is exposed only to the publish step. Never print it.
+- Runs in parallel with the native GitHub Release, not after it. The `channel-report` job prints each channel's result separately and fails if any channel did not succeed.
+
+Crates cannot be deleted from crates.io. Recover from a bad release with a new version. `cargo yank` only stops new dependency resolution.
+
 ## Verify a published release
 
 ```bash
@@ -51,7 +62,7 @@ gh attestation verify context-kernel_X.Y.Z_arm64.deb --repo GodSpeedAI/Context-K
 ## Local packaging (developers)
 
 ```bash
-cargo build --release --locked -p ck-bin
+cargo build --release --locked -p context-kernel
 bash scripts/package/linux/build-linux.sh --binary target/release/context-kernal \
   --arch amd64 --version "$(bash scripts/package/version.sh)" --outdir dist
 ```
@@ -65,7 +76,7 @@ The same harness the pipeline uses runs against any installed executable:
 
 ```bash
 CK_QUALIFY_BIN=/usr/bin/context-kernel CK_QUALIFY_VERSION=X.Y.Z \
-  cargo test --release -p ck-bin --test installed_package
+  cargo test --release -p context-kernel --test installed_package
 ```
 
 Without `CK_QUALIFY_BIN` the tests are skipped, so `cargo test --workspace` stays hermetic.

@@ -262,28 +262,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "ck-adapter-filesystem"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "ck-core",
- "hex",
- "serde_json",
- "sha2",
- "tempfile",
- "tracing",
- "ulid",
-]
-
-[[package]]
 name = "ck-adapter-github"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64",
  "chrono",
- "ck-core",
+ "context-kernel-core",
  "hex",
  "percent-encoding",
  "serde",
@@ -300,7 +285,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "ck-core",
+ "context-kernel-core",
  "hex",
  "serde",
  "serde_json",
@@ -312,233 +297,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "ck-app"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "ck-artifacts",
- "ck-core",
- "ck-memory",
- "serde",
- "serde_json",
- "tempfile",
- "tracing",
- "ulid",
-]
-
-[[package]]
-name = "ck-artifacts"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "ck-core",
- "hex",
- "serde_json",
- "sha2",
- "tempfile",
- "tracing",
-]
-
-[[package]]
-name = "ck-auth"
-version = "0.1.0"
-dependencies = [
- "ck-core",
- "subtle",
-]
-
-[[package]]
-name = "ck-bin"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assert_cmd",
- "base64",
- "chrono",
- "ck-adapter-filesystem",
- "ck-app",
- "ck-artifacts",
- "ck-auth",
- "ck-config",
- "ck-core",
- "ck-embeddings",
- "ck-mcp",
- "ck-observability",
- "ck-ranker",
- "ck-search-fts",
- "ck-storage-sqlite",
- "ck-transport-sse",
- "ck-transport-stdio",
- "ck-vector",
- "clap",
- "predicates",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "ck-config"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde",
- "tempfile",
- "toml",
-]
-
-[[package]]
-name = "ck-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "hex",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
-name = "ck-embeddings"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ck-core",
- "serde",
- "serde_json",
- "tracing",
- "ureq",
-]
-
-[[package]]
-name = "ck-mcp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64",
- "chrono",
- "ck-adapter-filesystem",
- "ck-app",
- "ck-artifacts",
- "ck-core",
- "ck-ranker",
- "ck-search-fts",
- "ck-storage-sqlite",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror",
- "tracing",
- "ulid",
-]
-
-[[package]]
-name = "ck-memory"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "serde_json",
-]
-
-[[package]]
-name = "ck-observability"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "ck-ranker"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ck-core",
- "serde_json",
- "tracing",
- "ulid",
-]
-
-[[package]]
 name = "ck-scheduler"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "ck-core",
+ "context-kernel-core",
  "tracing",
  "ulid",
-]
-
-[[package]]
-name = "ck-search-fts"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ck-core",
- "rusqlite",
- "serde_json",
- "tempfile",
- "tracing",
-]
-
-[[package]]
-name = "ck-storage-sqlite"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "ck-core",
- "rusqlite",
- "serde_json",
- "tempfile",
- "tracing",
- "ulid",
-]
-
-[[package]]
-name = "ck-transport-sse"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "ck-auth",
- "ck-core",
- "ck-mcp",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "ck-transport-stdio"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ck-mcp",
- "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "ck-vector"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ck-core",
- "rusqlite",
- "serde_json",
- "tempfile",
- "tracing",
 ]
 
 [[package]]
@@ -586,6 +352,240 @@ name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
+
+[[package]]
+name = "context-kernel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "base64",
+ "chrono",
+ "clap",
+ "context-kernel-adapter-filesystem",
+ "context-kernel-app",
+ "context-kernel-artifacts",
+ "context-kernel-auth",
+ "context-kernel-config",
+ "context-kernel-core",
+ "context-kernel-embeddings",
+ "context-kernel-mcp",
+ "context-kernel-observability",
+ "context-kernel-ranker",
+ "context-kernel-search-fts",
+ "context-kernel-storage-sqlite",
+ "context-kernel-transport-sse",
+ "context-kernel-transport-stdio",
+ "context-kernel-vector",
+ "predicates",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "context-kernel-adapter-filesystem"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "context-kernel-core",
+ "hex",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tracing",
+ "ulid",
+]
+
+[[package]]
+name = "context-kernel-app"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "context-kernel-artifacts",
+ "context-kernel-core",
+ "context-kernel-memory",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "ulid",
+]
+
+[[package]]
+name = "context-kernel-artifacts"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "context-kernel-core",
+ "hex",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "context-kernel-auth"
+version = "0.1.0"
+dependencies = [
+ "context-kernel-core",
+ "subtle",
+]
+
+[[package]]
+name = "context-kernel-config"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "context-kernel-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "context-kernel-embeddings"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "context-kernel-core",
+ "serde",
+ "serde_json",
+ "tracing",
+ "ureq",
+]
+
+[[package]]
+name = "context-kernel-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "chrono",
+ "context-kernel-adapter-filesystem",
+ "context-kernel-app",
+ "context-kernel-artifacts",
+ "context-kernel-core",
+ "context-kernel-ranker",
+ "context-kernel-search-fts",
+ "context-kernel-storage-sqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tracing",
+ "ulid",
+]
+
+[[package]]
+name = "context-kernel-memory"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde_json",
+]
+
+[[package]]
+name = "context-kernel-observability"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "context-kernel-ranker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "context-kernel-core",
+ "serde_json",
+ "tracing",
+ "ulid",
+]
+
+[[package]]
+name = "context-kernel-search-fts"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "context-kernel-core",
+ "rusqlite",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "context-kernel-storage-sqlite"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "context-kernel-core",
+ "rusqlite",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "ulid",
+]
+
+[[package]]
+name = "context-kernel-transport-sse"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "context-kernel-auth",
+ "context-kernel-core",
+ "context-kernel-mcp",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "context-kernel-transport-stdio"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "context-kernel-mcp",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "context-kernel-vector"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "context-kernel-core",
+ "rusqlite",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
 
 [[package]]
 name = "core-foundation-sys"

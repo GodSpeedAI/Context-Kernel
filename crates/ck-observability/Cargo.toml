@@ -1,8 +1,13 @@
 [package]
-name = "ck-observability"
+name = "context-kernel-observability"
+description = "Structured logging setup for Context Kernel"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
+repository.workspace = true
+
+[lib]
+name = "ck_observability"
 
 [dependencies]
 anyhow.workspace = true
