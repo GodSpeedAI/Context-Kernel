@@ -1,42 +1,43 @@
 # Resumable handoff state. Keep current enough for any agent to resume cold.
 objective: >
-  Apply the egm-bootstrap skill to the repository: generate EGM-compliant README.md
-  contract files (Overview/Interface/Invariants/Side Effects/Verification) for every
-  pruned code directory, then run the egm-drift-report skill over the result.
-  Documentation only; user-approved >15-directory scope with sequential execution
-  (RAM-constrained machine) and no compilation.
-worktree_state: >
-  EGM bootstrap complete and drift-checked. Uncommitted: 47 new README.md contract
-  files (crates/**, integration/**, scripts/) plus root README.md (EGM Blueprint
-  section + System Overview heading added, existing content preserved) and
-  .agents/** memory files (current_plan, work_log, evidence, decisions,
-  OBSERVED_DEBT, LESSONS, project_state, current_status, reports/2026-10-30_EGM_DRIFT_REPORT.md).
-  Untracked .jolli/ must be left alone. No Rust/config/CI changes.
+  Native distribution of Context Kernel (Linux x86_64/arm64, Windows x86_64,
+  macOS arm64/x86_64), CI-verified installed packages, and a verified ARM64
+  handoff for the NVIDIA Jetson AGX Orin (Ubuntu 22.04, glibc 2.35).
+status: merged_to_main_pending_device_test
+main_commit: 20c0e76 (PR GodSpeedAI/Context-Kernel#6 merged)
+verified_ci_run: 41184479269 (head 7310c96; all jobs success)
+worktree_state: clean on main after merge; .jolli/jollimemory/telemetry-queue.ndjson deletion is pre-existing and must not be committed
 changed_files:
-  - README.md (Repository Blueprint section, System Overview heading; content otherwise preserved)
-  - crates/README.md (new)
-  - 20 x crates/ck-*/README.md (new) + 20 x crates/ck-*/src/README.md (new)
-  - crates/ck-core/src/{entities,ports,types}/README.md (new)
-  - integration/README.md (new) + integration/agentic_capability_loop/README.md (new)
-  - scripts/README.md (new)
-  - .agents/{current_plan,work_log,evidence,decisions,OBSERVED_DEBT,LESSONS,project_state,current_status}
-  - .agents/reports/2026-10-30_EGM_DRIFT_REPORT.md (new)
+  - crates/ck-bin/src/main.rs (--version, per-user default DB, SSE lifecycle, fail-closed SSE bind and reload)
+  - crates/ck-config/src/lib.rs (default_user_data_dir, DATA_DIR_ENV)
+  - crates/ck-app/src/lib.rs (recall hydration)
+  - crates/ck-bin/tests/{cli.rs,runtime_lifecycle.rs,installed_package.rs}
+  - packaging/{linux,windows,macos}/*, scripts/package/**, scripts/jetson/*
+  - .github/workflows/{ci,package,release}.yml
+  - docs/install.md, docs/release.md
+  - .agents/reports/native-distribution-2026-10-31.md
 completed_work:
-  - Safety gate approved (34+ dirs); 8 sequential worker subagents generated 45 partition contracts (W8 ck-bin added after root compile caught a dropped partition)
-  - Root compile: crates/README.md blueprint + root README.md Correction-Policy merge
-  - Final verification: all 48 contracts explicitly read; links/sections/fences checked by script; every [file:Symbol] citation grepped in the cited file (zero misses)
-  - Drift check: 53/53 specific claims verified; pub-symbol coverage scan clean after fixing ck-mcp/src contract (added DomainIdentityError, EventEnvelope)
+  - recall returns hydrated content (was empty text / kind unknown)
+  - SSE fails closed on non-loopback bind without auth; reload without tokens fails
+  - installed-package qualification harness (10 tests, CK_QUALIFY_BIN)
+  - Linux deb/tar with glibc/DT_NEEDED ABI gate; Windows zip + per-user setup.exe; macOS pkg/dmg
+  - CI package matrix on native runners; tag release workflow with verification
+  - Jetson install and functional smoke scripts
 verification:
-  - Link/section/fence checks over all 48 contracts: pass (script, python3 -I)
-  - Citation grounding greps: zero misses across 48 files
-  - Claim verification greps (config defaults, weights, caps, routes, env vars, CLI, IP ranges, timeouts): 53/53 pass
-  - cargo test / clippy / fmt: NOT run (documentation-only change; build-lock + RAM discipline)
+  - cargo fmt --check, clippy -D warnings, cargo test --workspace: pass (302 tests) on merged tree
+  - CI run 41184479269: rust + 5 package legs success, each installs its package and runs the harness
+  - local: extracted .deb payload passed harness (10/10) and smoke test (PASS)
 remaining_steps:
-  - Review the README diff; commit only if the operator asks (skill forbids commits)
-  - Optional: add a pub-symbol coverage/link checker to docs CI (OBSERVED_DEBT entry)
-blockers: none
+  - run scripts/jetson/install-context-kernel.sh --run 41184479269 on the Jetson (not yet done; no device access from this environment)
+  - decide on tagging v0.1.0 (creates a public release; not done)
+  - replace placeholder Maintainer address in packaging/linux build script before public distribution
+  - sign Windows and notarize macOS when credentials exist
+blockers:
+  - no Jetson access from this environment; device run is the operator's step
 decisions:
-  - Sequential worker execution instead of the skill's parallel swarm (RAM constraint, one agent at a time, no compilation)
-  - Verification commands are recorded in contracts (cargo test --workspace / cargo test -p <pkg>) but were not executed
-  - Root README updated via the skill's Correction Policy (existing title/overview preserved, EGM sections merged)
-  - docs/ and config/ are pruned (no source extensions) and appear as unlinked bullets, not contract links
+  - binary stays context-kernal; context-kernel is a packaged alias
+  - installed default DB is per-user (CK_DATA_DIR overrides); explicit flags unchanged
+  - SSE without auth refused on non-loopback addresses
+  - Linux ARM64 built on ubuntu-22.04-arm to keep glibc floor at 2.35
+  - unsigned Windows, unsigned/not-notarized macOS; no universal macOS binaries
+  - full list in .agents/reports/native-distribution-2026-10-31.md
