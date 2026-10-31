@@ -91,6 +91,15 @@ index_cksum() {
     | jq -r --arg v "$ver" 'select(.vers == $v) | .cksum' | head -1
 }
 
+# Hash of a .crate's contents, excluding .cargo_vcs_info.json (which records the commit).
+content_hash() {
+  local crate="$1" tmp
+  tmp="$(mktemp -d)"
+  tar -xzf "$crate" -C "$tmp"
+  (cd "$tmp" && find . -type f ! -name .cargo_vcs_info.json -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
+  rm -rf "$tmp"
+}
+
 write_receipt() { # name status sha256 detail
   mkdir -p "$receipt_dir"
   jq -n --arg channel "crates.io" --arg package "$1" --arg version "$version" \
@@ -135,12 +144,19 @@ while IFS= read -r name; do
   local_sum="$(sha256sum "target/package/$name-$version.crate" | cut -d' ' -f1)"
 
   if [[ -n "$published_sum" ]]; then
-    if [[ "$published_sum" != "$local_sum" ]]; then
-      write_receipt "$name" "conflict" "$local_sum" "published cksum $published_sum differs from this commit"
+    # cargo embeds the commit in .cargo_vcs_info.json, so the .crate checksum changes
+    # with every commit. Compare the crate contents without that file instead.
+    remote_crate="$(mktemp)"
+    curl -fsSL --retry 3 "https://static.crates.io/crates/$name/$name-$version.crate" -o "$remote_crate" \
+      || die "could not download published $name@$version to compare"
+    if [[ "$(content_hash "$remote_crate")" != "$(content_hash "target/package/$name-$version.crate")" ]]; then
+      rm -f "$remote_crate"
+      write_receipt "$name" "conflict" "$local_sum" "published $name@$version has different source contents"
       die "$name@$version is already published with different contents; refusing to continue"
     fi
-    write_receipt "$name" "already_published" "$local_sum" "index cksum matches this commit"
-    log "skip $name: already published with matching checksum"
+    rm -f "$remote_crate"
+    write_receipt "$name" "already_published" "$local_sum" "published contents match this commit (vcs info excluded)"
+    log "skip $name: already published with identical contents"
     continue
   fi
 
