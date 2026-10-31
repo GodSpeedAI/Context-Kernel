@@ -45,7 +45,7 @@ sequenceDiagram
 ## 3. Detailed Execution Path
 
 ### Context Storage (`store_context`)
-* **Code Symbol**: `AppServices::store_context` in [`crates/ck-app/src/lib.rs`](file:///crates/ck-app/src/lib.rs#L158).
+* **Code Symbol**: `AppServices::store_context` in [`crates/ck-app/src/lib.rs`](../../crates/ck-app/src/lib.rs#L158).
 1. Resolves `session_id` (defaults to `"default"` if unspecified). If the session does not exist, auto-creates it in SQLite with `status = "active"`.
 2. Checks for `artifact_ref`:
    - If present, decodes base64 bytes (or falls back to raw UTF-8).
@@ -56,7 +56,7 @@ sequenceDiagram
 4. Indexes the event text in `session_events_fts` for keyword recall.
 
 ### Context Recall (`recall_context`)
-* **Code Symbol**: `AppServices::recall_context` in [`crates/ck-app/src/lib.rs`](file:///crates/ck-app/src/lib.rs#L293).
+* **Code Symbol**: `AppServices::recall_context` in [`crates/ck-app/src/lib.rs`](../../crates/ck-app/src/lib.rs#L293).
 1. Evaluates recall scope:
    - `Current`: Limits recall to the caller's active `session_id`.
    - `Recent`: Searches across recently updated sessions.
@@ -67,7 +67,7 @@ sequenceDiagram
 4. Returns matching events with timestamp, kind, text, and any associated `artifact_id`.
 
 ### Retention Garbage Collection (`run_retention_gc`)
-* **Code Symbol**: `AppServices::run_retention_gc` in [`crates/ck-app/src/lib.rs`](file:///crates/ck-app/src/lib.rs#L50).
+* **Code Symbol**: `AppServices::run_retention_gc` in [`crates/ck-app/src/lib.rs`](../../crates/ck-app/src/lib.rs#L50).
 When `retention.enabled = true` in configuration, Context Kernel runs GC on startup:
 1. Calculates cutoff dates based on UTC timestamps:
    - `session_event_days` (default 90)

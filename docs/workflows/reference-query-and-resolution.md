@@ -52,12 +52,12 @@ sequenceDiagram
 ## 3. Detailed Execution Path
 
 ### Step 1: Request Ingress & Intent Analysis
-* **Code Symbol**: `AppServices::query_reference` in [`crates/ck-app/src/lib.rs`](file:///crates/ck-app/src/lib.rs#L536).
+* **Code Symbol**: `AppServices::query_reference` in [`crates/ck-app/src/lib.rs`](../../crates/ck-app/src/lib.rs#L536).
 * Analyzes `intent` string, mapping to `QueryIntent::QueryDocs`, `SearchRefs`, `ResolveLibrary`, or `General`.
 * Resolves the target corpus list from `source_scope`. If omitted, defaults to all accessible corpora.
 
 ### Step 2: Lexical FTS5 Search
-* **Code Symbol**: `FtsSearch::search_chunks` in [`crates/ck-search-fts/src/lib.rs`](file:///crates/ck-search-fts/src/lib.rs#L104).
+* **Code Symbol**: `FtsSearch::search_chunks` in [`crates/ck-search-fts/src/lib.rs`](../../crates/ck-search-fts/src/lib.rs#L104).
 * The query is sanitized by `fts_query`: individual tokens are quoted with double-quotes, internal quotes are escaped, and tokens are joined with `OR`.
 * Executes SQL against `chunks_fts`:
   ```sql
@@ -73,7 +73,7 @@ sequenceDiagram
 * If semantic search is enabled, queries `OpenAIEmbeddingProvider::embed` for an embedding vector, then calls `SqliteVectorStore::search_chunks` for brute-force cosine similarity matches.
 
 ### Step 4: Hybrid Ranking & De-duplication
-* **Code Symbol**: `LexicalRanker::rank_results` in [`crates/ck-ranker/src/lib.rs`](file:///crates/ck-ranker/src/lib.rs#L173).
+* **Code Symbol**: `LexicalRanker::rank_results` in [`crates/ck-ranker/src/lib.rs`](../../crates/ck-ranker/src/lib.rs#L173).
 * Retrieves the `WeightProfile` for the query intent.
 * Computes composite score for each chunk:
   $$\text{Score} = w_{\text{fts}} \cdot S_{\text{fts}} + w_{\text{trust}} \cdot S_{\text{trust}} + w_{\text{freshness}} \cdot S_{\text{freshness}} + w_{\text{sem}} \cdot S_{\text{sem}}$$

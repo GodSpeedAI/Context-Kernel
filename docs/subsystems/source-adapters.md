@@ -55,17 +55,17 @@ graph TD
 
 ## 5. Core Abstractions
 
-### `FilesystemSourceAdapter` ([`crates/ck-adapter-filesystem/src/lib.rs`](file:///crates/ck-adapter-filesystem/src/lib.rs))
+### `FilesystemSourceAdapter` ([`crates/ck-adapter-filesystem/src/lib.rs`](../../crates/ck-adapter-filesystem/src/lib.rs))
 * Recursively traverses directories, filtering for extensions `md`, `txt`, `toml`, `rs`, and `json`.
 * Ignores directory symlinks to avoid directory recursion loops.
 * Generates SHA-256 checksums of file contents.
 
-### `HeadingChunker` ([`crates/ck-adapter-filesystem/src/lib.rs`](file:///crates/ck-adapter-filesystem/src/lib.rs))
+### `HeadingChunker` ([`crates/ck-adapter-filesystem/src/lib.rs`](../../crates/ck-adapter-filesystem/src/lib.rs))
 * Partitions documents along Markdown heading lines (`# ...`).
 * If a heading section exceeds `MAX_TOKENS_PER_CHUNK` (800 words), it is further split along paragraph boundaries.
 * Computes URL-friendly anchor slugs (e.g., `#section-name`).
 
-### `WebSourceAdapter` ([`crates/ck-adapter-web/src/lib.rs`](file:///crates/ck-adapter-web/src/lib.rs))
+### `WebSourceAdapter` ([`crates/ck-adapter-web/src/lib.rs`](../../crates/ck-adapter-web/src/lib.rs))
 * **SSRF Protection Engine**: Validates URLs against an IP filter before issuing requests:
   - Blocks IPv4 loopback (`127.0.0.0/8`) and unassigned (`0.0.0.0/8`).
   - Blocks private IPv4 RFC 1918 ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`).
@@ -75,7 +75,7 @@ graph TD
   - Resolves hostnames via `DnsResolver`; if resolution yields a private IP or fails, the request fails closed immediately.
 * **Conditional Caching**: Uses `If-None-Match` (ETag) and `If-Modified-Since` headers to avoid re-fetching unchanged pages.
 
-### `GitHubSourceAdapter` ([`crates/ck-adapter-github/src/lib.rs`](file:///crates/ck-adapter-github/src/lib.rs))
+### `GitHubSourceAdapter` ([`crates/ck-adapter-github/src/lib.rs`](../../crates/ck-adapter-github/src/lib.rs))
 * Queries the GitHub Git Trees API with `recursive=1`.
 * Detects the `truncated: true` flag in GitHub's response, immediately returning an error rather than silently indexing a partial repository.
 * Decodes base64 file payloads and safely percent-encodes URL path segments.

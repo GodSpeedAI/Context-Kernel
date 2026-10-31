@@ -18,7 +18,9 @@ This guide defines the core domain concepts and terminology used throughout Cont
 | [Session Event](#session-event) | Memory | `ck_core::entities::SessionEvent` | `session_events`, `session_events_fts` tables |
 | [Artifact](#artifact) | Storage | `ck_core::entities::Artifact` | `artifacts` table + `<data_dir>/artifacts/*.bin` |
 | [Refresh Job](#refresh-job) | Background Task | `ck_core::entities::RefreshJob` | `refresh_jobs` table |
-| [Context Packet](#context-packet) | Convergence | `ck_mcp::agentic_capability_loop::ContextPacket` | In-flight MCP JSON payload |
+| [Context Requirement](#context-requirement) | Convergence | `ck_app::ContextRequirement` | Typed demand, projected from the E2 envelope |
+| [Context Bundle](#context-bundle) | Convergence | `ck_mcp::cep_bundle::project_context_bundle` | `godspeed.context_bundle` JSON artifact |
+| [Context Effect](#context-effect) | Calibration | `ck_app::ContextEffect` | Append-only per-world JSONL ledger |
 | [Query Intent](#query-intent) | Ranking | `ck_core::types::QueryIntent` | Used at runtime by `ck-ranker` |
 | [Event Retention Class](#event-retention-class) | Memory | `ck_memory::EventRetentionClass` | Evaluated during retention GC |
 
@@ -86,11 +88,23 @@ This guide defines the core domain concepts and terminology used throughout Cont
 * **Relationships**: Belongs to a `Source`.
 * **Source Location**: Defined in [`crates/ck-core/src/entities/job.rs`](../crates/ck-core/src/entities/job.rs#L6-L20); stored in SQLite `refresh_jobs` table.
 
-### Context Packet
-* **What it is**: A bounded, citation-bearing JSON bundle assembled by Context Kernel to satisfy a `ContextRequired` request on the E2/E3 boundary with SWE_SEED. Contains a `context_packet_id`, `corpus_id`, citations with line and heading anchors, and pass-through authority references.
-* **What it is not**: A prompt or a complete file dump. Context packets are strictly bounded relevance packages.
-* **Relationships**: Emitted by `ck-mcp::AclContextAgent` in response to an authoritative `ContextRequired` event produced by `swe_seed`.
-* **Source Location**: Defined in [`crates/ck-mcp/src/agentic_capability_loop.rs`](../crates/ck-mcp/src/agentic_capability_loop.rs).
+### Context Requirement
+* **What it is**: The typed demand a caller makes, represented by `ContextRequirement`. It carries requirement identity, the pinned `world_ref`, purpose, query, mode, corpora, required concepts, scope claims, exclusions, freshness ceiling, result cap, token budget, and trace references.
+* **What it is not**: A query string. It is the complete constraint set that decides whether a retrieval may happen and what counts as a complete answer.
+* **Relationships**: Produced by `ContextRequiredPayload::to_requirement`; consumed by `AppServices::resolve_context`.
+* **Source Location**: Defined in [`crates/ck-app/src/context.rs`](../crates/ck-app/src/context.rs#L69-L118).
+
+### Context Bundle
+* **What it is**: The canonical CEP-0008 `godspeed.context_bundle` artifact returned by `context_required`. It contains references with availability and integrity status, marked omissions, a completeness status (`complete_for_context`, `partial`, `minimal`), the boundary record, provenance, governed extensions, and an `integrity` block whose `content_hash` is SHA-256 over canonical JSON minus the integrity block.
+* **What it is not**: A prompt, a file dump, or action authority. Absence is stated as a marked omission, never fabricated as success.
+* **Relationships**: Projected from a `ContextResolution` and the packet payload by `ck-mcp::cep_bundle`. The legacy `ContextPacketCreated` envelope remains for dual-read migration only.
+* **Source Location**: Projection in [`crates/ck-mcp/src/cep_bundle.rs`](../crates/ck-mcp/src/cep_bundle.rs#L345-L430); truthfulness rules and seal in [`assemble`](../crates/ck-mcp/src/cep_bundle.rs#L179-L331).
+
+### Context Effect
+* **What it is**: A settlement-backed record that calibrates future retrieval for one pinned semantic world. Supported kinds include `source_contradicted` (0.20 demotion) and `source_stale` (0.10), plus recorded-but-non-demoting kinds such as `context_item_unused`.
+* **What it is not**: Developmental memory or an agent self-report. Every effect needs an `evidence_ref` of kind `settlement`, `evidence`, `execution`, `observation`, or `proof`. Historical bundles are never rewritten.
+* **Relationships**: Ingested by `ingest_context_effects`, stored append-only per world, and read during the calibration stage of `resolve_context`. Penalties accumulate per source and cap at 0.50.
+* **Source Location**: Defined in [`crates/ck-app/src/context_effect.rs`](../crates/ck-app/src/context_effect.rs#L56-L79).
 
 ---
 
@@ -114,3 +128,14 @@ Governs whether an event is preserved across retention GC sweeps:
 * `Ephemeral`: The session is temporary and expected to be cleaned up after inactivity.
 * `Resumeable`: The session timeline can be reopened and extended in future agent runs.
 * `Pinned`: The session and its events are protected against automated retention cleanup.
+
+### Retrieval Completeness (`ck_core::types::RetrievalCompleteness`)
+* `Complete`: References are present and no omission is marked. Projects to `complete_for_context`.
+* `Partial`: References are present but at least one omission is marked. Projects to `partial`.
+* `None`: No references survive resolution. The bundle becomes `minimal`, carrying the unanswered question and the reason as a known omission.
+
+### No-Context Reason (`ck_core::types::NoContextReason`)
+Fixed vocabulary for governed absence, in reason-precedence order when several apply: `budget_exhausted`, `no_fresh_content`, `corpus_not_found`, `no_matching_content`. Access and configuration failures use `corpus_scope_unresolved`, `corpus_excluded`, `corpus_unavailable`, and `corpus_root_unconfigured`. A reason is never inferred from prose and is always machine-readable.
+
+### Retrieval Omission (`ck_app::RetrievalOmission`)
+Marked gaps that make a bundle partial: `max_results_reached`, `token_budget_exhausted`, `stale_source_excluded`, `required_distinction_absent`. The legacy path may also emit `citation_content_truncated`. A code can appear more than once when distinct items share the same gap, for example one missing concept per entry.

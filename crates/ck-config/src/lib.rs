@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::{env, fs};
 
 use anyhow::Result;
@@ -281,6 +281,114 @@ pub fn default_config() -> KernelConfig {
         retention: RetentionConfig::default(),
         authorization: AuthorizationConfig::default(),
         observability: ObservabilityConfig::default(),
+    }
+}
+
+/// Environment variable that overrides the per-user data directory used by an
+/// installed binary when it runs without `--config` or `--database`.
+pub const DATA_DIR_ENV: &str = "CK_DATA_DIR";
+
+/// Per-user data directory for installed usage, independent of the working
+/// directory. Precedence: `CK_DATA_DIR`, then the platform convention:
+/// - Linux: `$XDG_DATA_HOME/context-kernel` (or `~/.local/share/context-kernel`)
+/// - macOS: `~/Library/Application Support/Context Kernel`
+/// - Windows: `%LOCALAPPDATA%\Context Kernel`
+pub fn default_user_data_dir() -> Result<PathBuf> {
+    default_user_data_dir_from(|key| env::var_os(key))
+}
+
+/// Default database for installed usage: `kernel.db` inside the per-user data directory.
+pub fn default_user_database_path() -> Result<PathBuf> {
+    Ok(default_user_data_dir()?.join("kernel.db"))
+}
+
+fn default_user_data_dir_from(get: impl Fn(&str) -> Option<std::ffi::OsString>) -> Result<PathBuf> {
+    let non_empty = |key: &str| get(key).filter(|value| !value.is_empty());
+    if let Some(dir) = non_empty(DATA_DIR_ENV) {
+        return Ok(PathBuf::from(dir));
+    }
+    if cfg!(windows) {
+        let base = match non_empty("LOCALAPPDATA") {
+            Some(dir) => PathBuf::from(dir),
+            None => PathBuf::from(non_empty("USERPROFILE").ok_or_else(|| {
+                anyhow::anyhow!("cannot locate LOCALAPPDATA; set {DATA_DIR_ENV}")
+            })?)
+            .join("AppData")
+            .join("Local"),
+        };
+        return Ok(base.join("Context Kernel"));
+    }
+    let home = non_empty("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow::anyhow!("cannot locate HOME; set {DATA_DIR_ENV}"))?;
+    if cfg!(target_os = "macos") {
+        return Ok(home
+            .join("Library")
+            .join("Application Support")
+            .join("Context Kernel"));
+    }
+    let base = match non_empty("XDG_DATA_HOME").map(PathBuf::from) {
+        Some(dir) if dir.is_absolute() => dir,
+        _ => home.join(".local").join("share"),
+    };
+    Ok(base.join("context-kernel"))
+}
+
+#[cfg(test)]
+mod user_data_dir_tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::ffi::OsString;
+
+    fn env_of(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
+        let map: HashMap<String, OsString> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), OsString::from(v)))
+            .collect();
+        move |key: &str| map.get(key).cloned()
+    }
+
+    #[test]
+    fn explicit_data_dir_env_wins() {
+        let dir =
+            default_user_data_dir_from(env_of(&[(DATA_DIR_ENV, "/srv/ck"), ("HOME", "/home/u")]))
+                .unwrap();
+        assert_eq!(dir, PathBuf::from("/srv/ck"));
+    }
+
+    #[test]
+    fn empty_override_is_ignored() {
+        let dir =
+            default_user_data_dir_from(env_of(&[(DATA_DIR_ENV, ""), ("HOME", "/home/u")])).unwrap();
+        assert!(dir.ends_with("context-kernel") || dir.ends_with("Context Kernel"));
+    }
+
+    #[test]
+    fn missing_home_is_an_error_not_a_cwd_fallback() {
+        let err = default_user_data_dir_from(env_of(&[]));
+        if !cfg!(windows) {
+            assert!(err.is_err());
+        }
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn linux_uses_xdg_when_absolute() {
+        let dir = default_user_data_dir_from(env_of(&[
+            ("XDG_DATA_HOME", "/data/xdg"),
+            ("HOME", "/home/u"),
+        ]))
+        .unwrap();
+        assert_eq!(dir, PathBuf::from("/data/xdg/context-kernel"));
+        let relative = default_user_data_dir_from(env_of(&[
+            ("XDG_DATA_HOME", "relative/xdg"),
+            ("HOME", "/home/u"),
+        ]))
+        .unwrap();
+        assert_eq!(
+            relative,
+            PathBuf::from("/home/u/.local/share/context-kernel")
+        );
     }
 }
 

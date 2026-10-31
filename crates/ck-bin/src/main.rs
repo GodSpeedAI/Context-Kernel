@@ -23,6 +23,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
 #[command(name = "context-kernel")]
+#[command(version)]
 #[command(about = "Context Kernel MCP service")]
 struct Cli {
     #[command(subcommand)]
@@ -139,7 +140,17 @@ fn serve(args: RuntimeArgs) -> Result<()> {
     // Determine if SSE should be enabled
     let enable_sse = args.sse.is_some() || config.mcp.enable_sse;
     let sse_bind = args.sse.as_deref().unwrap_or(config.mcp.sse.bind.as_str());
+    // Fail closed: without bearer auth, the SSE listener is unauthenticated and
+    // grants every tool and corpus (BearerAuth::no_auth). Only loopback may run
+    // that way; any other bind requires require_auth = true.
+    if enable_sse && !config.mcp.sse.require_auth && !is_loopback_bind(sse_bind) {
+        anyhow::bail!(
+            "refusing to serve SSE on non-loopback address {sse_bind} without authentication; \
+             set [mcp.sse] require_auth = true and configure [auth] tokens"
+        );
+    }
 
+    let mut sse_thread: Option<std::thread::JoinHandle<Result<()>>> = None;
     let sse_reload_state: Option<std::sync::Arc<ck_transport_sse::ReloadableSseState>> =
         if enable_sse {
             // Bind the TCP listener on the main thread so a bind failure fails
@@ -158,22 +169,32 @@ fn serve(args: RuntimeArgs) -> Result<()> {
                 mcp_auth.clone(),
             ));
             let state_clone = state.clone();
-            std::thread::spawn(move || {
-                let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            sse_thread = Some(std::thread::spawn(move || -> Result<()> {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| anyhow::anyhow!("failed to start SSE runtime: {e}"))?;
                 rt.block_on(async move {
                     // Convert inside the runtime: from_std registers with the reactor.
-                    let listener = match tokio::net::TcpListener::from_std(std_listener) {
-                        Ok(l) => l,
-                        Err(e) => {
+                    let listener =
+                        tokio::net::TcpListener::from_std(std_listener).map_err(|e| {
                             tracing::error!(error = %e, "failed to register SSE listener");
-                            return;
+                            anyhow::anyhow!("failed to register SSE listener: {e}")
+                        })?;
+                    tokio::select! {
+                        result = ck_transport_sse::serve_sse(state_clone, listener) => {
+                            if let Err(e) = &result {
+                                tracing::error!(error = %e, "SSE server error");
+                            }
+                            result
                         }
-                    };
-                    if let Err(e) = ck_transport_sse::serve_sse(state_clone, listener).await {
-                        tracing::error!(error = %e, "SSE server error");
+                        _ = shutdown_signal() => {
+                            // Each MCP request commits its own SQLite transaction, so
+                            // exiting here loses no acknowledged writes.
+                            tracing::info!("shutdown signal received; SSE MCP server stopped");
+                            std::process::exit(0);
+                        }
                     }
-                });
-            });
+                })
+            }));
             tracing::info!(bind = sse_bind, "SSE MCP server started");
             Some(state)
         } else {
@@ -272,6 +293,9 @@ fn serve(args: RuntimeArgs) -> Result<()> {
                     // Previously this used `with_app`, which set the service's
                     // internal auth to None — so after the first reload SSE's
                     // tool/corpus allowlist checks silently passed.
+                    if reloaded.mcp.sse.require_auth && reloaded.auth.tokens.is_empty() {
+                        anyhow::bail!("reloaded config requires SSE auth but has no auth tokens");
+                    }
                     let reload_mcp_auth: Arc<dyn AuthPort> = if reloaded.mcp.sse.require_auth {
                         Arc::new(BearerAuth::with_policy(
                             reloaded.auth.tokens.clone(),
@@ -305,6 +329,18 @@ fn serve(args: RuntimeArgs) -> Result<()> {
     }
 
     running.store(false, Ordering::Relaxed);
+
+    // A standalone SSE service must not exit just because stdin closed (for
+    // example under a service manager with stdin=/dev/null). Stay up until the
+    // listener fails; a shutdown signal exits the process from the SSE thread.
+    // Stdio-only operation (no SSE) still exits at EOF, as before.
+    if let Some(handle) = sse_thread.take() {
+        tracing::info!("stdin closed; continuing to serve SSE MCP until shutdown");
+        match handle.join() {
+            Ok(result) => result?,
+            Err(_) => anyhow::bail!("SSE server thread panicked"),
+        }
+    }
 
     Ok(())
 }
@@ -360,10 +396,64 @@ fn open_store(args: &RuntimeArgs) -> Result<(SqliteStore, ck_config::KernelConfi
 
     if let Some(database) = &args.database {
         config.storage.database_path = database.clone();
+    } else if args.config.is_none() {
+        // Installed-binary default: a per-user database that does not depend on
+        // the working directory. Explicit --database / --config keep their meaning.
+        let path = ck_config::default_user_database_path()?;
+        if let Some(parent) = path.parent() {
+            ensure_private_dir(parent)?;
+        }
+        config.storage.database_path = path.to_string_lossy().into_owned();
     }
 
     let store = SqliteStore::open(&config.storage.database_path)?;
     Ok((store, config))
+}
+
+/// Create a data directory if missing; a newly created leaf directory is
+/// restricted to the owner on Unix. Existing directories are left untouched.
+fn ensure_private_dir(dir: &std::path::Path) -> Result<()> {
+    if dir.is_dir() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+/// True only for a literal loopback socket address. Anything unparseable (for
+/// example a hostname) is treated as non-loopback so the check fails closed.
+fn is_loopback_bind(bind: &str) -> bool {
+    bind.parse::<std::net::SocketAddr>()
+        .map(|addr| addr.ip().is_loopback())
+        .unwrap_or(false)
+}
+
+/// Resolves when the process receives an interrupt or termination request.
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = term.recv() => {}
+                }
+            }
+            Err(_) => {
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }
 
 fn wire_app(

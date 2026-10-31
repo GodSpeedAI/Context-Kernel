@@ -355,7 +355,18 @@ impl AppServices {
             .ranker
             .rank_recall_results(&req.query, scored, rank_ctx)?;
 
-        let results = results.into_iter().take(safe_top_k as usize).collect();
+        let mut results: Vec<_> = results.into_iter().take(safe_top_k as usize).collect();
+
+        // The ranker orders identities only. Hydrate the canonical event row so
+        // recall returns what was stored (kind, text, artifact, timestamp).
+        for item in &mut results {
+            if let Some(event) = self.session_memory.get_event(&item.event_id)? {
+                item.kind = event.kind;
+                item.text = event.text;
+                item.artifact_id = event.artifact_id;
+                item.created_at = event.created_at;
+            }
+        }
 
         Ok(RecallContextResponse { results, query_id })
     }

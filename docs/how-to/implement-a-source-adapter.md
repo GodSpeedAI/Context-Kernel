@@ -11,7 +11,7 @@ Add a new documentation source adapter (e.g. for an S3 bucket, an internal Wiki,
 
 ## 1. Understand the `SourceAdapter` Trait
 
-The trait is defined in [`crates/ck-core/src/ports/source_adapter.rs`](file:///crates/ck-core/src/ports/source_adapter.rs):
+The trait is defined in [`crates/ck-core/src/ports/source_adapter.rs`](../../crates/ck-core/src/ports/source_adapter.rs):
 
 ```rust
 use anyhow::Result;

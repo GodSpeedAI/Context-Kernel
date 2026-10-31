@@ -7,6 +7,8 @@
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
 [![MCP](https://img.shields.io/badge/MCP-stdio%20%2B%20SSE-blue.svg)](docs/mcp-contracts.md)
 
+## System Overview
+
 A coding agent can search your whole repository.
 
 It can fetch documentation from the web.
@@ -42,6 +44,33 @@ agent context
 Context Kernel runs as a single Rust binary with SQLite, FTS5, filesystem artifacts, optional embeddings, source adapters, and MCP interfaces.
 
 It can run entirely inside your own deployment.
+
+## Repository Blueprint (EGM)
+
+### Subdirectories & System Boundaries
+- crates: [./crates/README.md](./crates/README.md) - the 20-crate Cargo workspace blueprint (domain, application, adapters, transports, MCP boundary, composition).
+- integration: [./integration/README.md](./integration/README.md) - legacy, deprecated Python compatibility shim for agentic-capability-loop integration tests; production path is `crates/ck-mcp`.
+- scripts: [./scripts/README.md](./scripts/README.md) - `run-exact-test.sh`, the exact-test verification runner.
+- docs/ - 9-layer technical knowledge system (documentation only; no EGM contract file).
+- config/ - example TOML configuration files (no EGM contract file).
+
+### Global Invariants
+- Ports-and-adapters layering: `ck-core` holds domain entities, port traits, and vocabulary types only (dependencies limited to anyhow, chrono, serde, serde_json — no SQL or transport); application logic in `ck-app` runs through injected ports; adapters implement ports; `ck-bin` composes. Residual layering debt: the JSONL `ContextEffectStore` performs direct `std::fs` I/O inside `ck-app`.
+- POL-ACL-002 access semantics: a private corpus requires an explicit scope claim; `ContextAccess` verdicts (accessible / inaccessible / requires_scope) are data-access decisions and never action authority — SEA-Forge owns that.
+- Never fabricate context: zero-result retrievals return explicit machine-readable `NoContextReason` codes; an unexplained incompleteness is refused (`BundleError::UnexplainedIncompleteness`), and complete/partial/none truthfulness rules are enforced in the bundle assembler.
+- Bundle-first egress: the canonical cross-system artifact is the CEP `godspeed.context_bundle` envelope with `sha256:<hex>` integrity over canonical JSON (floats normalized to 6 decimals); the legacy `ContextPacketCreated` envelope is deprecated dual-read.
+- Snapshot-before-replace ingestion: a new snapshot is fully discovered, fetched, normalized, and chunked before prior documents and FTS rows are deleted; source/corpus upserts use `ON CONFLICT ... DO UPDATE` because `INSERT OR REPLACE` would cascade-delete child rows.
+- Calibration is settlement-backed only: context effects require a settlement/evidence `evidence_ref`, are world-pinned, live in an append-only per-world JSONL ledger, demote prospectively, and cap per-source penalties at 0.50.
+- Runtime wiring is a subset of the workspace: `ck-bin` registers only the `filesystem` (default) and `learning_proposals_jsonl` source adapters; `ck-adapter-github`, `ck-adapter-web`, and `ck-scheduler` are implemented and tested but not composed into the binary.
+
+### Global Side Effects
+- SQLite database (default `kernel.db`): `SCHEMA_V1` relational tables plus FTS5 virtual tables (`ck-storage-sqlite`) and embedding tables (`ck-vector`); connections are opened per operation with WAL and foreign keys enabled.
+- Filesystem: artifact payloads under `<data_dir>/artifacts/`; the optional append-only context-effect ledger named by `CK_CONTEXT_EFFECT_LEDGER`; corpus and JSONL ledger reads during ingestion.
+- Network: the SSE HTTP server (axum, bearer-token gated) and the stdio JSON-RPC loop; outbound network calls occur only inside adapters (OpenAI-compatible embeddings when configured; GitHub/web adapters exist but are unwired).
+- Process: the global tracing subscriber is installed once per subcommand; environment reads for config `${VAR}` expansion, `RUST_LOG`, `CK_CONTEXT_CORPUS_ROOT`, `CK_LEARNING_PROPOSALS_LEDGER`, and `CK_CONTEXT_EFFECT_LEDGER`; SSE and periodic-refresh threads spawned by `serve`.
+
+### System Verification
+- Run: `cargo test --workspace`
 
 ---
 
@@ -167,6 +196,8 @@ ingest_source
 refresh_source
 query_reference
 resolve_reference
+context_required
+ingest_context_effects
 ```
 
 For compatibility with documentation-oriented MCP clients:
@@ -812,6 +843,14 @@ Search reference material and return relevant excerpts.
 
 Resolve a user-facing library or source name into the stable identity used for retrieval.
 
+### `context_required`
+
+Answer a frozen SWE_SEED context requirement with a sealed, hash-verified context bundle. The response reports retrieval completeness, omissions, a governed no-context reason when nothing qualifies, and access status. It never grants action authority.
+
+### `ingest_context_effects`
+
+Record settlement-backed effects (contradicted source, stale source, missing distinction) into the per-world ledger. Later retrievals in that world demote affected sources, capped at 0.50 per source.
+
 The compatibility aliases exist so clients designed around common documentation MCP conventions can use Context Kernel without changing its canonical internal vocabulary.
 
 See:
@@ -940,6 +979,8 @@ and where it came from."
 SWE_SEED should not need to become a second retrieval engine.
 
 Context Kernel should not need to decide the software route.
+
+The wire boundary is the `context_required` tool: SWE_SEED sends a versioned requirement with a pinned `world_ref`, and Context Kernel returns a `context_bundle` whose `integrity.content_hash` can be re-verified. Walkthrough: [Context Requirement Resolution](docs/workflows/context-requirement-resolution.md). Interactive version: [Context Requirement Explorer](docs/explainers/context-requirement-explorer.html).
 
 ---
 

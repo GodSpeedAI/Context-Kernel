@@ -27,7 +27,8 @@ Context Kernel acts as the **contextual buffer cache and reference index** for a
 │  ✓ Content-addressed filesystem artifact offloading                         │
 │  ✓ Serving standard MCP tools over local stdio and remote SSE HTTP          │
 │  ✓ Enforcing bearer token validation and tool/corpus allowlist policies     │
-│  ✓ Resolving citations into ContextPacketCreated for SWE_SEED (E2/E3 edge)  │
+│  ✓ Resolving a pinned requirement into a sealed context_bundle (E2/E3 edge) │
+│  ✓ Calibrating future retrieval from settlement-backed effects, per world    │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -116,6 +117,28 @@ classDiagram
         +i64 size_bytes
         +String checksum
     }
+    class ContextRequirement {
+        +String context_requirement_id
+        +String world_ref
+        +u32 max_results
+        +Option~i64~ token_budget
+    }
+    class ContextResolution {
+        +RetrievalCompleteness completeness
+        +ContextAccess access
+        +Option~NoContextReason~ no_context_reason
+    }
+    class ContextBundle {
+        +String envelope_id
+        +String completeness_status
+        +String content_hash
+    }
+    class ContextEffect {
+        +String effect_id
+        +String kind
+        +String world_ref
+        +Vec~String~ affected_sources
+    }
 
     Corpus "1" *-- "*" Source : groups via corpus_sources
     Corpus "1" *-- "*" Document : contains
@@ -125,6 +148,9 @@ classDiagram
     LibraryIdentity "1" o-- "*" Document : classifies
     Session "1" *-- "*" SessionEvent : records
     SessionEvent "1" o-- "0..1" Artifact : offloads payload to
+    ContextRequirement "1" --> "1" ContextResolution : resolves to
+    ContextResolution "1" --> "1" ContextBundle : projects to
+    ContextEffect "*" ..> "*" Source : calibrates prospectively
 ```
 
 ### Explanation of Abstractions
@@ -140,7 +166,7 @@ classDiagram
 
 ## 4. State Ownership & Persistence
 
-All persistent state in Context Kernel falls into two strictly separated domains:
+All persistent state in Context Kernel falls into three strictly separated domains:
 
 1. **Relational & Search State (SQLite database file `kernel.db`)**:
    - Schema version 1 installed via embedded DDL (`SCHEMA_V1`).
@@ -149,9 +175,9 @@ All persistent state in Context Kernel falls into two strictly separated domains
    - Virtual tables (`chunks_fts`, `session_events_fts`, `library_aliases_fts`) provide SQLite FTS5 full-text indexing with the `unicode61` tokenizer.
    - Vector tables (`chunk_embeddings`, `session_event_embeddings`) store raw binary float vectors.
 
-2. **Payload State (Filesystem directory `<data_dir>/artifacts/`)**:
-   - Files named `<artifact_id>.bin` (raw binary/text bytes) and `<artifact_id>.meta.json` (metadata).
-   - Validated against path-traversal attacks by strictly requiring alphanumeric, `-`, and `_` characters in `artifact_id`.
+2. **Payload and Ledger State (Filesystem)**:
+   - Artifacts live in `<data_dir>/artifacts/`: `<artifact_id>.bin` (raw bytes) and `<artifact_id>.meta.json` (metadata), validated against path traversal by requiring alphanumeric, `-`, and `_` characters in `artifact_id`.
+   - Context effects live in an append-only, per-world JSONL ledger (path from `CK_CONTEXT_EFFECT_LEDGER`). Records are keyed by `effect_id`; re-ingest is skipped, never overwritten. This state calibrates retrieval and never mutates stored chunks or historical bundles.
 
 3. **In-Memory Configuration State**:
    - Loaded from TOML file with environment variable expansion (`${ENV_VAR}`).
@@ -163,10 +189,13 @@ All persistent state in Context Kernel falls into two strictly separated domains
 
 The following invariants are enforced throughout the repository and must not be violated:
 
-1. **Causal Lineage & Provenance**: Every retrieved chunk links back to its parent `document_id`, `source_id`, `corpus_id`, and URI. Every `ContextPacketCreated` event emitted on the E2/E3 boundary references the initiating `event_id` as `caused_by:`.
+1. **Causal Lineage & Provenance**: Every retrieved chunk links back to its parent `document_id`, `source_id`, `corpus_id`, and URI. Every `context_bundle` carries the initiating `event_id` as `caused_by` and the requirement identity in governed extensions. `integrity.content_hash` is SHA-256 over canonical JSON with the integrity block removed.
 2. **Pinned Memory Immortality**: Retention garbage collection (`run_retention_gc`) will delete unpinned session events older than `session_event_days`, but events with `pinned = 1` are **never** deleted by retention sweeps.
 3. **No Phantom Artifacts**: If writing artifact metadata to SQLite fails during context storage, the physical payload file on disk is immediately deleted via a compensation step to prevent orphaned disk growth.
 4. **Source Refresh Non-Accumulation**: Refreshing a source deletes all prior documents and chunks generated by that source before inserting the new units. Refreshes do not accumulate stale duplicate chunks.
 5. **Fail-Closed SSRF Protection**: The Web adapter blocks all private IPv4 ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, 169.254.0.0/16, 0.0.0.0/8), IPv6 loopback and link-local addresses, non-HTTP schemes, and DNS hostnames that resolve to empty or private IPs.
 6. **Constant-Time Token Comparison**: All authentication tokens are compared using `subtle::ConstantTimeEq` to prevent timing attacks.
 7. **Single-Binary Delivery**: The entire service compiles into one self-contained binary (`context-kernal`), embedding all SQLite migration SQL and default configurations.
+8. **Governed Absence**: A retrieval that yields nothing returns an explicit outcome (`no_context_governed` or `empty_optional`), a machine-readable reason, and a minimal bundle that records the reason as a known omission. Zero references are never reported as success.
+9. **Immutable World Pin**: A `world_ref` must be `world:<name>@sha256:<64 lowercase hex>`; mutable aliases are rejected before retrieval. Calibration applies only to effects recorded for the same world and never crosses worlds.
+10. **Bounded Calibration**: Only settlement-backed effects demote scores. Penalties accumulate per source, cap at 0.50, and apply prospectively: historical bundles are never rewritten.

@@ -1,63 +1,110 @@
-name: Release
+# Formal release on an immutable version tag (v*). Refuses to publish when the
+# tag does not match the workspace version, when a release already exists, or
+# when any platform package fails qualification. Creates exactly one release.
+name: release
 
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    name: Build Release Binary
-    runs-on: ubuntu-latest
+  verify:
+    name: Verify tag, gates, and no existing release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-release-
-
-      - name: Check formatting
-        run: cargo fmt --check
-
-      - name: Run clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      - name: Run tests
-        run: cargo test --workspace
-
-      - name: Build release binary
-        run: cargo build --release -p ck-bin
-
-      - name: Generate checksum
+      - name: Tag matches workspace version
+        run: bash scripts/package/version.sh --check-tag "$GITHUB_REF_NAME"
+      - name: Refuse to overwrite an existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          cd target/release
-          sha256sum context-kernal > context-kernal-linux-x86_64.sha256
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "error: release $GITHUB_REF_NAME already exists; refusing to publish a duplicate" >&2
+            exit 1
+          fi
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal -c rustfmt -c clippy
+          rustup default 1.92.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
 
-      - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: context-kernal-linux-x86_64
-          path: |
-            target/release/context-kernal
-            target/release/context-kernal-linux-x86_64.sha256
+  package:
+    needs: verify
+    uses: ./.github/workflows/package.yml
+    with:
+      publish_name: release
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+  publish:
+    name: Publish one coherent GitHub Release
+    needs: [verify, package]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download every platform package (one directory per platform)
+        uses: actions/download-artifact@v4
         with:
-          files: |
-            target/release/context-kernal
-            target/release/context-kernal-linux-x86_64.sha256
-          generate_release_notes: true
+          pattern: context-kernel-*-release-${{ github.sha }}-*
+          path: assets
+          merge-multiple: false
+      - name: Verify each platform's checksums, then assemble one release set
+        run: |
+          set -euo pipefail
+          for d in assets/*/; do
+            (cd "$d" && sha256sum -c SHA256SUMS)
+          done
+          mkdir -p release
+          for d in assets/*/; do
+            for f in "$d"*; do
+              [ "$(basename "$f")" = "SHA256SUMS" ] && continue
+              mv "$f" release/
+            done
+            cat "$d/SHA256SUMS" >> release/SHA256SUMS.parts
+          done
+          sort -u release/SHA256SUMS.parts > release/SHA256SUMS
+          rm release/SHA256SUMS.parts
+          (cd release && sha256sum -c SHA256SUMS)
+          # Exactly the declared matrix: linux x2 arches (tar+deb), windows (zip+setup),
+          # macOS x2 arches (pkg+dmg) = 10 assets, plus SHA256SUMS.
+          count=$(ls release | grep -vc '^SHA256SUMS$')
+          echo "release assets: $count"
+          test "$count" -eq 10
+          ls -l release
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            release/*.tar.gz
+            release/*.deb
+            release/*.zip
+            release/*-setup.exe
+            release/*.pkg
+            release/*.dmg
+      - name: Create the release (single call, from verified assets)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: release
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "Context Kernel $GITHUB_REF_NAME" \
+            --notes "Native packages for Linux (x86_64, arm64), Windows (x86_64), and macOS (arm64, x86_64). Windows binaries and installer are unsigned. macOS packages are unsigned and not notarized. Verify with SHA256SUMS and the build provenance attestations." \
+            ./*.tar.gz ./*.deb ./*.zip ./*-setup.exe ./*.pkg ./*.dmg ./SHA256SUMS

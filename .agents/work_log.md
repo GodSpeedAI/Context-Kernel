@@ -1,5 +1,14 @@
 # Work Log
 
+## 2026-10-30 — EGM bootstrap: contract READMEs across the repo tree
+- Task: Applied the `egm-bootstrap` skill (/home/sprime01/projects/elephant-goldfish-model/skills/egm-bootstrap/SKILL.md) to the repository: generated EGM-compliant `README.md` contract files (Overview/Interface/Invariants/Side Effects/Verification) for every pruned directory, then ran the `egm-drift-report` skill over the result. Documentation only; no code, schema, config, or CI changes; no git operations.
+- Safety gate: 34+ directories discovered (>15); user approved full-tree bootstrapping with sequential execution (RAM-constrained machine, ~1.9GiB free at start; one agent at a time; no compilation).
+- Execution: 8 sequential worker subagents (W1 ck-core tree + ck-config, W2 ck-app, W3 ck-mcp + ck-transport-stdio, W4 ck-storage-sqlite + ck-search-fts + ck-memory, W5 adapters/artifacts/auth, W6 ranker/vector/scheduler/embeddings/observability/transport-sse, W7 integration/ + scripts/, W8 ck-bin — W8 added after root compile caught that ck-bin had been dropped from the partition regroup). Root orchestrator wrote `crates/README.md` and the root README Blueprint block (Correction Policy: existing content preserved, `## System Overview` heading added).
+- Deliverables: 48 contract files — root `README.md`, `crates/README.md`, 20 crate Hays, 20 `src/` Peanuts, 3 ck-core leaf Peanuts, `integration/` Hay + leaf Peanut, `scripts/` Peanut. Verification commands: `cargo test --workspace` (root/blueprints) and `cargo test -p <pkg>` per crate — documented, NOT run.
+- Drift check (user-authorized): `.agents/reports/2026-10-30_EGM_DRIFT_REPORT.md`. Findings: ck-mcp/src contract missing public types `DomainIdentityError`/`EventEnvelope` (fixed in place); root template heading fixed; 0 broken links, 0 ungrounded citations, 53/53 specific claims verified, pub-symbol coverage scan clean after fix.
+- Memory files updated: current_plan.md (pre-work), work_log.md, evidence.md, decisions.md, OBSERVED_DEBT.md, LESSONS.md, project_state.md, current_status.yml.
+- Tests run: none (documentation-only change; cargo intentionally not executed per build-lock/RAM discipline). Verification was static: link/section/citation scripts + source greps.
+
 ## 2026-09-02 — Repository Documentation Architecture Knowledge System
 - Task: Designed and implemented a self-contained technical knowledge system for Context Kernel fulfilling both newcomer and experienced engineer needs through progressive disclosure (Layers 0 to 8: Orientation, Mental Model, Architecture, Subsystems, Workflows, Explanation, Tutorials, How-To, Reference).
 - Information Architecture:
@@ -348,6 +357,15 @@
   CEP reference validator, 3 refusal paths); CEP_REPO-gated conformance green.
 - Notes: Fixed clippy warnings (option_map_unit_fn, unnecessary_lazy_evaluations). Used parallel subagent delegation for integration tests and periodic refresh implementation.
 
+## 2026-10-24 — Documentation reconciliation for the context pipeline
+
+- Scope: `docs/**`, root `README.md`, `.agents/**`. No Rust, tests, config, deps, CI, or build changes.
+- Reconciled bundle-first wire semantics across `docs/README.md`, `concepts.md`, `mental-model.md`, `source-map.md`, `security.md`, `reference/mcp-tools.md`, `subsystems/{mcp-and-protocols,application-orchestration,retrieval-and-ranking}.md`, `explanation/{retrieval-and-ranking-design,known-limits-and-debt}.md`, `troubleshooting.md`, `workflows/agentic-capability-loop.md`, `mcp-contracts.md`, `documentation-map.md`, root `README.md`.
+- Added `docs/workflows/context-requirement-resolution.md` (stage-by-stage trace, reason/omission tables, calibration loop) and `docs/explainers/context-requirement-explorer.html` (offline, single file, in-page canonical-JSON SHA-256 + tamper detection, 11-stage stepper, presets for every terminal branch).
+- Fixed 33 broken `file:///crates/` links across 9 docs pages; scripted relative-link check now resolves every `docs/**/*.md` link and every root README link.
+- Corrected the stale single-adapter claim in `known-limits-and-debt.md`: kind routing exists; GitHub/Web registration is the remaining gap.
+- Verified: HTML JS passes `node --check`; SHA-256 matches node crypto on known vectors; headless Chromium screenshots at 1280x2000, 1280x4200, and 430x2600 plus DOM dump confirm layout and state transitions; behavior harness covers complete/budget/cap/scope/excluded/freshness/no-match/corpus-missing/ingress/calibration/concept-absent/optional branches (all passed).
+- Not run: `cargo test` (no code changed; last recorded 265 passed on 2026-10-07) and `just context-check` (no justfile exists; recorded in `open_questions.md`).
 ## 2026-10-24 - Recorded limits: stable IDs, bounded canonical numbers, offline SSRF tests (branch fix/stable-ids-and-canonical-numbers)
 - `ck-core`: `stable_document_id` (SHA-256, length-prefixed, `doc_` + 32 hex) replaces the DefaultHasher version in `ck-app`; golden test.
 - `ck-storage-sqlite`: `migrate()` now also runs `migrate_to_v2` (re-keys documents, supersession, chunks, chunks_fts, chunk_embeddings in one transaction; refuses v1 stores with NULL external_id/uri). Tests: rekey, refusal, fresh store records 1 and 2.
