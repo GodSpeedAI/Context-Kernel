@@ -115,6 +115,8 @@ jobs:
     name: Publish context-kernel crates to crates.io
     needs: verify
     runs-on: ubuntu-22.04
+    # Waits out crates.io new-crate rate limits between crates; bounded by this timeout.
+    timeout-minutes: 300
     permissions:
       contents: read
     env:
