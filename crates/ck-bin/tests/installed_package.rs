@@ -295,3 +295,257 @@ fn fail_closed_invalid_config_is_refused() {
     let out = run_subcommand(&bin, &["migrate", "--config", cfg.to_str().unwrap()]);
     assert!(!out.status.success(), "invalid config must be refused");
 }
+
+fn free_loopback_addr() -> String {
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap().to_string();
+    drop(l);
+    addr
+}
+
+/// Minimal HTTP/1.1 client over loopback. Returns (status, body).
+fn http_request(
+    addr: &str,
+    method: &str,
+    path: &str,
+    auth: Option<&str>,
+    body: &str,
+) -> (u16, String) {
+    use std::io::{Read, Write};
+    let mut stream = std::net::TcpStream::connect(addr).expect("connect loopback");
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .unwrap();
+    let auth_header = auth
+        .map(|t| format!("Authorization: Bearer {t}\r\n"))
+        .unwrap_or_default();
+    write!(
+        stream,
+        "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\n\
+         Content-Length: {}\r\n{auth_header}Connection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
+    let mut raw = String::new();
+    stream.read_to_string(&mut raw).unwrap();
+    let status = raw
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(0);
+    let body = raw.split("\r\n\r\n").nth(1).unwrap_or_default().to_string();
+    (status, body)
+}
+
+fn wait_for_healthz(addr: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while std::time::Instant::now() < deadline {
+        if let Ok(mut s) = std::net::TcpStream::connect(addr) {
+            use std::io::{Read, Write};
+            let _ = write!(
+                s,
+                "GET /healthz HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+            );
+            let mut raw = String::new();
+            let _ = s.read_to_string(&mut raw);
+            if raw.starts_with("HTTP/1.1 200") {
+                return;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    panic!("SSE endpoint at {addr} never became ready");
+}
+
+struct Child(std::process::Child);
+impl Drop for Child {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[test]
+fn context_required_returns_verified_complete_bundle() {
+    let bin = require_bin!();
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("kernel.db");
+    let data = dir.path().join("data");
+    let corpus_root = dir.path().join("corpus");
+    let docs = corpus_root.join("loop-docs");
+    std::fs::create_dir_all(&docs).unwrap();
+    std::fs::write(
+        docs.join("policy.md"),
+        "# POL-ACL-001\nHigh-risk work needs a cited context packet before authority.\n",
+    )
+    .unwrap();
+
+    let digest = "b".repeat(64);
+    let args = json!({
+        "schema_version": "v1",
+        "event_id": "11111111-2222-3333-4444-555555555555",
+        "source_agent": "swe-seed",
+        "event_type": "ContextRequired",
+        "occurred_at": "2026-08-25T00:00:00Z",
+        "payload": {
+            "domain_model_hash": "a".repeat(64),
+            "world_ref": format!("world:qualify@sha256:{digest}"),
+            "namespace": "agentic_capability_loop",
+            "work_request_id": "wr-qual",
+            "context_requirement_id": "cr-qual",
+            "corpus_id": "loop-docs",
+            "query": "context packet",
+            "max_results": 5
+        }
+    });
+    let request = rpc_tool(1, "context_required", args);
+    let mut child = Command::new(&bin)
+        .args(["serve", "--database"])
+        .arg(&db)
+        .arg("--data-dir")
+        .arg(&data)
+        .env("CK_CONTEXT_CORPUS_ROOT", &corpus_root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        let mut stdin = child.stdin.take().unwrap();
+        writeln!(stdin, "{request}").unwrap();
+    }
+    let out = child.wait_with_output().unwrap();
+    let response: Value = serde_json::from_slice(&out.stdout).expect("stdout is JSON");
+    let result = result_of(&response);
+
+    assert_eq!(result["access"]["result"], "accessible");
+    let bundle = &result["context_bundle"];
+    assert_eq!(
+        bundle["extensions"]["cep.profile"]["profile_id"],
+        "godspeed.context_bundle"
+    );
+    assert_eq!(
+        bundle["extensions"]["cep.profile"]["profile_version"],
+        "1.0.0"
+    );
+    assert_eq!(bundle["integrity"]["verification_status"], "verified");
+    assert_eq!(bundle["integrity"]["tamper_status"], "intact");
+    assert_eq!(bundle["completeness_status"], "complete_for_context");
+    assert_eq!(
+        bundle["extensions"]["godspeed.context_bundle"]["retrieval_completeness"],
+        "complete"
+    );
+    assert!(
+        bundle.to_string().contains("policy.md"),
+        "bundle does not cite the ingested corpus file"
+    );
+}
+
+#[test]
+fn sse_requires_bearer_and_refuses_unauthorized_tools() {
+    let bin = require_bin!();
+    let dir = tempfile::tempdir().unwrap();
+    let addr = free_loopback_addr();
+    let cfg = dir.path().join("sse.toml");
+    std::fs::write(
+        &cfg,
+        format!(
+            r#"[service]
+name = "context-kernal"
+[storage]
+database_path = "{db}"
+[retrieval]
+default_mode = "hybrid"
+semantic_enabled = false
+[mcp]
+enable_sse = true
+[mcp.sse]
+bind = "{addr}"
+require_auth = true
+[auth]
+tokens = ["qual-token"]
+[authorization]
+allow_tools = ["get_status"]
+allow_corpora = ["*"]
+"#,
+            db = dir.path().join("sse.db").display()
+        ),
+    )
+    .unwrap();
+
+    let child = Command::new(&bin)
+        .args(["serve", "--config"])
+        .arg(&cfg)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let _guard = Child(child);
+    wait_for_healthz(&addr);
+
+    let status_call = rpc_tool(1, "get_status", json!({}));
+    let (no_token, _) = http_request(&addr, "POST", "/mcp", None, &status_call);
+    assert_eq!(no_token, 401, "request without a token must be refused");
+    let (bad_token, _) = http_request(&addr, "POST", "/mcp", Some("wrong"), &status_call);
+    assert_eq!(bad_token, 401, "wrong token must be refused");
+
+    let (ok, body) = http_request(&addr, "POST", "/mcp", Some("qual-token"), &status_call);
+    assert_eq!(ok, 200);
+    let parsed: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(result_of(&parsed)["service"]["healthy"], true);
+
+    let forbidden = rpc_tool(
+        2,
+        "store_context",
+        json!({"session_id": "s", "kind": "decision", "text": "x", "metadata": {}}),
+    );
+    let (_, body) = http_request(&addr, "POST", "/mcp", Some("qual-token"), &forbidden);
+    let refused: Value = serde_json::from_str(&body).unwrap();
+    assert!(
+        refused.get("error").is_some() && refused.get("result").is_none(),
+        "unauthorized tool must be refused, got {refused}"
+    );
+    assert!(refused["error"]["message"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("unauthorized tool"));
+}
+
+#[cfg(unix)]
+#[test]
+fn sse_stops_cleanly_on_sigterm() {
+    let bin = require_bin!();
+    let dir = tempfile::tempdir().unwrap();
+    let addr = free_loopback_addr();
+    let db = dir.path().join("kernel.db");
+    let child = Command::new(&bin)
+        .args(["serve", "--database"])
+        .arg(&db)
+        .args(["--sse", &addr])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut guard = Child(child);
+    wait_for_healthz(&addr);
+
+    let status = Command::new("kill")
+        .args(["-TERM", &guard.0.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if let Some(exit) = guard.0.try_wait().unwrap() {
+            assert!(exit.success(), "SIGTERM should exit cleanly, got {exit:?}");
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "SSE did not stop on SIGTERM"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}

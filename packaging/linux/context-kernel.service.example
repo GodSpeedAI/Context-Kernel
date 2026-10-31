@@ -1,0 +1,26 @@
+# OPT-IN example only. The package does NOT install or enable this unit.
+# Copy to /etc/systemd/system/context-kernel-sse.service, create the config at
+# /etc/context-kernel/context-kernal.toml (see examples/context-kernal.sse.example.toml,
+# with require_auth = true and tokens set), then:
+#   sudo systemctl daemon-reload && sudo systemctl enable --now context-kernel-sse
+# The listener binds the address given on the command line (loopback by default).
+[Unit]
+Description=Context Kernel SSE MCP service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/context-kernel serve --config /etc/context-kernel/context-kernal.toml --sse 127.0.0.1:8765
+StateDirectory=context-kernel
+Environment=CK_DATA_DIR=%S/context-kernel
+Restart=on-failure
+RestartSec=2
+# stdin is /dev/null under systemd; the SSE service keeps running regardless.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

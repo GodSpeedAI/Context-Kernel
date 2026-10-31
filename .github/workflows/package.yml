@@ -1,0 +1,222 @@
+# Reusable native packaging pipeline. Called by ci.yml (branches and PRs,
+# artifacts only, no release) and release.yml (tags, publishes after verification).
+#
+# Every platform builds on a NATIVE runner for its own architecture; nothing is
+# cross-compiled. Each job installs the package it produced and runs the
+# installed-binary qualification suite (crates/ck-bin/tests/installed_package.rs)
+# against the INSTALLED executable, not the cargo build output.
+#
+# Linux runners are ubuntu-22.04 / ubuntu-22.04-arm so the binary's glibc floor
+# is 2.35 or lower, matching the NVIDIA Jetson AGX Orin target (Ubuntu 22.04).
+name: package
+
+on:
+  workflow_call:
+    inputs:
+      publish_name:
+        description: "Short label included in artifact names"
+        type: string
+        required: false
+        default: "candidate"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: "1.92.0"
+
+jobs:
+  package:
+    name: ${{ matrix.id }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-x86_64
+            runner: ubuntu-22.04
+            kind: linux
+            arch: amd64
+          - id: linux-arm64
+            runner: ubuntu-22.04-arm
+            kind: linux
+            arch: arm64
+          - id: windows-x86_64
+            runner: windows-2022
+            kind: windows
+            arch: x86_64
+          - id: macos-arm64
+            runner: macos-14
+            kind: macos
+            arch: arm64
+          - id: macos-x86_64
+            runner: macos-15-intel
+            kind: macos
+            arch: x86_64
+    defaults:
+      run:
+        shell: ${{ matrix.kind == 'windows' && 'pwsh' || 'bash' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Record build identity
+        id: ident
+        shell: bash
+        run: |
+          version="$(bash scripts/package/version.sh)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Version $version, commit $GITHUB_SHA, runner ${{ matrix.runner }}"
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal -c rustfmt -c clippy
+          rustup default "$RUST_VERSION"
+          cargo --version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.id }}
+
+      - name: Build release binary (locked)
+        run: cargo build --release --locked -p ck-bin
+
+      - name: Verify binary identity and ABI (Linux)
+        if: matrix.kind == 'linux'
+        run: |
+          file target/release/context-kernal
+          readelf -h target/release/context-kernal | grep -E "Machine|Class"
+          readelf -l target/release/context-kernal | grep -i "interpreter" || true
+          objdump -T target/release/context-kernal | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1
+          ldd target/release/context-kernal || true
+
+      # ---------------- Linux packages -----------------
+      - name: Build Linux packages
+        if: matrix.kind == 'linux'
+        run: |
+          bash scripts/package/linux/build-linux.sh \
+            --binary target/release/context-kernal \
+            --arch "${{ matrix.arch }}" \
+            --version "${{ steps.ident.outputs.version }}" \
+            --outdir dist
+
+      - name: Install .deb and qualify the installed binary (Linux)
+        if: matrix.kind == 'linux'
+        run: |
+          set -euo pipefail
+          deb=$(ls dist/context-kernel_*.deb)
+          test "$(dpkg-deb -f "$deb" Architecture)" = "${{ matrix.arch }}"
+          sudo apt-get install -y "./$deb"
+          test -x /usr/bin/context-kernal
+          test -x /usr/bin/context-kernel
+          test "$(readlink /usr/bin/context-kernel)" = "context-kernal"
+          dpkg-query -W -f='installed ${Package} ${Version} ${Architecture}\n' context-kernel
+          # Preferred name and compatibility name must both answer.
+          CK_QUALIFY_BIN=/usr/bin/context-kernel CK_QUALIFY_VERSION="${{ steps.ident.outputs.version }}" \
+            cargo test --release -p ck-bin --test installed_package
+          CK_QUALIFY_BIN=/usr/bin/context-kernal CK_QUALIFY_VERSION="${{ steps.ident.outputs.version }}" \
+            cargo test --release -p ck-bin --test installed_package
+
+      - name: Extract tar.gz and qualify the extracted binary (Linux)
+        if: matrix.kind == 'linux'
+        run: |
+          set -euo pipefail
+          tarball=$(ls dist/context-kernel-*-linux-*.tar.gz)
+          extract=$(mktemp -d)
+          tar -xzf "$tarball" -C "$extract"
+          root=$(ls -d "$extract"/context-kernel-*)
+          CK_QUALIFY_BIN="$root/bin/context-kernal" CK_QUALIFY_VERSION="${{ steps.ident.outputs.version }}" \
+            cargo test --release -p ck-bin --test installed_package
+          sudo apt-get remove -y context-kernel
+          test ! -e /usr/bin/context-kernal
+
+      # ---------------- macOS packages -----------------
+      - name: Build macOS packages
+        if: matrix.kind == 'macos'
+        run: |
+          bash scripts/package/macos/build-macos.sh \
+            --arch "${{ matrix.arch }}" \
+            --binary target/release/context-kernal \
+            --version "${{ steps.ident.outputs.version }}" \
+            --outdir dist
+
+      - name: Install .pkg and qualify the installed binary (macOS)
+        if: matrix.kind == 'macos'
+        run: |
+          set -euo pipefail
+          pkg=$(ls dist/context-kernel-*.pkg)
+          sudo installer -pkg "$pkg" -target /
+          test -x /usr/local/bin/context-kernal
+          test -L /usr/local/bin/context-kernel
+          CK_QUALIFY_BIN=/usr/local/bin/context-kernel CK_QUALIFY_VERSION="${{ steps.ident.outputs.version }}" \
+            cargo test --release -p ck-bin --test installed_package
+          CK_QUALIFY_BIN=/usr/local/bin/context-kernal CK_QUALIFY_VERSION="${{ steps.ident.outputs.version }}" \
+            cargo test --release -p ck-bin --test installed_package
+
+      - name: Mount .dmg and check it contains the package (macOS)
+        if: matrix.kind == 'macos'
+        run: |
+          set -euo pipefail
+          dmg=$(ls dist/context-kernel-*.dmg)
+          mount=$(hdiutil attach -nobrowse -readonly "$dmg" | awk -F'\t' '/\/Volumes\//{print $NF}' | tail -1)
+          ls "$mount" | tee /dev/stderr | grep -q '\.pkg$'
+          hdiutil detach "$mount"
+
+      # ---------------- Windows packages -----------------
+      - name: Install Inno Setup (Windows)
+        if: matrix.kind == 'windows'
+        run: choco install innosetup --no-progress -y
+
+      - name: Build Windows packages
+        if: matrix.kind == 'windows'
+        run: |
+          ./scripts/package/windows/build-windows.ps1 `
+            -Binary target/release/context-kernal.exe `
+            -OutDir dist `
+            -Version "${{ steps.ident.outputs.version }}"
+
+      - name: Extract zip and qualify the extracted binary (Windows)
+        if: matrix.kind == 'windows'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = Get-ChildItem dist -Filter 'context-kernel-*-windows-x86_64.zip' | Select-Object -First 1
+          $extract = Join-Path $env:RUNNER_TEMP ('ck-zip-' + [guid]::NewGuid())
+          Expand-Archive -Path $zip.FullName -DestinationPath $extract
+          $root = (Get-ChildItem $extract -Directory | Select-Object -First 1).FullName
+          $env:CK_QUALIFY_BIN = Join-Path $root 'bin\context-kernal.exe'
+          $env:CK_QUALIFY_VERSION = '${{ steps.ident.outputs.version }}'
+          cargo test --release -p ck-bin --test installed_package
+
+      - name: Install setup.exe per-user, qualify, uninstall (Windows)
+        if: matrix.kind == 'windows'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = Get-ChildItem dist -Filter '*-setup.exe' | Select-Object -First 1
+          Start-Process -FilePath $setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CURRENTUSER' -Wait
+          $install = Join-Path $env:LOCALAPPDATA 'Programs\Context Kernel'
+          $env:CK_QUALIFY_BIN = Join-Path $install 'bin\context-kernal.exe'
+          $env:CK_QUALIFY_VERSION = '${{ steps.ident.outputs.version }}'
+          cargo test --release -p ck-bin --test installed_package
+          $uninstaller = Get-ChildItem $install -Filter 'unins*.exe' | Select-Object -First 1
+          Start-Process -FilePath $uninstaller.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait
+          if (Test-Path (Join-Path $install 'bin\context-kernal.exe')) { throw 'uninstall left the program files behind' }
+
+      # ---------------- Artifacts -----------------
+      - name: Write per-platform checksums
+        shell: bash
+        run: |
+          cd dist
+          rm -f SHA256SUMS
+          for f in *.tar.gz *.deb *.zip *-setup.exe *.pkg *.dmg; do
+            [ -f "$f" ] || continue
+            if command -v sha256sum >/dev/null; then sha256sum "$f"; else shasum -a 256 "$f"; fi
+          done > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: context-kernel-${{ steps.ident.outputs.version }}-${{ inputs.publish_name }}-${{ github.sha }}-${{ matrix.id }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30

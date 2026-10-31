@@ -3,6 +3,10 @@ name: ci
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   rust:
@@ -14,6 +18,15 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
-      - run: cargo clippy --workspace --all-targets
+      - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: cargo build --release -p ck-bin
+
+  # Native packages for all supported platforms. Artifacts are downloadable from
+  # the workflow run and are bound to the commit SHA in their names. No release
+  # is created here; see release.yml for tagged publication.
+  package:
+    needs: rust
+    uses: ./.github/workflows/package.yml
+    with:
+      publish_name: candidate
