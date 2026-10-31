@@ -1,5 +1,13 @@
 # Decisions
 
+## Decision: Apply egm-bootstrap to the repository with sequential worker execution
+- Date: 2026-10-30
+- Context: The user asked to apply the EGM `egm-bootstrap` skill to Context Kernel. Discovery exceeded the skill's 15-directory safety gate (34+ dirs). The machine is RAM-constrained (~1.9GiB available at start, swap in use) and repo AGENTS.md imposes single-writer build-lock discipline.
+- Decision: Proceed with full-tree bootstrapping (user-approved) using 8 sequential worker subagents instead of the skill's default parallel swarm; documentation-only scope; verification commands recorded in contracts but never executed (no cargo/rustc during the run); root README updated under the skill's Correction Policy (existing content preserved, EGM Blueprint sections merged in); drift check run afterwards per user pre-authorization.
+- Alternatives considered: Parallel worker swarm (rejected: RAM constraint and user instruction to keep one agent at a time); inline-only generation without workers (rejected: skill mandates delegation above 5 pruned directories); excluding docs//config/ from the root index entirely (rejected in favor of unlinked bullets so the blueprint stays navigable without speculative links).
+- Evidence in codebase: 48 contract README.md files under root/, crates/**, integration/**, scripts/; `.agents/reports/2026-10-30_EGM_DRIFT_REPORT.md`; `.agents/current_plan.md` (2026-10-30 plan).
+- Consequences: The EGM contract layer now exists and must be maintained — contract-relevant code changes should update the sibling README contract; the drift-report skill can re-verify (one-time finding fixed 2026-10-30). No runtime behavior change.
+
 ## Decision: Technical Knowledge System Information Architecture
 - Date: 2026-09-02
 - Context: The repository required comprehensive documentation serving both newcomers (high-level mental models) and experienced engineers (subsystem depth, invariants, code traceability) without compromising either audience.

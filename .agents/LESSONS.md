@@ -12,6 +12,12 @@ duplicating them.
 - Confidence: high | medium | low
 -->
 
+## Lesson: Cross-check worker partition assignments against the planned directory list before root compilation
+- Observed: 2026-10-30
+- Evidence: During the EGM bootstrap run, regrouping crates into worker partitions silently dropped `crates/ck-bin` (44 of 45 expected worker files). The gap surfaced only at root compilation when compiling `crates/README.md` against worker payloads; a quick file-count reconciliation (`wc -l` / `ls` over expected paths) caught it and a follow-up worker (W8) produced the missing contracts.
+- Scope: any multi-worker generation run in this repo (EGM bootstrap, parallel refactors): reconcile the emitted artifact list against the discovery map before compiling parent-level rollups.
+- Confidence: high
+
 ## Lesson: Hashing raw JSON floats breaks across parse round-trips; normalize numbers in canonical hash forms
 - Observed: 2026-10-07
 - Evidence: serde_json's fast float parser renders `0.44999999999999996` as `0.45` after a parse round-trip; the CEP `context_bundle` integrity hash declared by CK did not recompute in SWE_SEED on a file round-trip (`e2e_world_loop` hop 2 failed with `integrity mismatch`). Fixed by normalizing floats to 6 decimals (and `-0.0` to `0.0`) inside `ck-mcp::cep_bundle::canonical_json` and `swe_seed_core::context_bundle::bundle_content_hash`.

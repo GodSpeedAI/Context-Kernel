@@ -1,62 +1,42 @@
 # Resumable handoff state. Keep current enough for any agent to resume cold.
 objective: >
-  Documentation reconciliation for the 2026-10 context pipeline: make the 9-layer
-  docs describe the real path (typed Context Requirement -> resolve_context ->
-  sealed CEP godspeed.context_bundle -> settlement-backed calibration), fix broken
-  source links, and add one workflow page plus one offline interactive explainer.
+  Apply the egm-bootstrap skill to the repository: generate EGM-compliant README.md
+  contract files (Overview/Interface/Invariants/Side Effects/Verification) for every
+  pruned code directory, then run the egm-drift-report skill over the result.
+  Documentation only; user-approved >15-directory scope with sequential execution
+  (RAM-constrained machine) and no compilation.
 worktree_state: >
-  Docs pass complete and self-consistent; no Rust/config/CI changes. Uncommitted:
-  docs/** edits, two new docs deliverables, README.md, and .agents/** memory files.
-  Untracked .jolli/ must be left alone.
+  EGM bootstrap complete and drift-checked. Uncommitted: 47 new README.md contract
+  files (crates/**, integration/**, scripts/) plus root README.md (EGM Blueprint
+  section + System Overview heading added, existing content preserved) and
+  .agents/** memory files (current_plan, work_log, evidence, decisions,
+  OBSERVED_DEBT, LESSONS, project_state, current_status, reports/2026-10-30_EGM_DRIFT_REPORT.md).
+  Untracked .jolli/ must be left alone. No Rust/config/CI changes.
 changed_files:
-  - README.md (canonical tool list, core tool sections, SWE_SEED boundary links)
-  - docs/README.md (system picture, 11 concepts, nav)
-  - docs/concepts.md (Context Requirement/Bundle/Effect, completeness, reasons, omissions)
-  - docs/mental-model.md (state ownership, invariants 1 and 8-10, class diagram)
-  - docs/source-map.md (context pipeline rows, entry-point table, verified line refs, tests)
-  - docs/security.md (POL-ACL-002 data-access gate)
-  - docs/reference/mcp-tools.md (context_required rewrite, ingest_context_effects)
-  - docs/mcp-contracts.md (bundle-first response, minimal completeness wording)
-  - docs/subsystems/mcp-and-protocols.md (bundle egress, tool list, line refs)
-  - docs/subsystems/application-orchestration.md (resolve_context stages, effect ingestion, state)
-  - docs/subsystems/retrieval-and-ranking.md (scope gate, prospective calibration)
-  - docs/explanation/retrieval-and-ranking-design.md (why settlement-backed calibration)
-  - docs/explanation/known-limits-and-debt.md (kind routing vs registration)
-  - docs/troubleshooting.md (scope unresolved, effect rejected, ledger unavailable)
-  - docs/workflows/agentic-capability-loop.md (real sequence, 8 reasons, config, trail)
-  - docs/workflows/context-requirement-resolution.md (new)
-  - docs/explainers/context-requirement-explorer.html (new)
-  - docs/documentation-map.md (rows for both new pages)
-  - 9 docs pages: broken file:///crates links replaced with relative paths
-  - .agents/{project_state,evidence,decisions,work_log,OBSERVED_DEBT,LESSONS,current_plan,current_status}
+  - README.md (Repository Blueprint section, System Overview heading; content otherwise preserved)
+  - crates/README.md (new)
+  - 20 x crates/ck-*/README.md (new) + 20 x crates/ck-*/src/README.md (new)
+  - crates/ck-core/src/{entities,ports,types}/README.md (new)
+  - integration/README.md (new) + integration/agentic_capability_loop/README.md (new)
+  - scripts/README.md (new)
+  - .agents/{current_plan,work_log,evidence,decisions,OBSERVED_DEBT,LESSONS,project_state,current_status}
+  - .agents/reports/2026-10-30_EGM_DRIFT_REPORT.md (new)
 completed_work:
-  - Bundle-first wire semantics documented everywhere; legacy packet/envelope marked deprecated dual-read
-  - Eight no-context reasons, four omission codes, three completeness statuses, access semantics, calibration documented with file:line evidence
-  - New workflow page traces the eight stages with Mermaid sequence, access flowchart, completeness flowchart, calibration diagram
-  - Interactive explainer verified offline (no network refs), JS syntax-checked, SHA-256 checked against node crypto, rendered at desktop/mobile widths
-  - All relative doc links resolve; no file:/// links remain under docs/
+  - Safety gate approved (34+ dirs); 8 sequential worker subagents generated 45 partition contracts (W8 ck-bin added after root compile caught a dropped partition)
+  - Root compile: crates/README.md blueprint + root README.md Correction-Policy merge
+  - Final verification: all 48 contracts explicitly read; links/sections/fences checked by script; every [file:Symbol] citation grepped in the cited file (zero misses)
+  - Drift check: 53/53 specific claims verified; pub-symbol coverage scan clean after fixing ck-mcp/src contract (added DomainIdentityError, EventEnvelope)
 verification:
-  - CK cargo test --workspace: 265 passed / 0 failed (baseline 237)
-  - SWE_SEED cargo test -p swe-seed-core: 437 passed / 0 failed (baseline 428)
-  - "sxr cargo test --workspace: all green (one load-flaky writer_lock test passes in isolation/quiet rerun)"
-  - sea-forge-server cargo test: green after cargo build -p sea-forge-cli (pre-existing test prerequisite)
-  - live CK binary <-> SWE_SEED client test: green (bundle verified + identity bound)
-  - "scripts/e2e-world-loop.sh (SEA worktree driver, all repos, CEP_REPO set): EXIT=0"
-  - "hops 1/0/2/3/4/5/6 all green; CEP reference validator green;"
-  - "refusals: E4 in another world, unregistered world, denied request all held"
-  - CEP_REPO-gated conformance test (complete/partial/none) green
-  - HTML embedded JS: node --check passed
-  - SHA-256: 5/5 known vectors match node crypto; canonical JSON sample matches
-  - Behavior harness (/tmp/behavior2.js): all branch checks passed (complete, budget partial/exhausted, cap, requires_scope, out_of_scope, excluded, no_fresh, no_match, corpus_missing, ingress_rejected, calibration reorder, required concept absent, optional no-context)
-  - Headless Chromium screenshots: 1280x2000, 1280x4200, 430x2600; DOM dump confirms 11 stages and integrity recompute
-  - Relative-link checker over docs/**/*.md and README.md: all resolve
+  - Link/section/fence checks over all 48 contracts: pass (script, python3 -I)
+  - Citation grounding greps: zero misses across 48 files
+  - Claim verification greps (config defaults, weights, caps, routes, env vars, CLI, IP ranges, timeouts): 53/53 pass
+  - cargo test / clippy / fmt: NOT run (documentation-only change; build-lock + RAM discipline)
 remaining_steps:
-  - Review the docs diff for tone/accuracy; commit only if the operator asks
-  - Optional: move ck-adapter-filesystem to dev-dependencies in ck-mcp (debt entry)
-  - Optional: register GitHub/Web adapters in ck-bin (debt entry)
+  - Review the README diff; commit only if the operator asks (skill forbids commits)
+  - Optional: add a pub-symbol coverage/link checker to docs CI (OBSERVED_DEBT entry)
 blockers: none
 decisions:
-  - The sealed CEP godspeed.context_bundle is the only canonical context artifact in docs; ContextPacketCreated is migration-only
-  - Docs links must be repo-relative; file:/// is prohibited
-  - Effect calibration is world-scoped, evidence-gated, prospective, and capped at 0.50 per source
-  - Context access is reported but never grants action authority
+  - Sequential worker execution instead of the skill's parallel swarm (RAM constraint, one agent at a time, no compilation)
+  - Verification commands are recorded in contracts (cargo test --workspace / cargo test -p <pkg>) but were not executed
+  - Root README updated via the skill's Correction Policy (existing title/overview preserved, EGM sections merged)
+  - docs/ and config/ are pruned (no source extensions) and appear as unlinked bullets, not contract links

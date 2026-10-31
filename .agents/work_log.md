@@ -1,5 +1,14 @@
 # Work Log
 
+## 2026-10-30 — EGM bootstrap: contract READMEs across the repo tree
+- Task: Applied the `egm-bootstrap` skill (/home/sprime01/projects/elephant-goldfish-model/skills/egm-bootstrap/SKILL.md) to the repository: generated EGM-compliant `README.md` contract files (Overview/Interface/Invariants/Side Effects/Verification) for every pruned directory, then ran the `egm-drift-report` skill over the result. Documentation only; no code, schema, config, or CI changes; no git operations.
+- Safety gate: 34+ directories discovered (>15); user approved full-tree bootstrapping with sequential execution (RAM-constrained machine, ~1.9GiB free at start; one agent at a time; no compilation).
+- Execution: 8 sequential worker subagents (W1 ck-core tree + ck-config, W2 ck-app, W3 ck-mcp + ck-transport-stdio, W4 ck-storage-sqlite + ck-search-fts + ck-memory, W5 adapters/artifacts/auth, W6 ranker/vector/scheduler/embeddings/observability/transport-sse, W7 integration/ + scripts/, W8 ck-bin — W8 added after root compile caught that ck-bin had been dropped from the partition regroup). Root orchestrator wrote `crates/README.md` and the root README Blueprint block (Correction Policy: existing content preserved, `## System Overview` heading added).
+- Deliverables: 48 contract files — root `README.md`, `crates/README.md`, 20 crate Hays, 20 `src/` Peanuts, 3 ck-core leaf Peanuts, `integration/` Hay + leaf Peanut, `scripts/` Peanut. Verification commands: `cargo test --workspace` (root/blueprints) and `cargo test -p <pkg>` per crate — documented, NOT run.
+- Drift check (user-authorized): `.agents/reports/2026-10-30_EGM_DRIFT_REPORT.md`. Findings: ck-mcp/src contract missing public types `DomainIdentityError`/`EventEnvelope` (fixed in place); root template heading fixed; 0 broken links, 0 ungrounded citations, 53/53 specific claims verified, pub-symbol coverage scan clean after fix.
+- Memory files updated: current_plan.md (pre-work), work_log.md, evidence.md, decisions.md, OBSERVED_DEBT.md, LESSONS.md, project_state.md, current_status.yml.
+- Tests run: none (documentation-only change; cargo intentionally not executed per build-lock/RAM discipline). Verification was static: link/section/citation scripts + source greps.
+
 ## 2026-09-02 — Repository Documentation Architecture Knowledge System
 - Task: Designed and implemented a self-contained technical knowledge system for Context Kernel fulfilling both newcomer and experienced engineer needs through progressive disclosure (Layers 0 to 8: Orientation, Mental Model, Architecture, Subsystems, Workflows, Explanation, Tutorials, How-To, Reference).
 - Information Architecture:

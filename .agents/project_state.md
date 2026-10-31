@@ -7,8 +7,8 @@
 
 
 ## Last Updated
-- Date: 2026-10-24
-- By: Documentation reconciliation pass (context pipeline, 2026-10)
+- Date: 2026-10-30
+- By: EGM bootstrap pass (egm-bootstrap + egm-drift-report skills, 2026-10)
 
 ## Current Repository Status
 
@@ -82,3 +82,10 @@
 - Reconciled the 9-layer docs with the context pipeline: canonical bundle-first wire shape, eight no-context reasons, four omission codes, three completeness statuses, POL-ACL-002 access semantics, and settlement calibration.
 - Added `docs/workflows/context-requirement-resolution.md` (execution trace) and `docs/explainers/context-requirement-explorer.html` (offline single-file interactive model with in-page SHA-256 verification).
 - Replaced broken `file:///crates/` links with correct repo-relative paths across `docs/`; all relative doc links verified to resolve.
+
+### EGM Contract README Layer (2026-10-30)
+- 48 EGM-compliant `README.md` contract files generated across the pruned code tree (root Blueprint, `crates/` blueprint, 20 crate Hays + 20 `src/` Peanuts, 3 `ck-core/src/{entities,ports,types}` leaf Peanuts, `integration/` Hay + `agentic_capability_loop` Peanut, `scripts/` Peanut) via the egm-bootstrap skill; 8 sequential worker subagents (RAM-constrained machine; no compilation executed).
+- Root `README.md` updated under the skill's Correction Policy: existing content preserved; EGM `Repository Blueprint` section (Subdirectories & System Boundaries / Global Invariants / Global Side Effects / System Verification) plus `## System Overview` heading added.
+- Contracts document implemented status only (per AGENTS.md status language): unwired adapters (`ck-adapter-github`, `ck-adapter-web`), unwired scheduler, unimplemented OTEL, and the `ContextEffectStore` layering debt are stated as such in the contracts themselves.
+- Drift check run (`egm-drift-report`): report at `.agents/reports/2026-10-30_EGM_DRIFT_REPORT.md`; one finding (missing `DomainIdentityError`/`EventEnvelope` in `crates/ck-mcp/src/README.md`) fixed in place; 0 broken links, 0 ungrounded citations, 53/53 specific claims verified, pub-symbol coverage clean.
+- No Rust/config/CI files changed; verification commands documented in contracts, not executed. Maintenance expectation recorded in `.agents/OBSERVED_DEBT.md` (no automated drift gate yet).
