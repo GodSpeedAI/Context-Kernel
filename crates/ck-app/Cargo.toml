@@ -1,13 +1,18 @@
 [package]
-name = "ck-app"
+name = "context-kernel-app"
+description = "Application service layer for Context Kernel"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
+repository.workspace = true
+
+[lib]
+name = "ck_app"
 
 [dependencies]
 anyhow.workspace = true
-ck-core = { path = "../ck-core" }
-ck-memory = { path = "../ck-memory" }
+ck-core = { package = "context-kernel-core", version = "=0.1.0", path = "../ck-core" }
+ck-memory = { package = "context-kernel-memory", version = "=0.1.0", path = "../ck-memory" }
 chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -15,5 +20,5 @@ tracing.workspace = true
 ulid.workspace = true
 
 [dev-dependencies]
-ck-artifacts = { path = "../ck-artifacts" }
+ck-artifacts = { package = "context-kernel-artifacts", version = "=0.1.0", path = "../ck-artifacts" }
 tempfile.workspace = true

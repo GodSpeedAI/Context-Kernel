@@ -108,3 +108,96 @@ jobs:
             --title "Context Kernel $GITHUB_REF_NAME" \
             --notes "Native packages for Linux (x86_64, arm64), Windows (x86_64), and macOS (arm64, x86_64). Windows binaries and installer are unsigned. macOS packages are unsigned and not notarized. Verify with SHA256SUMS and the build provenance attestations." \
             ./*.tar.gz ./*.deb ./*.zip ./*-setup.exe ./*.pkg ./*.dmg ./SHA256SUMS
+
+  # crates.io is a separate channel. It runs beside the native release, not after
+  # it, so one channel's failure never hides the other's result.
+  publish-crates:
+    name: Publish context-kernel crates to crates.io
+    needs: verify
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    env:
+      CK_CRATE_RECEIPTS: ${{ github.workspace }}/dist/crates-receipts
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal
+          rustup default 1.92.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Validate the publishable set and dry-run every crate (no credentials)
+        run: bash scripts/package/crates/publish.sh --check
+      - name: Publish missing crates in dependency order
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: bash scripts/package/crates/publish.sh --publish
+      - name: Upload crates.io publication receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crates-receipts-${{ github.ref_name }}
+          path: dist/crates-receipts/
+          if-no-files-found: warn
+          retention-days: 90
+
+  verify-crates-install:
+    name: Install from crates.io and qualify (${{ matrix.runner }})
+    needs: publish-crates
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-22.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal
+          rustup default 1.92.0
+      - name: Install context-kernel from crates.io into an empty root
+        run: |
+          set -euo pipefail
+          version="$(bash scripts/package/version.sh)"
+          root="$(mktemp -d)"
+          # The index can lag a few minutes behind a fresh publish.
+          for attempt in $(seq 1 30); do
+            if cargo install context-kernel --version "=$version" --locked --root "$root"; then break; fi
+            test "$attempt" -lt 30 || exit 1
+            sleep 20
+          done
+          bin="$root/bin/context-kernal"
+          test -x "$bin"
+          test "$("$bin" --version | awk '{print $NF}')" = "$version"
+          echo "CK_QUALIFY_BIN=$bin" >> "$GITHUB_ENV"
+          echo "CK_QUALIFY_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Qualify the crates.io binary with the installed-binary suite
+        run: cargo test --release -p context-kernel --test installed_package
+
+  channel-report:
+    name: Report each distribution channel
+    if: always()
+    needs: [publish, publish-crates, verify-crates-install]
+    runs-on: ubuntu-22.04
+    permissions: {}
+    steps:
+      - name: Record and enforce each channel's result
+        env:
+          NATIVE: ${{ needs.publish.result }}
+          CRATES: ${{ needs.publish-crates.result }}
+          CRATES_INSTALL: ${{ needs.verify-crates-install.result }}
+        run: |
+          {
+            echo "## Release channel results for $GITHUB_REF_NAME"
+            echo ""
+            echo "| Channel | Result |"
+            echo "| --- | --- |"
+            echo "| GitHub Release (native packages) | $NATIVE |"
+            echo "| crates.io publication | $CRATES |"
+            echo "| crates.io install and qualification | $CRATES_INSTALL |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "native=$NATIVE crates=$CRATES crates_install=$CRATES_INSTALL"
+          if [ "$NATIVE" != success ] || [ "$CRATES" != success ] || [ "$CRATES_INSTALL" != success ]; then
+            echo "error: at least one channel did not succeed; see the summary" >&2
+            exit 1
+          fi

@@ -3,10 +3,11 @@ name = "ck-scheduler"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
+publish = false
 
 [dependencies]
 anyhow.workspace = true
-ck-core = { path = "../ck-core" }
+ck-core = { package = "context-kernel-core", version = "=0.1.0", path = "../ck-core" }
 chrono.workspace = true
 tracing.workspace = true
 ulid.workspace = true

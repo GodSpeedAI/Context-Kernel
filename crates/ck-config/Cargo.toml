@@ -1,8 +1,13 @@
 [package]
-name = "ck-config"
+name = "context-kernel-config"
+description = "Configuration model and per-user data directory rules for Context Kernel"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
+repository.workspace = true
+
+[lib]
+name = "ck_config"
 
 [dependencies]
 anyhow.workspace = true

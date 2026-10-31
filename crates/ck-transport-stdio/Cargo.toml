@@ -1,11 +1,16 @@
 [package]
-name = "ck-transport-stdio"
+name = "context-kernel-transport-stdio"
+description = "Stdio transport for the Context Kernel MCP server"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
+repository.workspace = true
+
+[lib]
+name = "ck_transport_stdio"
 
 [dependencies]
 anyhow.workspace = true
-ck-mcp = { path = "../ck-mcp" }
+ck-mcp = { package = "context-kernel-mcp", version = "=0.1.0", path = "../ck-mcp" }
 serde_json.workspace = true
 tracing.workspace = true

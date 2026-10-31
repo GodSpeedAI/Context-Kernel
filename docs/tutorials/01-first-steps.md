@@ -15,7 +15,7 @@ This tutorial guides you through building Context Kernel from source, initializi
 Compile the `context-kernal` binary from the workspace:
 
 ```bash
-cargo build --release -p ck-bin
+cargo build --release -p context-kernel
 ```
 
 The compiled executable will be located at:

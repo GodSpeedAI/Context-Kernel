@@ -41,6 +41,20 @@ Linux packages state their glibc floor in the `Depends` field (`dpkg-deb -f <deb
 22.04. The build fails if any required glibc symbol is newer than 2.35, the NVIDIA Jetson AGX Orin
 Ubuntu 22.04 image. The Jetson runtime itself is not yet verified in CI.
 
+## Install from crates.io
+
+Once the `0.1.0` crates are published, the CLI installs from crates.io without cloning the repository:
+
+```bash
+cargo install context-kernel --version "=0.1.0" --locked
+context-kernal --version
+```
+
+- The package is `context-kernel`; the executable it installs is `context-kernal`, the same binary as the native packages. Nothing is renamed.
+- `--locked` uses the dependency lock file shipped inside the crate, so the dependency set matches the tested release.
+- The release workflow installs the published crate into an empty root on Linux x86_64 and arm64 and runs the installed-binary suite against it. Its result is reported as the `crates.io install and qualification` row of the release summary.
+- Until that row is green for a version, treat the crates.io install as unverified.
+
 ## Where data lives
 
 Without `--config` or `--database`, the executable uses one database per user,
@@ -93,7 +107,7 @@ intend to discard the memory.
 ## Build from source (developers)
 
 ```bash
-cargo build --release --locked -p ck-bin
+cargo build --release --locked -p context-kernel
 ./target/release/context-kernal --version
 ```
 

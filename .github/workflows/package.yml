@@ -80,7 +80,7 @@ jobs:
           key: ${{ matrix.id }}
 
       - name: Build release binary (locked)
-        run: cargo build --release --locked -p ck-bin
+        run: cargo build --release --locked -p context-kernel
 
       - name: Verify binary identity and ABI (Linux)
         if: matrix.kind == 'linux'
@@ -114,9 +114,9 @@ jobs:
           dpkg-query -W -f='installed ${Package} ${Version} ${Architecture}\n' context-kernel
           # Preferred name and compatibility name must both answer.
           CK_QUALIFY_BIN=/usr/bin/context-kernel CK_QUALIFY_VERSION="${{ steps.ident.outputs.version }}" \
-            cargo test --release -p ck-bin --test installed_package
+            cargo test --release -p context-kernel --test installed_package
           CK_QUALIFY_BIN=/usr/bin/context-kernal CK_QUALIFY_VERSION="${{ steps.ident.outputs.version }}" \
-            cargo test --release -p ck-bin --test installed_package
+            cargo test --release -p context-kernel --test installed_package
 
       - name: Extract tar.gz and qualify the extracted binary (Linux)
         if: matrix.kind == 'linux'
@@ -127,7 +127,7 @@ jobs:
           tar -xzf "$tarball" -C "$extract"
           root=$(ls -d "$extract"/context-kernel-*)
           CK_QUALIFY_BIN="$root/bin/context-kernal" CK_QUALIFY_VERSION="${{ steps.ident.outputs.version }}" \
-            cargo test --release -p ck-bin --test installed_package
+            cargo test --release -p context-kernel --test installed_package
           sudo apt-get remove -y context-kernel
           test ! -e /usr/bin/context-kernal
 
@@ -150,9 +150,9 @@ jobs:
           test -x /usr/local/bin/context-kernal
           test -L /usr/local/bin/context-kernel
           CK_QUALIFY_BIN=/usr/local/bin/context-kernel CK_QUALIFY_VERSION="${{ steps.ident.outputs.version }}" \
-            cargo test --release -p ck-bin --test installed_package
+            cargo test --release -p context-kernel --test installed_package
           CK_QUALIFY_BIN=/usr/local/bin/context-kernal CK_QUALIFY_VERSION="${{ steps.ident.outputs.version }}" \
-            cargo test --release -p ck-bin --test installed_package
+            cargo test --release -p context-kernel --test installed_package
 
       - name: Mount .dmg and check it contains the package (macOS)
         if: matrix.kind == 'macos'
@@ -186,7 +186,7 @@ jobs:
           $root = $extract  # the zip holds bin/ and share/ at its root
           $env:CK_QUALIFY_BIN = Join-Path $root 'bin\context-kernal.exe'
           $env:CK_QUALIFY_VERSION = '${{ steps.ident.outputs.version }}'
-          cargo test --release -p ck-bin --test installed_package
+          cargo test --release -p context-kernel --test installed_package
 
       - name: Install setup.exe per-user, qualify, uninstall (Windows)
         if: matrix.kind == 'windows'
@@ -197,7 +197,7 @@ jobs:
           $install = Join-Path $env:LOCALAPPDATA 'Programs\Context Kernel'
           $env:CK_QUALIFY_BIN = Join-Path $install 'bin\context-kernal.exe'
           $env:CK_QUALIFY_VERSION = '${{ steps.ident.outputs.version }}'
-          cargo test --release -p ck-bin --test installed_package
+          cargo test --release -p context-kernel --test installed_package
           $uninstaller = Get-ChildItem $install -Filter 'unins*.exe' | Select-Object -First 1
           Start-Process -FilePath $uninstaller.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait
           if (Test-Path (Join-Path $install 'bin\context-kernal.exe')) { throw 'uninstall left the program files behind' }

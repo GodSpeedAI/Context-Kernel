@@ -1,12 +1,17 @@
 [package]
-name = "ck-vector"
+name = "context-kernel-vector"
+description = "Vector index adapter for Context Kernel"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
+repository.workspace = true
+
+[lib]
+name = "ck_vector"
 
 [dependencies]
 anyhow.workspace = true
-ck-core = { path = "../ck-core" }
+ck-core = { package = "context-kernel-core", version = "=0.1.0", path = "../ck-core" }
 rusqlite.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

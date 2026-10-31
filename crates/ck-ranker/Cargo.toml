@@ -1,12 +1,17 @@
 [package]
-name = "ck-ranker"
+name = "context-kernel-ranker"
+description = "Ranking policy for Context Kernel retrieval"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
+repository.workspace = true
+
+[lib]
+name = "ck_ranker"
 
 [dependencies]
 anyhow.workspace = true
-ck-core = { path = "../ck-core" }
+ck-core = { package = "context-kernel-core", version = "=0.1.0", path = "../ck-core" }
 serde_json.workspace = true
 tracing.workspace = true
 ulid.workspace = true

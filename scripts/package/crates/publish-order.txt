@@ -1,0 +1,20 @@
+# crates.io publication order for the Context Kernel closure of `context-kernel`.
+# Dependencies must appear before their dependents. scripts/package/crates/publish.sh
+# verifies that this list equals the closure computed from cargo metadata.
+context-kernel-core
+context-kernel-config
+context-kernel-memory
+context-kernel-observability
+context-kernel-artifacts
+context-kernel-ranker
+context-kernel-search-fts
+context-kernel-storage-sqlite
+context-kernel-adapter-filesystem
+context-kernel-auth
+context-kernel-embeddings
+context-kernel-vector
+context-kernel-app
+context-kernel-mcp
+context-kernel-transport-stdio
+context-kernel-transport-sse
+context-kernel

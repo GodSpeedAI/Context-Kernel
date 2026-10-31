@@ -1,8 +1,13 @@
 [package]
-name = "ck-memory"
+name = "context-kernel-memory"
+description = "Memory domain model for Context Kernel"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
+repository.workspace = true
+
+[lib]
+name = "ck_memory"
 
 [dependencies]
 anyhow.workspace = true

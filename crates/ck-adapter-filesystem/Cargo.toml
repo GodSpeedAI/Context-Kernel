@@ -1,12 +1,17 @@
 [package]
-name = "ck-adapter-filesystem"
+name = "context-kernel-adapter-filesystem"
+description = "Filesystem source adapter for Context Kernel"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
+repository.workspace = true
+
+[lib]
+name = "ck_adapter_filesystem"
 
 [dependencies]
 anyhow.workspace = true
-ck-core = { path = "../ck-core" }
+ck-core = { package = "context-kernel-core", version = "=0.1.0", path = "../ck-core" }
 chrono.workspace = true
 hex.workspace = true
 serde_json.workspace = true
