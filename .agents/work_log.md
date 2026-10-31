@@ -366,3 +366,9 @@
 - Corrected the stale single-adapter claim in `known-limits-and-debt.md`: kind routing exists; GitHub/Web registration is the remaining gap.
 - Verified: HTML JS passes `node --check`; SHA-256 matches node crypto on known vectors; headless Chromium screenshots at 1280x2000, 1280x4200, and 430x2600 plus DOM dump confirm layout and state transitions; behavior harness covers complete/budget/cap/scope/excluded/freshness/no-match/corpus-missing/ingress/calibration/concept-absent/optional branches (all passed).
 - Not run: `cargo test` (no code changed; last recorded 265 passed on 2026-10-07) and `just context-check` (no justfile exists; recorded in `open_questions.md`).
+## 2026-10-24 - Recorded limits: stable IDs, bounded canonical numbers, offline SSRF tests (branch fix/stable-ids-and-canonical-numbers)
+- `ck-core`: `stable_document_id` (SHA-256, length-prefixed, `doc_` + 32 hex) replaces the DefaultHasher version in `ck-app`; golden test.
+- `ck-storage-sqlite`: `migrate()` now also runs `migrate_to_v2` (re-keys documents, supersession, chunks, chunks_fts, chunk_embeddings in one transaction; refuses v1 stores with NULL external_id/uri). Tests: rekey, refusal, fresh store records 1 and 2.
+- `ck-mcp::cep_bundle`: `canonical_json`/`content_hash` return `Result`; integers beyond ±(2^53-1) are refused; 6-decimal float rule kept to match SWE_SEED (see decisions.md). Shared vector checked against the CEP reference canonicalizer.
+- `ck-adapter-web`: `ssrf_allows_public_http` and `ssrf_rejects_non_allowed_domain` use `StaticResolver` (no real DNS).
+- Docs: `docs/subsystems/storage-and-persistence.md`, `docs/how-to/manage-database-and-migrations.md`.

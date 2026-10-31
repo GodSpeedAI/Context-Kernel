@@ -661,7 +661,8 @@ mod tests {
 
     #[test]
     fn ssrf_allows_public_http() {
-        let result = validate_url("http://example.com/page", &[]);
+        let resolver = StaticResolver::new("example.com", "93.184.216.34");
+        let result = validate_url_with_resolver("http://example.com/page", &[], &resolver);
         assert!(result.is_ok());
     }
 
@@ -686,7 +687,8 @@ mod tests {
     #[test]
     fn ssrf_rejects_non_allowed_domain() {
         let allowed = vec!["docs.example.com".to_string()];
-        let result = validate_url("https://evil.com/page", &allowed);
+        let resolver = StaticResolver::new("evil.com", "93.184.216.34");
+        let result = validate_url_with_resolver("https://evil.com/page", &allowed, &resolver);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("not in allowed domains"), "got: {}", err);

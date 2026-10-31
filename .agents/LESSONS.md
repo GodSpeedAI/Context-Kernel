@@ -61,3 +61,9 @@ duplicating them.
 - Verified: `ubuntu-24.04-arm` would produce binaries requiring glibc newer than the Jetson's 2.35.
 - Evidence: `.github/workflows/package.yml` (`ubuntu-22.04-arm`), `scripts/package/linux/build-linux.sh` (`CK_MAX_GLIBC`).
 - Scope: all Linux packaging.
+
+## Lesson: Persisted identifiers must not come from `std::hash::DefaultHasher`
+- Observed: 2026-10-24
+- Evidence: `ck-app::stable_document_id` used `DefaultHasher`; its algorithm is not guaranteed across Rust releases, so stored document IDs could change on a toolchain upgrade. Replaced with length-prefixed SHA-256 (`ck_core::entities::stable_document_id`) and a v2 storage migration.
+- Scope: any ID or hash written to disk or sent across a boundary.
+- Confidence: high
