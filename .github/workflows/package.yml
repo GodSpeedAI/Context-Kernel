@@ -47,7 +47,7 @@ jobs:
             kind: windows
             arch: x86_64
           - id: macos-arm64
-            runner: macos-14
+            runner: macos-15
             kind: macos
             arch: arm64
           - id: macos-x86_64
@@ -80,7 +80,22 @@ jobs:
           key: ${{ matrix.id }}
 
       - name: Build release binary (locked)
+        env:
+          # macOS builds target macOS 14 even though the runner image is newer, so the
+          # binary keeps the macOS 14 minimum. Verified from the Mach-O header below.
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.kind == 'macos' && '14.0' || '' }}
         run: cargo build --release --locked -p context-kernel
+
+      - name: Verify the macOS minimum version is 14.0
+        if: matrix.kind == 'macos'
+        run: |
+          set -euo pipefail
+          minos=$(otool -l target/release/context-kernal | awk '/LC_BUILD_VERSION/{f=1} f && /minos/{print $2; exit}')
+          if [ -z "$minos" ]; then
+            minos=$(otool -l target/release/context-kernal | awk '/LC_VERSION_MIN_MACOSX/{f=1} f && /version/{print $2; exit}')
+          fi
+          echo "minos=$minos"
+          test "$minos" = "14.0"
 
       - name: Verify binary identity and ABI (Linux)
         if: matrix.kind == 'linux'
