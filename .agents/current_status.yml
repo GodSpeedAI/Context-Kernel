@@ -41,3 +41,9 @@ decisions:
   - Linux ARM64 built on ubuntu-22.04-arm to keep glibc floor at 2.35
   - unsigned Windows, unsigned/not-notarized macOS; no universal macOS binaries
   - full list in .agents/reports/native-distribution-2026-10-31.md
+
+domain_vocabulary:
+  updated: "2026-11-20"
+  status: "documentation validated"
+  glossary: "GLOSSARY.md"
+  verification: "Cross-checked glossary targets, source links and the eleven semantic scenarios."
